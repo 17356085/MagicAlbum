@@ -1,0 +1,55 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: MagicAlbum
+  profiles:
+    active: local # 可切换为 mysql 或 postgres
+  jackson:
+    time-zone: UTC
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none # 使用 Flyway 管理 schema
+    properties:
+      hibernate.format_sql: true
+      hibernate.jdbc.time_zone: UTC
+  datasource:
+    # 默认占位，具体由 profile 覆盖
+    url: jdbc:postgresql://localhost:5432/MagicAlbum
+    username: MagicAlbum
+    password: MagicAlbum
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+
+app:
+  security:
+    jwt:
+      issuer: MagicAlbum
+      secret: ${JWT_SECRET:MagicAlbumDevSecretKey_ChangeMe_PleaseReplace_0123456789ABCDEF0123456789}
+      access-token-ttl-minutes: 43200
+  storage:
+    s3:
+      # 默认关闭：将这些值留空，避免误判为已配置，后端会自动回退到本地存储
+      bucket: ""
+      region: ""
+      endpoint: "" # 可选：S3 兼容对象存储自定义 endpoint，例如 https://s3.amazonaws.com 或 MinIO/自建网关
+      accessKey: ""
+      secretKey: ""
+      # 前端展示用的公共 URL 前缀（建议配置为 CDN/网站域名）；留空将回退到 endpoint 或 AWS 默认域名
+      publicBaseUrl: ""
+      # 是否设置对象为 public-read（多数场景需要公开访问图片）
+      aclPublicRead: true
+      # 路径前缀，按日期分目录
+      pathPrefix: threads
+    local:
+      # 本地存储目录（相对于项目根目录或绝对路径）
+      baseDir: uploads

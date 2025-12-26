@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    url: jdbc:h2:file:./build/h2db;AUTO_SERVER=TRUE;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/mysql
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.flywaydb: DEBUG

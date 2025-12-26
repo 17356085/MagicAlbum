@@ -1,0 +1,35 @@
+<template>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" class="w-7 h-7" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="magicalbumGradient" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#0f172a" />
+        <stop offset="100%" stop-color="#1e3a8a" />
+      </linearGradient>
+      <radialGradient id="magicalGlow" cx="50%" cy="35%" r="60%">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.24" />
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+      </radialGradient>
+    </defs>
+
+    <rect x="0" y="0" width="48" height="48" rx="12" fill="url(#magicalbumGradient)" />
+    <circle cx="24" cy="20" r="18" fill="url(#magicalGlow)" />
+
+    <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 34 V16 c0-2 1.8-4 4-4 h1.5 l3.8 8 3.8-8 H27 c2.2 0 4 1.8 4 4 v18" />
+      <path d="M12 34 h6" />
+      <path d="M30 34 h6" />
+    </g>
+
+    <path d="M33 11.5 a9.5 9.5 0 1 1 -7.8 16.9 a7.5 7.5 0 1 0 7.8 -16.9" fill="#ffffff" fill-opacity="0.14" />
+
+    <polygon points="30,9 31.6,11.6 34.6,12.1 32.7,14.1 33.2,17.1 30,15.8 26.8,17.1 27.3,14.1 25.4,12.1 28.4,11.6" fill="#ffffff" fill-opacity="0.9" />
+
+    <path d="M37.5 9.5 l4 0 l0 4 z" fill="#ffffff" fill-opacity="0.25" />
+  </svg>
+</template>
+
+<script setup>
+</script>
+
+<style scoped>
+</style>

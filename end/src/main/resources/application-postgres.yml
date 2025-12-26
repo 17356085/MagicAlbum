@@ -1,0 +1,7 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:MagicAlbum}
+    username: ${DB_USER:MagicAlbum}
+    password: ${DB_PASSWORD:MagicAlbum}
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
