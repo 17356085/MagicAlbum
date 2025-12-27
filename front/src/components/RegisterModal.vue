@@ -230,8 +230,22 @@ async function onSubmit() {
     emit('success')
     onClose()
   } catch (e) {
-    const msg = e?.response?.data?.message || e?.message || '注册失败，请稍后再试'
-    showToast(msg)
+    const rawMsg = e?.response?.data?.message || e?.message || ''
+    let toastMsg = '注册失败，请稍后再试'
+    // 将后端“用户名不可重复/邮箱已被使用/手机号已被使用”映射为更清晰的提示，并标注到对应字段
+    if (rawMsg && /用户名/.test(rawMsg) && /(不可重复|已被使用)/.test(rawMsg)) {
+      errors.username = '该用户名已被注册'
+      toastMsg = '注册失败，该用户名已被注册'
+    } else if (rawMsg && /邮箱/.test(rawMsg) && /(已被使用|不可重复)/.test(rawMsg)) {
+      errors.email = '该邮箱已被注册'
+      toastMsg = '注册失败，该邮箱已被注册'
+    } else if (rawMsg && /手机号/.test(rawMsg) && /(已被使用|不可重复)/.test(rawMsg)) {
+      errors.phone = '该手机号已被注册'
+      toastMsg = '注册失败，该手机号已被注册'
+    } else if (rawMsg) {
+      toastMsg = '注册失败：' + rawMsg
+    }
+    showToast(toastMsg)
   } finally {
     submitting.value = false
   }
