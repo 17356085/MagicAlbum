@@ -35,7 +35,7 @@ export async function registerUser(payload) {
   return data
 }
 
-export async function listUsers({ q, page = 1, size = 20 } = {}) {
+export async function listUsers({ q, page = 1, size = 20, fields } = {}) {
   if (useMock) {
     await delay(300)
     const items = [
@@ -49,6 +49,7 @@ export async function listUsers({ q, page = 1, size = 20 } = {}) {
   if (q && String(q).trim()) params.q = q
   params.page = page
   params.size = size
+  if (fields && String(fields).trim()) params.fields = String(fields).trim()
   const { data } = await api.get('/users', { params })
   // 统一返回结构为 { items, page, size, total }
   if (Array.isArray(data)) {
@@ -77,6 +78,8 @@ export async function suggestUsers(q, size = 5) {
     return items
   }
   const params = { q: keyword, page: 1, size }
+  // 如果后端支持字段选择，可携带 fields 参数（忽略也不影响）
+  params.fields = 'username,nickname'
   const { data } = await api.get('/users', { params })
   const arr = Array.isArray(data) ? data : (data.items || [])
   return arr
@@ -123,3 +126,6 @@ export async function listUserThreads(id, { q, sectionId, sort = 'updatedAt', pa
   const { data } = await api.get(`/users/${id}/threads`, { params })
   return data
 }
+
+// 按昵称搜索的前端回退：分页扫描用户并拉取 profile 后按“用户名/昵称”过滤
+// 已移除：前端昵称回退搜索。后端支持 fields=nickname,username 后，统一依赖后端精确搜索。

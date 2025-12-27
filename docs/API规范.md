@@ -66,11 +66,21 @@
 }
 ```
 
-## 4. 回复 Posts（后续）
+## 4. 用户 Users（新增）
+- GET `/api/v1/users`
+  - Query：`{ q?: string, page?: number, size?: number, fields?: string }`
+  - 说明：`fields` 控制参与匹配的字段集合，逗号分隔；示例：`fields=username,nickname` 表示仅按用户名与昵称进行匹配。若未传递 `fields`，默认按用户名/邮箱/手机号匹配。
+  - Res：`{ items: User[], page, size, total }`，`User = { id, username, email, phone, createdAt }`
+- GET `/api/v1/users/{id}/profile`
+  - Res：`{ username, nickname, avatarUrl, bio, homepageUrl, location, links: string[] }`
+
+备注：为避免隐私风险，前端的搜索与联想建议会优先携带 `fields=username,nickname`，并在展示层过滤掉仅邮箱/手机号命中的结果。
+
+## 5. 回复 Posts（后续）
 - GET `/threads/{id}/posts` → `{ items: Post[], page, size, total }`
 - POST `/threads/{id}/posts`（需登录）→ `{ content, parentId? }` → `Post`
 
-## 5. 交互与规则
+## 6. 交互与规则
 - 速率限制：登录接口与发帖接口建议限速（如 IP/用户级）。
 - CORS：允许前端来源（本地开发与指定域名）。
 - 内容过滤：基础敏感词与脚本过滤，避免 XSS。

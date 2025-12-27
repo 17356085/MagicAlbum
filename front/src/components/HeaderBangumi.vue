@@ -25,9 +25,9 @@
           <input
             v-model="searchQuery"
             type="text"
-            :placeholder="searchType === 'users' ? '搜索用户名/邮箱/手机号' : '搜索帖子标题或内容'"
+            :placeholder="searchType === 'users' ? '搜索用户名/昵称' : '搜索帖子标题或内容'"
             class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100"
-            @keyup.enter="doSearch"
+            @keydown="onInputKeydown"
             @focus="onInputFocus"
             @blur="onInputBlur"
           />
@@ -40,11 +40,30 @@
             <div v-else-if="suggestError" class="px-3 py-2 text-xs text-red-600">{{ suggestError }}</div>
             <ul v-else class="p-1 text-sm max-h-64 overflow-auto">
               <li v-if="!suggestions.length" class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">无匹配</li>
-              <li v-for="u in suggestions" :key="u.id">
-                <router-link :to="'/users/' + u.id" class="flex items-center justify-between rounded px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700">
-                  <div class="truncate">
-                    <span class="font-medium">{{ u.username }}</span>
-                    <span v-if="u.email" class="ml-2 text-xs text-gray-500 dark:text-gray-400">{{ u.email }}</span>
+              <li
+                v-for="(u, idx) in visibleSuggestions.slice(0, 5)"
+                :key="u.id"
+                @mousemove="activeIndex = idx"
+              >
+                <router-link
+                  :to="'/users/' + u.id"
+                  class="flex items-center justify-between rounded px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  :class="activeIndex === idx ? 'bg-blue-50 dark:bg-blue-900/30' : ''"
+                  @click="suggestOpen = false"
+                >
+                  <div class="flex items-center gap-2 min-w-0">
+                    <template v-if="suggestProfiles[u.id]?.avatarUrl">
+                      <img :src="normalizeImageUrl(suggestProfiles[u.id].avatarUrl)" alt="avatar" class="w-6 h-6 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
+                    </template>
+                    <template v-else>
+                      <div class="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] font-medium">
+                        {{ String((suggestProfiles[u.id]?.nickname || u.username || 'U')).slice(0,1).toUpperCase() }}
+                      </div>
+                    </template>
+                    <div class="truncate">
+                      <span class="font-medium" v-html="highlight(suggestProfiles[u.id]?.nickname || u.username, searchQuery)"></span>
+                      <span v-if="suggestProfiles[u.id]?.nickname" class="ml-2 text-xs text-gray-500 dark:text-gray-400">{{ u.username }}</span>
+                    </div>
                   </div>
                   <span class="text-xs text-gray-400">#{{ u.id }}</span>
                 </router-link>
@@ -120,7 +139,8 @@ import LoginModal from './LoginModal.vue'
 import { useAuth } from '@/composables/useAuth'
 import { getMyProfile } from '@/api/settings'
 import IconMagicalbum from '@/components/icons/IconMagicalbum.vue'
-import { suggestUsers } from '@/api/users'
+import { suggestUsers, getUserProfile } from '@/api/users'
+import DOMPurify from 'dompurify'
 
 const showRegister = ref(false)
 const showLogin = ref(false)
@@ -136,6 +156,25 @@ const suggestions = ref([])
 const suggestLoading = ref(false)
 const suggestError = ref('')
 let suggestTimer = null
+const suggestProfiles = ref({})
+const activeIndex = ref(-1)
+const keyword = computed(() => String(searchQuery.value || '').trim().toLowerCase())
+
+function includesI(str, kw) {
+  return String(str || '').toLowerCase().includes(String(kw || '').toLowerCase())
+}
+
+// 仅支持用户名或昵称匹配的可见建议列表
+const visibleSuggestions = computed(() => {
+  const kw = keyword.value
+  if (!kw) return []
+  return (Array.isArray(suggestions.value) ? suggestions.value : []).filter(u => {
+    if (includesI(u?.username, kw)) return true
+    const p = suggestProfiles.value[u?.id]
+    if (p && includesI(p.nickname, kw)) return true
+    return false
+  })
+})
 const avatarUrl = ref('')
 const displayName = ref('')
 
@@ -269,11 +308,17 @@ async function fetchSuggestions(keyword) {
   suggestLoading.value = true
   suggestError.value = ''
   try {
-    const items = await suggestUsers(keyword, 6)
-    suggestions.value = Array.isArray(items) ? items : []
+    const items = await suggestUsers(keyword, 5)
+    const base = (Array.isArray(items) ? items : [])
+    suggestions.value = base.slice(0, 5)
+    activeIndex.value = suggestions.value.length > 0 ? 0 : -1
+    // 异步预取头像/昵称，提升建议项信息密度
+    const ids = suggestions.value.map(u => u.id).filter(Boolean)
+    prefetchSuggestionProfiles(ids)
   } catch (e) {
     suggestError.value = '加载建议失败'
     suggestions.value = []
+    activeIndex.value = -1
   } finally {
     suggestLoading.value = false
   }
@@ -284,6 +329,7 @@ function scheduleSuggest() {
   const q = String(searchQuery.value || '').trim()
   if (searchType.value !== 'users' || !q) {
     suggestions.value = []
+    activeIndex.value = -1
     return
   }
   suggestTimer = setTimeout(() => {
@@ -303,6 +349,65 @@ function onInputFocus() {
 function onInputBlur() {
   // 延迟关闭，允许点击建议项
   setTimeout(() => { suggestOpen.value = false }, 150)
+}
+
+function onInputKeydown(e) {
+  const key = e.key
+  const hasSuggest = suggestOpen.value && Array.isArray(visibleSuggestions.value) && visibleSuggestions.value.length > 0
+  if (key === 'Enter') {
+    if (hasSuggest && activeIndex.value >= 0 && visibleSuggestions.value[activeIndex.value]) {
+      const u = visibleSuggestions.value[activeIndex.value]
+      suggestOpen.value = false
+      e.preventDefault()
+      router.push({ path: '/users/' + u.id })
+      return
+    }
+    // 无联想或未选择：执行常规搜索
+    doSearch()
+  } else if (key === 'ArrowDown') {
+    if (hasSuggest) {
+      e.preventDefault()
+      activeIndex.value = (activeIndex.value + 1) % visibleSuggestions.value.length
+    }
+  } else if (key === 'ArrowUp') {
+    if (hasSuggest) {
+      e.preventDefault()
+      activeIndex.value = activeIndex.value <= 0 ? (visibleSuggestions.value.length - 1) : (activeIndex.value - 1)
+    }
+  } else if (key === 'Escape') {
+    suggestOpen.value = false
+  }
+}
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function highlight(text, keyword) {
+  const t = escapeHtml(String(text || ''))
+  const k = String(keyword || '').trim()
+  if (!k) return t
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(${escaped})`, 'ig')
+  const replaced = t.replace(re, '<mark class="bg-yellow-100">$1</mark>')
+  return DOMPurify.sanitize(replaced)
+}
+
+async function prefetchSuggestionProfiles(ids) {
+  for (const id of ids) {
+    if (suggestProfiles.value[id]) continue
+    try {
+      const p = await getUserProfile(id)
+      suggestProfiles.value[id] = { avatarUrl: p?.avatarUrl || '', nickname: p?.nickname || '' }
+    } catch (_) {
+      suggestProfiles.value[id] = { avatarUrl: '', nickname: '' }
+    }
+  }
 }
 </script>
 

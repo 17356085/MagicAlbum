@@ -58,9 +58,12 @@ public class UserService {
         return dto;
     }
 
-    public Page<UserDto> list(String q, int page, int size) {
+    public Page<UserDto> list(String q, int page, int size, String fields) {
         PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 20));
-        Page<User> p = userRepository.search((q == null || q.isBlank()) ? null : q, pr);
+        String keyword = (q == null || q.isBlank()) ? null : q.trim();
+        boolean includeNickname = fields != null && fields.toLowerCase().contains("nickname");
+        Page<User> p = includeNickname ? userRepository.searchWithNickname(keyword, pr)
+                                       : userRepository.search(keyword, pr);
         return p.map(this::toDto);
     }
 

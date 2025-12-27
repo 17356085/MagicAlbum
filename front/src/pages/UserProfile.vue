@@ -34,7 +34,12 @@
 
       <div>
         <div class="text-sm text-gray-500 mb-1">个人介绍</div>
-        <div class="text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{{ profile.bio || '这个人很神秘，什么都没有写。' }}</div>
+        <template v-if="profile.bio && String(profile.bio).trim()">
+          <div class="prose max-w-none dark:prose-invert text-gray-800 dark:text-gray-200" v-html="renderBio(profile.bio)"></div>
+        </template>
+        <template v-else>
+          <div class="text-gray-800 dark:text-gray-200">这个人很神秘，什么都没有写。</div>
+        </template>
         <div v-if="isMe" class="mt-3">
           <router-link to="/settings" class="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">编辑资料</router-link>
         </div>
@@ -87,15 +92,62 @@ import { getUserProfile, listUserThreads } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
 import { useAuth } from '@/composables/useAuth'
 import { formatRelativeTime } from '@/composables/time'
+import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
+import hljs from 'highlight.js/lib/common'
+import markdownItKatex from 'markdown-it-katex'
+import 'katex/dist/katex.min.css'
 
 const route = useRoute()
 const router = useRouter()
-const userId = route.params.id
+const userId = computed(() => route.params.id)
 const loading = ref(true)
 const error = ref('')
 const profile = ref({})
 const { user } = useAuth()
-const isMe = computed(() => String(user?.value?.id || '') === String(userId || ''))
+const isMe = computed(() => String(user?.value?.id || '') === String(userId.value || ''))
+
+// 与帖子/评论一致的 Markdown 渲染配置：支持 HTML、代码高亮、数学公式、图片懒加载/响应式
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  breaks: true,
+  langPrefix: 'language-',
+  highlight: (str, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        const out = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
+        return '<pre><code class="hljs language-' + lang + '">' + out + '</code></pre>'
+      } catch (_) {}
+    } else {
+      try {
+        const auto = hljs.highlightAuto(str)
+        const langGuess = auto.language ? (' language-' + auto.language) : ''
+        return '<pre><code class="hljs' + langGuess + '">' + auto.value + '</code></pre>'
+      } catch (_) {}
+    }
+    return '<pre><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>'
+  }
+})
+md.use(markdownItKatex)
+const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) { return self.renderToken(tokens, idx, options) }
+md.renderer.rules.image = function(tokens, idx, options, env, self) {
+  const token = tokens[idx]
+  const loadingIdx = token.attrIndex('loading')
+  if (loadingIdx < 0) token.attrPush(['loading', 'lazy'])
+  const clsIdx = token.attrIndex('class')
+  if (clsIdx < 0) token.attrPush(['class', 'max-w-full h-auto'])
+  else token.attrs[clsIdx][1] += ' max-w-full h-auto'
+  const srcIdx = token.attrIndex('src')
+  if (srcIdx >= 0) token.attrs[srcIdx][1] = normalizeImageUrl(token.attrs[srcIdx][1])
+  return defaultImageRule(tokens, idx, options, env, self)
+}
+
+function renderBio(raw) {
+  const s = String(raw || '')
+  const html = md.render(s)
+  return DOMPurify.sanitize(html)
+}
 
 // 主题帖分页状态
 const threadsLoading = ref(false)
@@ -116,7 +168,7 @@ async function loadThreads() {
   threadsLoading.value = true
   threadsError.value = ''
   try {
-    const data = await listUserThreads(userId, { page: page.value, size: size.value })
+    const data = await listUserThreads(userId.value, { page: page.value, size: size.value })
     threads.value = data || { items: [], page: page.value, size: size.value, total: 0 }
   } catch (e) {
     threadsError.value = e?.message || '加载帖子失败'
@@ -127,7 +179,7 @@ async function loadThreads() {
 
 onMounted(async () => {
   try {
-    const data = await getUserProfile(userId)
+    const data = await getUserProfile(userId.value)
     profile.value = data || {}
   } catch (e) {
     error.value = (e && e.message) || '获取用户资料失败'
@@ -138,9 +190,21 @@ onMounted(async () => {
   await loadThreads()
 })
 
-// 当路由 id 变化时，重置分页并重新加载
-watch(() => route.params.id, async (newId, oldId) => {
+// 当路由 id 变化时，刷新个人资料并重置分页后重新加载帖子
+watch(userId, async (newId, oldId) => {
   if (String(newId) !== String(oldId)) {
+    // 刷新个人资料
+    loading.value = true
+    error.value = ''
+    try {
+      const data = await getUserProfile(userId.value)
+      profile.value = data || {}
+    } catch (e) {
+      error.value = (e && e.message) || '获取用户资料失败'
+    } finally {
+      loading.value = false
+    }
+    // 重置分页并加载对应用户的帖子
     page.value = 1
     await loadThreads()
   }

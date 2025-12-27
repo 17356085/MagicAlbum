@@ -1,14 +1,14 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { listMyPosts, deletePost } from '@/api/my'
 import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
-const query = ref({ q: '', sectionId: '', page: 1, size: 20, sort: 'createdAt' })
+const query = ref({ q: '', sectionId: '', page: 1, size: 10, sort: 'createdAt' })
 const loading = ref(false)
 const error = ref('')
-const list = ref({ items: [], page: 1, size: 20, total: 0 })
+const list = ref({ items: [], page: 1, size: 10, total: 0 })
 const sections = ref([])
 const showDeleteConfirm = ref(false)
 const deleting = ref(false)
@@ -63,6 +63,31 @@ function cancelDelete() {
 }
 
 onMounted(async () => { await loadSections(); await load() })
+
+// 分页计算与翻页方法（每页 10 条）
+const totalPages = computed(() => {
+  const s = Number(list.value.size || query.value.size || 10)
+  const t = Number(list.value.total || 0)
+  const pages = Math.ceil(t / (s || 10))
+  return Math.max(1, pages || 1)
+})
+
+function setPage(p) {
+  const target = Math.min(Math.max(1, p), totalPages.value)
+  if (target === (query.value.page || 1)) return
+  query.value.page = target
+  load()
+}
+
+function prevPage() {
+  if (loading.value) return
+  setPage((query.value.page || 1) - 1)
+}
+
+function nextPage() {
+  if (loading.value) return
+  setPage((query.value.page || 1) + 1)
+}
 </script>
 
 <template>
@@ -102,6 +127,23 @@ onMounted(async () => { await loadSections(); await load() })
         </div>
       </li>
     </ul>
+    <!-- 分页控件 -->
+    <div class="mt-3 flex items-center justify-between text-xs">
+      <div class="text-gray-600 dark:text-gray-300">共 {{ list.total || 0 }} 条，每页 {{ list.size || query.size || 10 }} 条</div>
+      <div class="flex items-center gap-2">
+        <button
+          class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200"
+          :disabled="loading || (query.page || 1) <= 1"
+          @click="prevPage"
+        >上一页</button>
+        <span>第 {{ query.page || 1 }} / {{ totalPages }} 页</span>
+        <button
+          class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200"
+          :disabled="loading || (query.page || 1) >= totalPages"
+          @click="nextPage"
+        >下一页</button>
+      </div>
+    </div>
     <ConfirmDialog
       v-if="showDeleteConfirm"
       title="删除评论"

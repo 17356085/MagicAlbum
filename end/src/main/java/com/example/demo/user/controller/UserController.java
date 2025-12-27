@@ -57,9 +57,10 @@ public class UserController {
     public ResponseEntity<java.util.Map<String, Object>> list(
             @RequestParam(value = "q", required = false) String q,
             @RequestParam(value = "page", defaultValue = "1") int page,
-            @RequestParam(value = "size", defaultValue = "10") int size
+            @RequestParam(value = "size", defaultValue = "10") int size,
+            @RequestParam(value = "fields", required = false) String fields
     ) {
-        Page<UserDto> p = userService.list(q, page, size);
+        Page<UserDto> p = userService.list(q, page, size, fields);
         java.util.Map<String, Object> body = new java.util.HashMap<>();
         body.put("items", p.getContent());
         body.put("page", page);

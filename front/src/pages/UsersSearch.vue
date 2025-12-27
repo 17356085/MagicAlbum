@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listUsers, getUserProfile } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
@@ -24,9 +24,10 @@ async function load() {
     const rp = route.query.page ? Number(route.query.page) : 1
     page.value = isNaN(rp) ? 1 : rp
     q.value = rq
-    const data = await listUsers({ q: rq, page: page.value, size: size.value })
-    items.value = data?.items || []
-    total.value = Number(data?.total || 0)
+    const data = await listUsers({ q: rq, page: page.value, size: size.value, fields: 'username,nickname' })
+    const base = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : [])
+    items.value = base
+    total.value = Number(data?.total || (items.value?.length || 0))
     page.value = Number(data?.page || page.value)
     size.value = Number(data?.size || size.value)
     // 异步拉取资料（头像/昵称），不阻塞列表展示
@@ -46,6 +47,18 @@ async function load() {
     loading.value = false
   }
 }
+
+// 仅支持用户名或昵称匹配的过滤列表（隐私：不按邮箱/手机号匹配）
+const filteredItems = computed(() => {
+  const kw = String(q.value || '').trim().toLowerCase()
+  const src = Array.isArray(items.value) ? items.value : []
+  if (!kw) return src
+  return src.filter(u => {
+    const nameOk = String(u?.username || '').toLowerCase().includes(kw)
+    const nickOk = String(profiles.value[u?.id]?.nickname || '').toLowerCase().includes(kw)
+    return nameOk || nickOk
+  })
+})
 
 function setPage(p) {
   const totalPages = Math.max(1, Math.ceil((Number(total.value)||0) / (Number(size.value)||20)))
@@ -69,10 +82,10 @@ watch(() => route.query.q, () => { page.value = 1; load() })
     <div v-if="loading" class="text-gray-600 dark:text-gray-300">正在加载...</div>
     <div v-else>
       <div v-if="error" class="text-red-600 mb-3">{{ error }}</div>
-      <div v-if="items.length === 0" class="text-gray-600 dark:text-gray-300">暂无匹配用户</div>
+      <div v-if="filteredItems.length === 0" class="text-gray-600 dark:text-gray-300">暂无匹配用户</div>
       <template v-else>
         <ul class="space-y-2">
-          <li v-for="u in items" :key="u.id" class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
+          <li v-for="u in filteredItems" :key="u.id" class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
             <router-link :to="'/users/' + u.id" class="block p-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
@@ -94,7 +107,7 @@ watch(() => route.query.q, () => { page.value = 1; load() })
           </li>
         </ul>
         <div class="mt-4 flex items中心 justify-between text-xs text-gray-600 dark:text-gray-300">
-          <div>总数：{{ total }} · 每页：{{ size }}</div>
+          <div>匹配数：{{ filteredItems.length }} · 每页：{{ size }}</div>
           <div class="flex items-center gap-2">
             <button class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200" :disabled="page<=1" @click="prevPage">上一页</button>
             <span>第 {{ page }} 页</span>

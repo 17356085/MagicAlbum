@@ -1,11 +1,18 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { MdEditor } from 'md-editor-v3'
+import 'md-editor-v3/lib/style.css'
 import { getMyProfile, updateMyProfile, getMySettings, updateMySettings } from '@/api/settings'
 import { listNotifications, markNotificationRead, getNotificationSettings, updateNotificationSettings } from '@/api/notifications'
 import { listConnectedAccounts, connectAccount, disconnectAccount } from '@/api/connected'
 import { uploadImage } from '@/api/uploads'
 import { useAuth } from '@/composables/useAuth'
 import { normalizeImageUrl } from '@/utils/image'
+import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
+import hljs from 'highlight.js/lib/common'
+import markdownItKatex from 'markdown-it-katex'
+import 'katex/dist/katex.min.css'
 
 const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected'
 
@@ -15,7 +22,84 @@ const profileSaving = ref(false)
 const avatarUploading = ref(false)
 const avatarProgress = ref(0)
 const avatarPreviewUrl = ref('')
+const profileSaveMessage = ref('')
+const profileSaveError = ref(false)
+// 简介字数限制
+const bioMax = 1000
+watch(() => profile.value.bio, (val) => {
+  const s = String(val || '')
+  if (s.length > bioMax) {
+    profile.value.bio = s.slice(0, bioMax)
+  }
+})
+// 跟随全局暗色模式：监听 html.dark 与系统偏好
+const isDark = ref(false)
+function updateIsDark() {
+  const hasDarkClass = document.documentElement.classList.contains('dark')
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+  isDark.value = hasDarkClass || prefersDark
+}
+let themeObserver = null
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  breaks: true,
+  langPrefix: 'language-',
+  highlight: (str, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        const out = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
+        return '<pre><code class="hljs language-' + lang + '">' + out + '</code></pre>'
+      } catch (_) {}
+    } else {
+      try {
+        const auto = hljs.highlightAuto(str)
+        const langGuess = auto.language ? (' language-' + auto.language) : ''
+        return '<pre><code class="hljs' + langGuess + '">' + auto.value + '</code></pre>'
+      } catch (_) {}
+    }
+    return '<pre><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>'
+  }
+})
+md.use(markdownItKatex)
+const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) { return self.renderToken(tokens, idx, options) }
+md.renderer.rules.image = function(tokens, idx, options, env, self) {
+  const token = tokens[idx]
+  const loadingIdx = token.attrIndex('loading')
+  if (loadingIdx < 0) token.attrPush(['loading', 'lazy'])
+  const clsIdx = token.attrIndex('class')
+  if (clsIdx < 0) token.attrPush(['class', 'max-w-full h-auto'])
+  else token.attrs[clsIdx][1] += ' max-w-full h-auto'
+  const srcIdx = token.attrIndex('src')
+  if (srcIdx >= 0) token.attrs[srcIdx][1] = normalizeImageUrl(token.attrs[srcIdx][1])
+  return defaultImageRule(tokens, idx, options, env, self)
+}
+function renderBioPreview(raw) {
+  const s = String(raw || '')
+  const html = md.render(s)
+  return DOMPurify.sanitize(html)
+}
 const { token } = useAuth()
+// MdEditor 图片上传（与发帖同款）
+const bioUploading = ref(false)
+const bioUploadProgress = ref(0)
+async function onUploadBioImg(files, callback) {
+  try {
+    bioUploading.value = true
+    bioUploadProgress.value = 0
+    const urls = []
+    for (const f of files) {
+      const { url } = await uploadImage(f, token.value, (p) => { bioUploadProgress.value = p })
+      urls.push(normalizeImageUrl(url))
+    }
+    callback(urls)
+  } catch (e) {
+    alert(e?.response?.data?.message || e?.message || '图片上传失败')
+  } finally {
+    bioUploading.value = false
+    bioUploadProgress.value = 0
+  }
+}
 async function loadProfile() {
   try {
     profile.value = await getMyProfile()
@@ -38,7 +122,17 @@ async function saveProfile() {
     avatarPreviewUrl.value = normalizeImageUrl(profile.value?.avatarUrl || '')
     // 广播资料更新事件，供头部头像实时刷新
     try { window.dispatchEvent(new CustomEvent('profile-updated', { detail: data })) } catch {}
-  } catch (e) {} finally { profileSaving.value = false }
+    // 显示保存成功提示（绿色）
+    profileSaveError.value = false
+    profileSaveMessage.value = '保存成功'
+    setTimeout(() => { profileSaveMessage.value = '' }, 3000)
+  } catch (e) {
+    // 显示保存失败提示（红色）
+    const msg = e?.response?.data?.message || e?.message || '保存失败'
+    profileSaveError.value = true
+    profileSaveMessage.value = msg
+    setTimeout(() => { profileSaveMessage.value = ''; profileSaveError.value = false }, 4000)
+  } finally { profileSaving.value = false }
 }
 
 async function onAvatarSelected(evt) {
@@ -141,6 +235,23 @@ onMounted(async () => {
   await loadNotifications()
   await loadNotificationSettings()
   await loadConnected()
+  // 初始化与监听暗色状态
+  updateIsDark()
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => updateIsDark()
+    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', handler)
+    else if (typeof mq.addListener === 'function') mq.addListener(handler)
+  }
+  themeObserver = new MutationObserver(updateIsDark)
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+})
+
+onUnmounted(() => {
+  if (themeObserver) {
+    try { themeObserver.disconnect() } catch (_) {}
+    themeObserver = null
+  }
 })
 </script>
 
@@ -180,12 +291,22 @@ onMounted(async () => {
         <label class="text-xs">所在地
           <input v-model="profile.location" class="mt-1 w-full rounded border px-2 py-1 text-sm dark:bg-gray-800 dark:border-gray-700" placeholder="城市" />
         </label>
-        <label class="text-xs md:col-span-2">个人简介
-          <textarea v-model="profile.bio" rows="4" class="mt-1 w-full rounded border px-2 py-1 text-sm dark:bg-gray-800 dark:border-gray-700" placeholder="简介"></textarea>
-        </label>
+        <div class="text-xs md:col-span-2">
+          <div>个人简介</div>
+          <div class="mt-1 flex items-center justify-end">
+            <span class="text-xs text-gray-500">字数：{{ String(profile.bio||'').length }}/{{ bioMax }}</span>
+          </div>
+          <div class="relative mt-1">
+            <MdEditor v-model="profile.bio" :onUploadImg="onUploadBioImg" :theme="isDark ? 'dark' : 'light'" :showWordCount="false" class="rounded-md border border-gray-300 dark:border-gray-700" />
+            <div v-if="bioUploading" class="absolute top-2 right-3 text-xs bg-white/80 px-2 py-1 rounded border border-gray-200 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-200">
+              上传中 {{ bioUploadProgress }}%
+            </div>
+          </div>
+        </div>
       </div>
       <div>
         <button class="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700" :disabled="profileSaving" @click="saveProfile">保存资料</button>
+        <span v-if="profileSaveMessage" :class="['ml-2 text-xs', profileSaveError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ profileSaveMessage }}</span>
       </div>
     </div>
 
