@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY users_username_uq (username),
-    UNIQUE KEY users_email_uq (email)
+    UNIQUE KEY users_email_uq (email),
+    UNIQUE KEY users_phone_uq (phone)
 );
 
 -- roles & user_roles

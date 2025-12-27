@@ -141,7 +141,7 @@ const route = useRoute()
 const { isLoggedIn } = useAuth()
 const isSectionsActive = computed(() => route.name === 'sections' || route.path === '/sections')
 const isDiscoverActive = computed(() => route.name === 'discover' || route.path === '/discover')
-const isSettingsActive = computed(() => route.name === 'settings' || route.path === '/settings')
+const isSettingsActive = computed(() => route.path.startsWith('/settings'))
 const isMyThreadsActive = computed(() => route.name === 'my-threads' || route.path === '/my/threads')
 const isMyPostsActive = computed(() => route.name === 'my-posts' || route.path === '/my/posts')
 

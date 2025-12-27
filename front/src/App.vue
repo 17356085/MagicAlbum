@@ -246,7 +246,7 @@ onUnmounted(() => { window.removeEventListener('resize', onResizeStars); stopSta
       <HeaderBangumi />
 
     <main class="mx-auto max-w-7xl px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start w-full">
-      <div class="hidden lg:block lg:col-span-3 lg:sticky lg:top-[calc(4rem+1.5rem)]">
+      <div class="sidebar-scroll hidden lg:block lg:col-span-3 lg:sticky lg:top-[calc(4rem+1.5rem)] lg:max-h-[calc(100vh-4rem-1.5rem)] lg:overflow-y-auto pr-1">
         <SidebarLeft />
       </div>
       <div class="lg:col-span-9">
@@ -264,6 +264,9 @@ onUnmounted(() => { window.removeEventListener('resize', onResizeStars); stopSta
 </template>
 
 <style scoped>
+/* 左侧栏独立滚动但隐藏滚动条（仍可滚动） */
+.sidebar-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+.sidebar-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 </style>
 <style scoped>
 /* Day 模式：白雪质感（细小白点叠加，保持轻盈与低对比） */

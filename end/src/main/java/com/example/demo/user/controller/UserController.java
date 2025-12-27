@@ -5,6 +5,8 @@ import com.example.demo.user.dto.RegisterRequest;
 import com.example.demo.user.dto.UserDto;
 import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.dto.UserSettingsDto;
+import com.example.demo.user.dto.BasicInfoUpdateRequest;
+import com.example.demo.user.dto.ChangePasswordRequest;
 import com.example.demo.user.service.UserService;
 import com.example.demo.threads.service.ThreadService;
 import com.example.demo.posts.service.PostService;
@@ -83,6 +85,15 @@ public class UserController {
       }
   }
 
+    @GetMapping("/me/basic")
+    public ResponseEntity<UserDto> getMyBasic(
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization
+    ) {
+        Long userId = requireLogin(authorization);
+        UserDto dto = userService.getById(userId);
+        return ResponseEntity.ok(dto);
+    }
+
     @PatchMapping("/me")
     public ResponseEntity<ProfileDto> updateMe(
             @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
@@ -114,6 +125,26 @@ public class UserController {
         Long userId = requireLogin(authorization);
         UserSettingsDto updated = userSettingsService.updateSettings(userId, payload);
         return ResponseEntity.ok(updated);
+    }
+
+    @PatchMapping("/me/basic")
+    public ResponseEntity<UserDto> updateMyBasic(
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
+            @RequestBody BasicInfoUpdateRequest payload
+    ) {
+        Long userId = requireLogin(authorization);
+        UserDto updated = userService.updateBasicInfo(userId, payload);
+        return ResponseEntity.ok(updated);
+    }
+
+    @PostMapping("/me/password")
+    public ResponseEntity<Void> changeMyPassword(
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
+            @RequestBody ChangePasswordRequest payload
+    ) {
+        Long userId = requireLogin(authorization);
+        userService.changePassword(userId, payload);
+        return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
     }
 
     @GetMapping("/me/threads")

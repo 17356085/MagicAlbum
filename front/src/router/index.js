@@ -6,6 +6,7 @@ import ThreadDetail from '@/pages/ThreadDetail.vue'
 import UsersSearch from '@/pages/UsersSearch.vue'
 import UserProfile from '@/pages/UserProfile.vue'
 import Settings from '@/pages/Settings.vue'
+import SettingsAccount from '@/pages/SettingsAccount.vue'
 import MyThreads from '@/pages/MyThreads.vue'
 import MyPosts from '@/pages/MyPosts.vue'
 import RecentHistory from '@/pages/RecentHistory.vue'
@@ -19,6 +20,7 @@ const routes = [
   { path: '/threads/new', name: 'thread-create', component: ThreadCreate },
   { path: '/threads/:id', name: 'thread-detail', component: ThreadDetail },
   { path: '/settings', name: 'settings', component: Settings },
+  { path: '/settings/account', name: 'settings-account', component: SettingsAccount },
   { path: '/my/threads', name: 'my-threads', component: MyThreads },
   { path: '/my/posts', name: 'my-posts', component: MyPosts },
   { path: '/history', name: 'history', component: RecentHistory },

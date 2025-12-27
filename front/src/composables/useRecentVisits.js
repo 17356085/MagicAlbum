@@ -1,8 +1,22 @@
 // 最近浏览：基于路由 afterEach 记录本地 localStorage，并提供读取 API
 // 存储结构：[{ path, name, title, id, sectionId, sectionName, ts }]
 // 保留最近 10 条，时间窗口默认 7 天；去重按 path
+// 按账号隔离：本地存储键包含用户ID或用户名；未登录使用 guest
 
-const STORAGE_KEY = 'recent_visits_v1'
+const STORAGE_KEY_BASE = 'recent_visits_v1'
+function storageKey() {
+  try {
+    const raw = localStorage.getItem('currentUser')
+    if (raw) {
+      const u = JSON.parse(raw)
+      const uid = (u && (u.id ?? u.userId))
+      const uname = u && u.username
+      const keySuffix = (uid != null && String(uid).trim()) ? String(uid) : (uname && String(uname).trim())
+      if (keySuffix) return `${STORAGE_KEY_BASE}:${keySuffix}`
+    }
+  } catch (_) {}
+  return `${STORAGE_KEY_BASE}:guest`
+}
 const MAX_ITEMS = 10
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7 天
 // 仅记录“文章/帖子详情”路由
@@ -16,7 +30,7 @@ function normalizePath(path) {
 
 function readRaw() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey())
     if (!raw) return []
     const arr = JSON.parse(raw)
     return Array.isArray(arr) ? arr : []
@@ -26,7 +40,7 @@ function readRaw() {
 }
 
 function writeRaw(list) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)) } catch (_) {}
+  try { localStorage.setItem(storageKey(), JSON.stringify(list)) } catch (_) {}
   // 触发事件，便于侧栏刷新
   try { window.dispatchEvent(new CustomEvent('recent-visits-updated')) } catch (_) {}
 }
@@ -62,7 +76,7 @@ export function getAllRecentVisits() {
 }
 
 export function clearAllRecentVisits() {
-  try { localStorage.removeItem(STORAGE_KEY) } catch (_) {}
+  try { localStorage.removeItem(storageKey()) } catch (_) {}
   writeRaw([])
 }
 

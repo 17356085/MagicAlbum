@@ -4,6 +4,7 @@ import { useUISettings } from '@/composables/useUISettings'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { getMyProfile, updateMyProfile, getMySettings, updateMySettings } from '@/api/settings'
+import SettingsAccount from '@/pages/SettingsAccount.vue'
 import { listNotifications, markNotificationRead, getNotificationSettings, updateNotificationSettings } from '@/api/notifications'
 import { listConnectedAccounts, connectAccount, disconnectAccount } from '@/api/connected'
 import { uploadImage } from '@/api/uploads'
@@ -15,7 +16,7 @@ import hljs from 'highlight.js/lib/common'
 import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 
-const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected'
+const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected' | 'account'
 // UI 设置开关
 const { dynamicBackgroundEnabled, setDynamicBackgroundEnabled } = useUISettings()
 
@@ -264,6 +265,7 @@ onUnmounted(() => {
       <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='profile' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='profile'">资料设置</button>
       <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='notifications' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='notifications'">通知管理</button>
       <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='connected' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='connected'">第三方关联</button>
+      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='account' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='account'">账号信息</button>
     </div>
 
     <div v-if="selectedTab==='profile'" class="space-y-3">
@@ -383,7 +385,7 @@ onUnmounted(() => {
       </ul>
     </div>
 
-    <div v-else class="space-y-3">
+    <div v-else-if="selectedTab==='connected'" class="space-y-3">
       <div class="text-sm">第三方关联</div>
       <div v-if="connectedLoading" class="text-xs text-gray-500">正在加载...</div>
       <ul v-else class="space-y-2 text-xs">
@@ -399,6 +401,10 @@ onUnmounted(() => {
         </li>
       </ul>
       <div class="text-xs text-gray-500">如需新增 `github/google/weixin` 等 provider，可在后端开放后启用。</div>
+    </div>
+
+    <div v-else class="space-y-3">
+      <SettingsAccount />
     </div>
   </div>
 </template>

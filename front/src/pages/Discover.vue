@@ -17,8 +17,6 @@ const router = useRouter()
 const sectionId = ref(null)
 const currentSectionName = ref('')
 const q = ref('')
-// 控制列表图片是否展开（默认折叠，限制高度以节省空间）
-const expanded = ref({})
 // 手动页码输入与校验
 const inputPage = ref('')
 // 用户资料缓存：按用户ID存储 { nickname }
@@ -165,8 +163,7 @@ function textExcerpt(mdText, maxLen = 180) {
   return s.slice(0, maxLen) + '...'
 }
 
-function isExpanded(id) { return !!expanded.value[id] }
-function toggleExpand(id) { expanded.value[id] = !expanded.value[id] }
+// 预览图不再支持展开/收起，统一在固定最大尺寸内完整显示
 
 // Markdown 预览：移除代码块与图片，仅渲染文本、行内元素
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -207,26 +204,18 @@ function mdPreview(mdText) {
               <div v-if="firstImageUrl(t.content) && textExcerpt(t.content)" class="mt-2">
                 <div class="flex gap-3 items-start sm:flex-row flex-col">
                   <div class="sm:w-48 w-full hidden sm:block">
-                    <div v-if="!isExpanded(t.id)" class="sm:aspect-video overflow-hidden rounded-md bg-gray-50 dark:bg-gray-700">
-                      <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="w-full h-full object-cover" />
+                    <div class="overflow-hidden rounded-md max-h-48">
+                      <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full max-h-48 object-contain" />
                     </div>
-                    <img v-else :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full h-auto rounded-md bg-gray-50 dark:bg-gray-700" />
-                    <button class="mt-1 text-xs text-brandDay-600 dark:text-brandNight-400 hover:underline" @click.stop.prevent="toggleExpand(t.id)">
-                      {{ isExpanded(t.id) ? '收起图片' : '展开图片' }}
-                    </button>
                   </div>
                   <div class="prose prose-sm max-w-none line-clamp-4 flex-1 dark:prose-invert" v-html="mdPreview(t.content)"></div>
                 </div>
               </div>
               <!-- 只有图片 -->
               <div v-else-if="firstImageUrl(t.content)" class="mt-2 hidden sm:block">
-                <div v-if="!isExpanded(t.id)" class="sm:aspect-video overflow-hidden rounded-md bg-gray-50 dark:bg-gray-700">
-                  <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="w-full h-full object-cover" />
+                <div class="overflow-hidden rounded-md max-h-48">
+                  <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full max-h-48 object-contain" />
                 </div>
-                <img v-else :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full h-auto rounded-md bg-gray-50 dark:bg-gray-700" />
-                <button class="mt-1 text-xs text-brandDay-600 dark:text-brandNight-400 hover:underline" @click.stop.prevent="toggleExpand(t.id)">
-                  {{ isExpanded(t.id) ? '收起图片' : '展开图片' }}
-                </button>
               </div>
               <!-- 只有文本 -->
               <div v-else class="mt-2 prose prose-sm max-w-none text-gray-700 line-clamp-4 dark:prose-invert" v-html="mdPreview(t.content)"></div>
