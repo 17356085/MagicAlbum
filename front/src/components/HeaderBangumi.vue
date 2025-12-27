@@ -2,8 +2,10 @@
   <header class="fixed top-0 left-0 right-0 z-50 border-b border-gray-200 bg-white/90 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90">
     <div class="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <IconMagicalbum aria-label="Magicalbum Logo" />
-        <router-link to="/sections" class="text-lg font-semibold tracking-wide">MagicAlbum</router-link>
+        <router-link to="/discover" class="inline-flex items-center hover:opacity-90" aria-label="返回发现">
+          <IconMagicalbum aria-label="Magicalbum Logo" />
+        </router-link>
+        <router-link to="/discover" class="text-lg font-semibold tracking-wide hover:opacity-90">MagicAlbum</router-link>
         <span class="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-600">beta</span>
       </div>
       <div class="hidden md:flex md:flex-1 md:mx-6 items-center gap-3">
@@ -56,7 +58,14 @@
         <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="toggleTheme" :title="themeLabel">
           <span v-if="isDark">🌙</span><span v-else>☀️</span>
         </button>
-        <a href="/threads/new" class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700">发帖</a>
+        <!-- 发帖：圆圈加号图标 -->
+        <router-link to="/threads/new" class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" aria-label="发帖" title="发帖">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
+            <circle cx="12" cy="12" r="9" stroke-width="1.8" />
+            <path d="M12 8.5v7M8.5 12h7" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+          <span class="sr-only">发帖</span>
+        </router-link>
         <template v-if="!isLoggedIn">
           <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="showLogin = true">登录</button>
           <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="showRegister = true">注册</button>
@@ -70,7 +79,14 @@
               </div>
               <span class="text-gray-700 dark:text-gray-200">{{ displayName || user?.username }}</span>
             </router-link>
-            <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="onLogoutClick">登出</button>
+            <!-- 登出：电源图标按钮 -->
+            <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" @click="onLogoutClick" aria-label="登出" title="登出">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
+                <path d="M12 4v7.5" stroke-width="1.8" stroke-linecap="round" />
+                <path d="M7.5 6.5a7 7 0 1 0 9 0" fill="none" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+              <span class="sr-only">登出</span>
+            </button>
           </div>
         </template>
       </nav>
