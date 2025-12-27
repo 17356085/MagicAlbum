@@ -156,7 +156,7 @@ function nextPage() {
             </label>
           </div>
           <div class="mt-2 flex items-center gap-2">
-            <button class="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700" @click="saveEdit">保存</button>
+<button class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-1 text-xs text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700" @click="saveEdit">保存</button>
             <button class="rounded px-3 py-1 text-xs border dark:border-gray-700" @click="editingId=null">取消</button>
           </div>
         </div>

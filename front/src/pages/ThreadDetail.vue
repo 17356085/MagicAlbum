@@ -10,6 +10,7 @@ import hljs from 'highlight.js/lib/common'
 import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import Comments from '@/components/Comments.vue'
+import { updateVisitTitleByPath, updateVisitTitleById, updateVisitSectionById } from '@/composables/useRecentVisits'
 
 const route = useRoute()
 const router = useRouter()
@@ -147,6 +148,23 @@ async function load() {
     const id = route.params.id
     const data = await getThread(id)
     t.value = data
+    // 更新最近浏览的分区信息，便于历史页分区筛选
+    try {
+      const sid = t.value?.sectionId
+      const sname = t.value?.sectionName
+      updateVisitSectionById(Number(route.params.id), sid, sname)
+    } catch (_) {}
+    // 设定页面标题，并更新“最近浏览”记录的标题
+    try {
+      const titleText = String(t.value?.title || '').trim()
+      if (titleText) {
+        document.title = titleText
+        const path = route.fullPath || route.path
+        updateVisitTitleByPath(path, titleText)
+        // 同步按帖子 ID 更新，保证在 path 不一致（含 hash/query）时也能更新到正确记录
+        try { updateVisitTitleById(Number(route.params.id), titleText) } catch (_) {}
+      }
+    } catch (_) {}
     // 补充作者昵称
     const uid = t.value?.authorId
     if (uid) {
@@ -192,7 +210,7 @@ watch(() => route.hash, () => updateAnchorFromHash())
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <!-- 返回上一页：图标按钮，内联到标题左侧 -->
-            <button @click="router.back()" class="inline-flex items-center p-1 rounded text-blue-600 hover:bg-blue-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
+<button @click="router.back()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500" aria-label="返回上一页" title="返回上一页">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
                 <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
               </svg>

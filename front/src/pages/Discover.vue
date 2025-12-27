@@ -196,7 +196,7 @@ function mdPreview(mdText) {
       <div v-if="items.length === 0" class="text-gray-600 dark:text-gray-300">暂无帖子</div>
       <template v-else>
         <ul class="space-y-3">
-          <li v-for="t in items" :key="t.id" class="rounded-md border border-gray-200 bg-white hover:border-blue-300 transition dark:bg-gray-800 dark:border-gray-700">
+          <li v-for="t in items" :key="t.id" class="rounded-md border border-gray-200 bg-white hover:border-brandDay-300 transition dark:bg-gray-800 dark:border-gray-700 dark:hover:border-brandNight-700">
             <router-link :to="`/threads/${t.id}`" class="block p-4">
               <div class="flex items-center justify-between">
                 <h2 class="text-lg font-medium">{{ t.title }}</h2>
@@ -211,7 +211,7 @@ function mdPreview(mdText) {
                       <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="w-full h-full object-cover" />
                     </div>
                     <img v-else :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full h-auto rounded-md bg-gray-50 dark:bg-gray-700" />
-                    <button class="mt-1 text-xs text-blue-600 hover:underline" @click.stop.prevent="toggleExpand(t.id)">
+                    <button class="mt-1 text-xs text-brandDay-600 dark:text-brandNight-400 hover:underline" @click.stop.prevent="toggleExpand(t.id)">
                       {{ isExpanded(t.id) ? '收起图片' : '展开图片' }}
                     </button>
                   </div>
@@ -224,7 +224,7 @@ function mdPreview(mdText) {
                   <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="w-full h-full object-cover" />
                 </div>
                 <img v-else :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full h-auto rounded-md bg-gray-50 dark:bg-gray-700" />
-                <button class="mt-1 text-xs text-blue-600 hover:underline" @click.stop.prevent="toggleExpand(t.id)">
+                <button class="mt-1 text-xs text-brandDay-600 dark:text-brandNight-400 hover:underline" @click.stop.prevent="toggleExpand(t.id)">
                   {{ isExpanded(t.id) ? '收起图片' : '展开图片' }}
                 </button>
               </div>
@@ -254,7 +254,7 @@ function mdPreview(mdText) {
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
-              class="rounded border px-2 py-1 text-sm w-16 text-center dark:border-gray-700 dark:text-gray-200"
+              class="rounded border px-2 py-1 text-sm w-16 text-center bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
               @keyup.enter="goToInputPage"
               @blur="goToInputPage"
             />

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { useUISettings } from '@/composables/useUISettings'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { getMyProfile, updateMyProfile, getMySettings, updateMySettings } from '@/api/settings'
@@ -15,6 +16,8 @@ import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 
 const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected'
+// UI 设置开关
+const { dynamicBackgroundEnabled, setDynamicBackgroundEnabled } = useUISettings()
 
 // Profile
 const profile = ref({ nickname: '', bio: '', homepageUrl: '', location: '', links: [], avatarUrl: '' })
@@ -258,9 +261,9 @@ onUnmounted(() => {
 <template>
   <div class="rounded-md border border-gray-200 bg-white p-4 dark:bg-gray-800 dark:border-gray-700">
     <div class="flex items-center gap-2 mb-3">
-      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='profile' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='profile'">资料设置</button>
-      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='notifications' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='notifications'">通知管理</button>
-      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='connected' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='connected'">第三方关联</button>
+      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='profile' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='profile'">资料设置</button>
+      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='notifications' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='notifications'">通知管理</button>
+      <button class="rounded px-2 py-1 text-sm" :class="selectedTab==='connected' ? 'bg-brandDay-600 dark:bg-brandNight-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'" @click="selectedTab='connected'">第三方关联</button>
     </div>
 
     <div v-if="selectedTab==='profile'" class="space-y-3">
@@ -305,8 +308,18 @@ onUnmounted(() => {
         </div>
       </div>
       <div>
-        <button class="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700" :disabled="profileSaving" @click="saveProfile">保存资料</button>
+        <button class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-1 text-xs text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" :disabled="profileSaving" @click="saveProfile">保存资料</button>
         <span v-if="profileSaveMessage" :class="['ml-2 text-xs', profileSaveError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ profileSaveMessage }}</span>
+      </div>
+
+      <!-- 界面偏好：动态背景效果开关（本地持久化） -->
+      <div class="pt-2">
+        <div class="text-sm">界面偏好</div>
+        <label class="mt-1 inline-flex items-center gap-2 text-xs">
+          <input type="checkbox" :checked="dynamicBackgroundEnabled" @change="setDynamicBackgroundEnabled($event.target.checked)" />
+          启用动态背景效果（Day 下雪 / Night 星光闪烁）
+        </label>
+        <div class="text-[11px] text-gray-500 mt-1">尊重系统“减少动效”偏好；默认仅在 Day 下雪、Night 闪烁。</div>
       </div>
     </div>
 
@@ -337,7 +350,7 @@ onUnmounted(() => {
         </div>
       </div>
       <div>
-        <button class="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700" @click="saveNotificationSettings">保存通知设置</button>
+        <button class="rounded bg-brand-600 px-3 py-1 text-xs text-white hover:bg-brand-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="saveNotificationSettings">保存通知设置</button>
       </div>
 
       <div class="mt-4 text-sm">通知列表</div>

@@ -3,6 +3,7 @@ import './assets/main.css'
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
+import { initRecentVisitsTracking } from './composables/useRecentVisits'
 
 // Import highlight.js themes as URLs for dynamic switching
 import hljsThemeDarkUrl from 'highlight.js/styles/atom-one-dark.css?url'
@@ -59,5 +60,8 @@ if (window.matchMedia) {
 // Observe class changes on html element for frameworks toggling `.dark`
 const observer = new MutationObserver(applyHljsTheme)
 observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+
+// 初始化最近浏览追踪（路由 afterEach）
+try { initRecentVisitsTracking(router) } catch (_) {}
 
 createApp(App).use(router).mount('#app')

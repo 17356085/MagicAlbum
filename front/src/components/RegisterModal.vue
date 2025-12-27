@@ -1,10 +1,10 @@
 <template>
   <div class="fixed inset-0 z-50 flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/30" @click="onClose"></div>
-    <div class="relative z-10 w-full max-w-md rounded-lg border border-gray-200 bg-white shadow-xl">
-      <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+    <div class="absolute inset-0 bg-black/30 motion-safe:transition-opacity motion-safe:duration-300 motion-reduce:transition-none" @click="onClose"></div>
+    <div class="relative z-10 w-full max-w-md rounded-lg border border-gray-200 bg-white shadow-xl dark:bg-gray-800 dark:border-gray-700 motion-safe:transition-colors motion-safe:transition-opacity motion-safe:duration-300 motion-reduce:transition-none">
+      <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
         <h3 class="text-base font-semibold">注册成为 MagicAlbum 会员</h3>
-        <button class="rounded p-1 hover:bg-gray-100" @click="onClose" aria-label="关闭">✕</button>
+        <button class="rounded p-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="onClose" aria-label="关闭">✕</button>
       </div>
 
       <form class="px-4 py-4 space-y-3" @submit.prevent="onSubmit">
@@ -16,7 +16,7 @@
             @blur="validateUsername"
             type="text"
             placeholder="请输入用户名"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
           />
           <p v-if="errors.username" class="mt-1 text-xs text-red-600">{{ errors.username }}</p>
         </div>
@@ -28,7 +28,7 @@
             v-model.trim="form.phone"
             type="tel"
             placeholder="请输入手机号"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
           />
           <p v-if="errors.phone" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
         </div>
@@ -40,7 +40,7 @@
             v-model.trim="form.email"
             type="email"
             placeholder="name@example.com"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
           />
           <p v-if="errors.email" class="mt-1 text-xs text-red-600">{{ errors.email }}</p>
         </div>
@@ -53,7 +53,7 @@
             type="password"
             autocomplete="new-password"
             placeholder="不少于 8 位，建议包含数字与字母"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
           />
           <p v-if="errors.password" class="mt-1 text-xs text-red-600">{{ errors.password }}</p>
         </div>
@@ -66,17 +66,17 @@
             type="password"
             autocomplete="new-password"
             placeholder="再次输入密码"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
           />
           <p v-if="errors.confirmPassword" class="mt-1 text-xs text-red-600">{{ errors.confirmPassword }}</p>
         </div>
 
         <!-- 提交按钮 -->
         <div class="pt-2 flex items-center justify-end gap-2">
-          <button type="button" class="rounded px-3 py-2 text-sm hover:bg-gray-100" @click="onClose">取消</button>
+          <button type="button" class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="onClose">取消</button>
           <button
             type="submit"
-            class="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+            class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
             :disabled="submitting"
           >
             {{ submitting ? '提交中…' : '注册' }}

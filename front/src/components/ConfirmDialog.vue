@@ -32,10 +32,10 @@ function onCancel() {
       </div>
       <div class="px-4 py-4 text-sm text-gray-700 dark:text-gray-200">{{ message }}</div>
       <div class="px-4 pb-4 flex items-center justify-end gap-2">
-        <button class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="onCancel" :disabled="loading">{{ cancelText }}</button>
+        <button class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="onCancel" :disabled="loading">{{ cancelText }}</button>
         <button
-          class="rounded px-3 py-2 text-sm text-white disabled:opacity-60"
-          :class="danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'"
+          class="rounded px-3 py-2 text-sm text-white disabled:opacity-60 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+    :class="danger ? 'bg-red-600 hover:bg-red-700' : 'bg-brandDay-600 dark:bg-brandNight-600 hover:bg-brandDay-700 dark:hover:bg-brandNight-700'"
           @click="onConfirm"
           :disabled="loading"
         >

@@ -4,11 +4,11 @@
       v-model="localValue"
       type="text"
       :placeholder="placeholder"
-      class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:focus:border-accentCyan-500 dark:focus:ring-accentCyan-500"
       @keyup.enter="emitSearch"
     />
     <button
-      class="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      class="inline-flex items-center rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md"
       @click="emitSearch"
     >
       搜索

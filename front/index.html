@@ -13,9 +13,12 @@
     <meta name="application-name" content="MagicAlbum">
     <meta name="theme-color" content="#0ea5e9">
     <style>
-      /* 保持滚动条间隙稳定，避免页面在出现/消失滚动条时左右抖动 */
-      html { scrollbar-gutter: stable both-edges; }
+      /* 保持滚动条间隙稳定，避免页面在出现/消失滚动条时左右抖动；
+         注意：both-edges 会在左侧也保留一个滚动条宽度的空隙，导致“左侧边框”视觉问题。
+         改为 stable 仅在右侧保留间隙。 */
+      html { scrollbar-gutter: stable; }
       /* 兼容不支持 scrollbar-gutter 的浏览器：始终保留垂直滚动条占位 */
+      html, body { margin: 0; padding: 0; }
       body { overflow-y: scroll; }
     </style>
   </head>

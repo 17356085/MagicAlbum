@@ -1,23 +1,23 @@
 <template>
-  <header class="fixed top-0 left-0 right-0 z-50 border-b border-gray-200 bg-white/90 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90">
+  <header class="fixed top-0 left-0 right-0 z-50 border-b border-gray-200 bg-white/90 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90 text-gray-800 dark:text-gray-200 motion-safe:transition-colors motion-safe:transition-opacity motion-safe:duration-300 motion-reduce:transition-none">
     <div class="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <router-link to="/discover" class="inline-flex items-center hover:opacity-90" aria-label="返回发现">
           <IconMagicalbum aria-label="Magicalbum Logo" />
         </router-link>
-        <router-link to="/discover" class="text-lg font-semibold tracking-wide hover:opacity-90">MagicAlbum</router-link>
+        <router-link to="/discover" class="text-lg font-semibold tracking-wide hover:opacity-90 text-gray-800 dark:text-gray-100">MagicAlbum</router-link>
         <span class="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-600">beta</span>
       </div>
       <div class="hidden md:flex md:flex-1 md:mx-6 items-center gap-3">
         <div class="inline-flex rounded-md border border-gray-300 bg-white p-0.5 text-xs dark:bg-gray-800 dark:border-gray-700">
           <button
             class="rounded px-4 py-1 whitespace-nowrap"
-            :class="searchType === 'threads' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
+            :class="searchType === 'threads' ? 'bg-brand-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
             @click="searchType = 'threads'"
           >搜帖子</button>
           <button
             class="rounded px-4 py-1 whitespace-nowrap"
-            :class="searchType === 'users' ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
+            :class="searchType === 'users' ? 'bg-brand-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
             @click="searchType = 'users'"
           >搜用户</button>
         </div>
@@ -26,11 +26,23 @@
             v-model="searchQuery"
             type="text"
             :placeholder="searchType === 'users' ? '搜索用户名/昵称' : '搜索帖子标题或内容'"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 pr-10 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
             @keydown="onInputKeydown"
             @focus="onInputFocus"
             @blur="onInputBlur"
           />
+          <!-- 搜索图标按钮：与输入框一体化，右侧绝对定位 -->
+          <button
+            class="absolute right-1 top-1/2 -translate-y-1/2 rounded bg-brandDay-600 dark:bg-brandNight-600 p-2 text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-colors motion-safe:transition-transform motion-safe:duration-150 active:scale-95 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+            @click="doSearch"
+            aria-label="搜索"
+            title="搜索"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+              <path fill-rule="evenodd" d="M12.9 14.32a8 8 0 111.41-1.41l4.39 4.39a1 1 0 01-1.42 1.42l-4.38-4.4zM14 8a6 6 0 11-12 0 6 6 0 0112 0z" clip-rule="evenodd"/>
+            </svg>
+            <span class="sr-only">搜索</span>
+          </button>
           <div
             v-if="searchType === 'users' && suggestOpen && (searchQuery || '').trim()"
             class="absolute z-50 mt-2 w-full rounded-md border border-gray-200 bg-white shadow dark:bg-gray-800 dark:border-gray-700"
@@ -48,7 +60,7 @@
                 <router-link
                   :to="'/users/' + u.id"
                   class="flex items-center justify-between rounded px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700"
-                  :class="activeIndex === idx ? 'bg-blue-50 dark:bg-blue-900/30' : ''"
+                  :class="activeIndex === idx ? 'bg-brand-50 dark:bg-brand-900/30' : ''"
                   @click="suggestOpen = false"
                 >
                   <div class="flex items-center gap-2 min-w-0">
@@ -71,7 +83,7 @@
             </ul>
           </div>
         </div>
-        <button class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 whitespace-nowrap shrink-0" @click="doSearch">搜索</button>
+        
       </div>
       <nav class="flex items-center gap-2 text-sm">
         <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="toggleTheme" :title="themeLabel">
@@ -132,8 +144,8 @@
       </div>
       <div class="px-4 py-4 text-sm text-gray-700 dark:text-gray-200">确定要退出登录吗？</div>
       <div class="px-4 pb-4 flex items-center justify-end gap-2">
-        <button class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="showLogoutConfirm = false">取消</button>
-        <button class="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700" @click="confirmLogout">确认</button>
+        <button class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="showLogoutConfirm = false">取消</button>
+          <button class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="confirmLogout">确认</button>
       </div>
     </div>
   </div>

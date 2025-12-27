@@ -5,7 +5,7 @@
     <div v-else class="space-y-6 rounded-xl border border-gray-200 bg-white/90 p-6 shadow-sm dark:bg-gray-800/80 dark:border-gray-700">
       <!-- 返回按钮：单独一行显示在卡片顶部 -->
       <div>
-        <button @click="router.back()" class="inline-flex items-center p-1 rounded text-blue-600 hover:bg-blue-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
+<button @click="router.back()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
             <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
           </svg>
@@ -24,7 +24,7 @@
         <div>
           <div class="text-xl font-semibold">{{ profile.nickname || profile.username || '未命名用户' }}</div>
           <div v-if="profile.username" class="text-sm text-gray-600 dark:text-gray-300 mt-0.5">{{ profile.username }}</div>
-          <div v-if="profile.homepageUrl" class="text-sm text-blue-600 dark:text-blue-400 mt-1">
+<div v-if="profile.homepageUrl" class="text-sm text-brandDay-600 dark:text-brandNight-400 mt-1">
             <span class="mr-1 text-gray-600 dark:text-gray-300">主页链接：</span>
             <a :href="profile.homepageUrl" target="_blank" rel="noopener">{{ profile.homepageUrl }}</a>
           </div>
@@ -41,7 +41,7 @@
           <div class="text-gray-800 dark:text-gray-200">这个人很神秘，什么都没有写。</div>
         </template>
         <div v-if="isMe" class="mt-3">
-          <router-link to="/settings" class="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700">编辑资料</router-link>
+<router-link to="/settings" class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-1 text-xs text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500">编辑资料</router-link>
         </div>
       </div>
 
@@ -49,7 +49,7 @@
         <div class="text-sm text-gray-500">相关链接</div>
         <ul class="list-disc pl-6">
           <li v-for="(l, idx) in profile.links" :key="idx">
-            <a :href="l.url || l" target="_blank" rel="noopener" class="text-blue-600 dark:text-blue-400">{{ l.title || l.url || l }}</a>
+            <a :href="l.url || l" target="_blank" rel="noopener" class="text-brandDay-600 dark:text-brandNight-400">{{ l.title || l.url || l }}</a>
           </li>
         </ul>
       </div>

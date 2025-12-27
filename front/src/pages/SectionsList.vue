@@ -32,7 +32,7 @@ onMounted(load)
       <div v-if="sections.length === 0" class="text-gray-600 dark:text-gray-300">暂无分区</div>
       <template v-else>
         <ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <li v-for="s in sections" :key="s.id" class="rounded-md border border-gray-200 bg-white hover:border-blue-300 transition dark:bg-gray-800 dark:border-gray-700">
+          <li v-for="s in sections" :key="s.id" class="rounded-md border border-gray-200 bg-white hover:border-brandDay-300 transition dark:bg-gray-800 dark:border-gray-700 dark:hover:border-brandNight-700">
             <router-link :to="{ name: 'discover', query: { sectionId: s.id } }" class="block p-4">
               <div class="flex items-center justify-between">
                 <h2 class="text-lg font-medium">{{ s.name || s.title }}</h2>

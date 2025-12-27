@@ -8,6 +8,7 @@ import UserProfile from '@/pages/UserProfile.vue'
 import Settings from '@/pages/Settings.vue'
 import MyThreads from '@/pages/MyThreads.vue'
 import MyPosts from '@/pages/MyPosts.vue'
+import RecentHistory from '@/pages/RecentHistory.vue'
 
 const routes = [
   { path: '/', redirect: '/discover' },
@@ -20,11 +21,20 @@ const routes = [
   { path: '/settings', name: 'settings', component: Settings },
   { path: '/my/threads', name: 'my-threads', component: MyThreads },
   { path: '/my/posts', name: 'my-posts', component: MyPosts },
+  { path: '/history', name: 'history', component: RecentHistory },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
+  scrollBehavior(to, from, savedPosition) {
+    // 返回/前进时保留历史滚动位置
+    if (savedPosition) return savedPosition
+    // 哈希锚点定位（如评论 #post-123）
+    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    // 普通导航：滚动到页面顶部
+    return { top: 0 }
+  },
 })
 
 export default router
