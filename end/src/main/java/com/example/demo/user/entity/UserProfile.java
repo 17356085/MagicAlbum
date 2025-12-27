@@ -27,7 +27,7 @@ public class UserProfile {
     @Column(name = "location", length = 255)
     private String location;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "user_profile_links", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "link", length = 1024)
     private List<String> links = new ArrayList<>();

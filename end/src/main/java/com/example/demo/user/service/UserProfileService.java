@@ -34,12 +34,16 @@ public class UserProfileService {
             dto.setBio(nullToEmpty(up.getBio()));
             dto.setHomepageUrl(nullToEmpty(up.getHomepageUrl()));
             dto.setLocation(nullToEmpty(up.getLocation()));
-            dto.setLinks(up.getLinks() != null ? up.getLinks() : List.of());
+            dto.setLinks(up.getLinks() != null ? new ArrayList<>(up.getLinks()) : List.of());
+            // 始终从基础用户信息填充用户名
+            User u = userRepository.findById(userId).orElse(null);
+            dto.setUsername(u != null ? nullToEmpty(u.getUsername()) : "");
             return dto;
         }
         // fallback from basic user info when no profile record exists
         User u = userRepository.findById(userId).orElse(null);
         ProfileDto p = new ProfileDto();
+        p.setUsername(u != null ? nullToEmpty(u.getUsername()) : "");
         p.setNickname(u != null ? nullToEmpty(u.getUsername()) : "");
         p.setAvatarUrl("");
         p.setBio("");

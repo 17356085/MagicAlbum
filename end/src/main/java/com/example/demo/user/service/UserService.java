@@ -54,6 +54,7 @@ public class UserService {
         dto.setUsername(saved.getUsername());
         dto.setEmail(saved.getEmail());
         dto.setPhone(saved.getPhone());
+        dto.setCreatedAt(saved.getCreatedAt());
         return dto;
     }
 
@@ -69,6 +70,7 @@ public class UserService {
         dto.setUsername(u.getUsername());
         dto.setEmail(u.getEmail());
         dto.setPhone(u.getPhone());
+        dto.setCreatedAt(u.getCreatedAt());
         return dto;
     }
 }

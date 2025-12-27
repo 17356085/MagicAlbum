@@ -5,6 +5,7 @@ import java.time.Instant;
 public class PostDto {
     private Long id;
     private Long threadId;
+    private String threadTitle;
     private Long authorId;
     private String authorUsername;
     private String authorAvatarUrl;
@@ -17,6 +18,8 @@ public class PostDto {
     public void setId(Long id) { this.id = id; }
     public Long getThreadId() { return threadId; }
     public void setThreadId(Long threadId) { this.threadId = threadId; }
+    public String getThreadTitle() { return threadTitle; }
+    public void setThreadTitle(String threadTitle) { this.threadTitle = threadTitle; }
     public Long getAuthorId() { return authorId; }
     public void setAuthorId(Long authorId) { this.authorId = authorId; }
     public String getAuthorUsername() { return authorUsername; }

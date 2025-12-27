@@ -43,6 +43,27 @@ public class PostService {
         return p.map(this::toDto);
     }
 
+    public Page<PostDto> listByAuthor(Long authorId, String q, Long sectionId, String sort, int page, int size) {
+        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 50));
+        String s = (sort == null || sort.isBlank()) ? "createdAt" : sort.trim();
+        String keyword = (q == null || q.isBlank()) ? null : q.trim();
+        Page<Post> p;
+        if (keyword == null) {
+            if ("updatedAt".equalsIgnoreCase(s)) {
+                p = postRepository.findByAuthorUpdatedDescWithSection(authorId, sectionId, pr);
+            } else {
+                p = postRepository.findByAuthorCreatedDescWithSection(authorId, sectionId, pr);
+            }
+        } else {
+            if ("updatedAt".equalsIgnoreCase(s)) {
+                p = postRepository.searchByAuthorUpdatedDescWithSection(authorId, keyword, sectionId, pr);
+            } else {
+                p = postRepository.searchByAuthorCreatedDescWithSection(authorId, keyword, sectionId, pr);
+            }
+        }
+        return p.map(this::toDto);
+    }
+
     public PostDto create(Long authorId, Long threadId, CreatePostRequest req) {
         if (authorId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或令牌缺失");
@@ -111,6 +132,11 @@ public class PostService {
         PostDto dto = new PostDto();
         dto.setId(p.getId());
         dto.setThreadId(p.getThreadId());
+        // 帖子标题用于在“我的评论”页面显示所属帖子更直观的名称
+        try {
+            String title = threadRepository.findById(p.getThreadId()).map(t -> t.getTitle()).orElse(null);
+            dto.setThreadTitle(title);
+        } catch (Exception ignored) {}
         dto.setAuthorId(p.getAuthorId());
         dto.setAuthorUsername(userRepository.findById(p.getAuthorId()).map(u -> u.getUsername()).orElse(null));
         // 从用户资料服务获取头像 URL（允许为空字符串）

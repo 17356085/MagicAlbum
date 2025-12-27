@@ -133,3 +133,25 @@ CREATE TABLE IF NOT EXISTS attachments (
     PRIMARY KEY (id),
     KEY idx_attachments_target (target_type, target_id)
 );
+
+-- user_profiles：用户资料（头像、昵称、个性信息）
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id BIGINT NOT NULL,
+    nickname VARCHAR(255) NULL,
+    avatar_url VARCHAR(512) NULL,
+    bio VARCHAR(1024) NULL,
+    homepage_url VARCHAR(512) NULL,
+    location VARCHAR(255) NULL,
+    PRIMARY KEY (user_id),
+    CONSTRAINT fk_user_profiles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- user_profile_links：用户资料扩展链接（ElementCollection）
+CREATE TABLE IF NOT EXISTS user_profile_links (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    link VARCHAR(1024) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_user_profile_links_user (user_id),
+    CONSTRAINT fk_user_profile_links_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);

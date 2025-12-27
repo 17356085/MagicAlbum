@@ -87,9 +87,13 @@ public class UserController {
             @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
             @RequestBody ProfileDto payload
     ) {
-        Long userId = requireLogin(authorization);
-        ProfileDto updated = userProfileService.updateProfile(userId, payload);
-        return ResponseEntity.ok(updated);
+        try {
+            Long userId = requireLogin(authorization);
+            ProfileDto updated = userProfileService.updateProfile(userId, payload);
+            return ResponseEntity.ok(updated);
+        } catch (RuntimeException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "更新我的资料失败: " + e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage()));
+        }
     }
 
     @GetMapping("/me/settings")
@@ -130,14 +134,36 @@ public class UserController {
         return ResponseEntity.ok(body);
     }
 
+    // 公共接口：按指定用户ID分页列出其主题帖（每页默认10条）
+    @GetMapping("/{id}/threads")
+    public ResponseEntity<java.util.Map<String, Object>> listThreadsByUser(
+            @PathVariable("id") Long id,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "sectionId", required = false) Long sectionId,
+            @RequestParam(value = "sort", defaultValue = "updatedAt") String sort,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size
+    ) {
+        org.springframework.data.domain.Page<com.example.demo.threads.dto.ThreadDto> p = threadService.listByAuthor(id, q, sectionId, sort, page, size);
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("items", p.getContent());
+        body.put("page", page);
+        body.put("size", size);
+        body.put("total", p.getTotalElements());
+        return ResponseEntity.ok(body);
+    }
+
     @GetMapping("/me/posts")
     public ResponseEntity<java.util.Map<String, Object>> listMyPosts(
             @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "sectionId", required = false) Long sectionId,
+            @RequestParam(value = "sort", defaultValue = "createdAt") String sort,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
         Long userId = requireLogin(authorization);
-        org.springframework.data.domain.Page<com.example.demo.posts.dto.PostDto> p = postService.listByAuthor(userId, page, size);
+        org.springframework.data.domain.Page<com.example.demo.posts.dto.PostDto> p = postService.listByAuthor(userId, q, sectionId, sort, page, size);
         java.util.Map<String, Object> body = new java.util.HashMap<>();
         body.put("items", p.getContent());
         body.put("page", page);

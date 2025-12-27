@@ -11,3 +11,5 @@ CREATE TABLE IF NOT EXISTS users (
 -- 唯一索引
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_uq ON users (username);
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_uq ON users (email);
+-- 非唯一索引：提升按手机号过滤/搜索的性能
+CREATE INDEX IF NOT EXISTS users_phone_idx ON users (phone);

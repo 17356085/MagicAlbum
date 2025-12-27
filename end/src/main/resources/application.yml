@@ -5,7 +5,7 @@ spring:
   application:
     name: MagicAlbum
   profiles:
-    active: local # 可切换为 mysql 或 postgres
+    active: mysql # 可切换为 local 或 postgres
   jackson:
     time-zone: UTC
   jpa:
