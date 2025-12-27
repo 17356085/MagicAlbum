@@ -85,6 +85,14 @@
           </svg>
           <span class="sr-only">发帖</span>
         </router-link>
+        <!-- 通知：铃铛图标（占位按钮，后续接入通知功能） -->
+        <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" aria-label="通知" title="通知">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
+            <path d="M12 3a6 6 0 00-6 6v3.5l-1.5 2.5h15L18 12.5V9a6 6 0 00-6-6z" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M10 19a2 2 0 004 0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="sr-only">通知</span>
+        </button>
         <template v-if="!isLoggedIn">
           <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="showLogin = true">登录</button>
           <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="showRegister = true">注册</button>

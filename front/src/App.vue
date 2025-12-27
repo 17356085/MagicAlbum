@@ -8,7 +8,7 @@ import SidebarLeft from '@/components/SidebarLeft.vue'
     <HeaderBangumi />
 
     <main class="mx-auto max-w-7xl px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start flex-1 w-full">
-      <div class="hidden lg:block lg:col-span-3">
+      <div class="hidden lg:block lg:col-span-3 lg:sticky lg:top-[calc(4rem+1.5rem)] lg:max-h-[calc(100vh-4rem-1.5rem)] lg:overflow-y-auto">
         <SidebarLeft />
       </div>
       <div class="lg:col-span-9">

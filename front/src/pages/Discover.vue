@@ -4,6 +4,7 @@ import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import { useRoute, useRouter } from 'vue-router'
 import { listThreads } from '@/api/threads'
+import { getUserProfile } from '@/api/users'
 
 const loading = ref(false)
 const error = ref('')
@@ -20,6 +21,8 @@ const q = ref('')
 const expanded = ref({})
 // 手动页码输入与校验
 const inputPage = ref('')
+// 用户资料缓存：按用户ID存储 { nickname }
+const profiles = ref({})
 const totalPages = computed(() => {
   const s = Number(size.value || 20)
   const t = Number(total.value || 0)
@@ -80,6 +83,17 @@ async function load() {
       total.value = Number(data.total || 0)
       page.value = Number(data.page || page.value)
       size.value = Number(data.size || size.value)
+    }
+    // 异步补充作者昵称（不阻塞列表展示）
+    const authorIds = [...new Set((items.value || []).map(t => t?.authorId).filter(Boolean))]
+    for (const uid of authorIds) {
+      if (profiles.value[uid]?.nickname !== undefined) continue
+      try {
+        const p = await getUserProfile(uid)
+        profiles.value[uid] = { nickname: p?.nickname || '' }
+      } catch (_) {
+        profiles.value[uid] = { nickname: '' }
+      }
     }
   } catch (e) {
     error.value = '加载帖子失败'
@@ -201,7 +215,7 @@ function mdPreview(mdText) {
                       {{ isExpanded(t.id) ? '收起图片' : '展开图片' }}
                     </button>
                   </div>
-                  <div class="prose prose-sm line-clamp-4 flex-1 dark:prose-invert" v-html="mdPreview(t.content)"></div>
+                  <div class="prose prose-sm max-w-none line-clamp-4 flex-1 dark:prose-invert" v-html="mdPreview(t.content)"></div>
                 </div>
               </div>
               <!-- 只有图片 -->
@@ -215,13 +229,15 @@ function mdPreview(mdText) {
                 </button>
               </div>
               <!-- 只有文本 -->
-              <div v-else class="mt-2 prose prose-sm text-gray-700 line-clamp-4 dark:prose-invert" v-html="mdPreview(t.content)"></div>
+              <div v-else class="mt-2 prose prose-sm max-w-none text-gray-700 line-clamp-4 dark:prose-invert" v-html="mdPreview(t.content)"></div>
               <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
                 <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="hover:underline">
-                  发布者: {{ t.authorUsername || t.authorId }}
+                  发布者: {{ profiles[t.authorId]?.nickname || t.authorNickname || t.authorUsername || t.authorId }}
                 </router-link>
                 <span class="mx-2">·</span>
-                <span>分区: {{ t.sectionName || t.sectionId }}</span>
+                <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="hover:underline">
+                  分区: {{ t.sectionName || t.sectionId }}
+                </router-link>
                 <span class="mx-2">·</span>
                 <span>发布于: {{ new Date(t.createdAt).toLocaleString() }}</span>
               </div>

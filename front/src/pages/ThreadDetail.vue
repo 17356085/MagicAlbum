@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getThread } from '@/api/threads'
+import { getUserProfile } from '@/api/users'
 import { formatRelativeTime } from '@/composables/time'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
@@ -15,6 +16,7 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const t = ref(null)
+const authorNickname = ref('')
 // 从 URL hash 中解析需要滚动定位的评论 ID（格式：#post-<id>）
 const anchorPostId = ref(null)
 function updateAnchorFromHash() {
@@ -145,6 +147,18 @@ async function load() {
     const id = route.params.id
     const data = await getThread(id)
     t.value = data
+    // 补充作者昵称
+    const uid = t.value?.authorId
+    if (uid) {
+      try {
+        const p = await getUserProfile(uid)
+        authorNickname.value = p?.nickname || ''
+      } catch (_) {
+        authorNickname.value = ''
+      }
+    } else {
+      authorNickname.value = ''
+    }
   } catch (e) {
     error.value = '加载帖子详情失败'
   } finally {
@@ -189,10 +203,12 @@ watch(() => route.hash, () => updateAnchorFromHash())
         </div>
         <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
           <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="hover:underline">
-            发布者: {{ t.authorUsername || t.authorId }}
+            发布者: {{ authorNickname || t.authorNickname || t.authorUsername || t.authorId }}
           </router-link>
           <span class="mx-2">·</span>
-          <span>分区: {{ t.sectionName || t.sectionId }}</span>
+          <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="hover:underline">
+            分区: {{ t.sectionName || t.sectionId }}
+          </router-link>
           <span class="mx-2">·</span>
           <span>发布于: {{ formatRelativeTime(t.createdAt) }}</span>
         </div>

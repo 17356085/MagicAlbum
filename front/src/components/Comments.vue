@@ -8,6 +8,7 @@ import { listPosts, createPost, deletePost, updatePost } from '@/api/posts'
 import { uploadImage } from '@/api/uploads'
 import { formatRelativeTime } from '@/composables/time'
 import { useAuth } from '@/composables/useAuth'
+import { getUserProfile } from '@/api/users'
 
 const props = defineProps({
   threadId: { type: Number, required: true },
@@ -39,6 +40,7 @@ const groups = computed(() => {
       const parent = byId.get(pid)
       parent.children.push(n)
       n.parentAuthorUsername = parent.authorUsername || parent.authorId
+      n.parentAuthorId = parent.authorId
     }
   })
   const sortByCreated = (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
@@ -195,6 +197,31 @@ const replyToPostId = ref(null)
 const isLoggedIn = computed(() => !!localStorage.getItem('accessToken'))
 const previewMode = ref(false)
 const { user } = useAuth()
+// 用户资料缓存与工具：用于显示昵称
+const profiles = ref({})
+function nicknameOf(id, username) {
+  const uid = Number(id || 0)
+  const nick = uid > 0 ? (profiles.value?.[uid]?.nickname || '') : ''
+  return nick || username || id || ''
+}
+async function ensureProfilesFor(list) {
+  try {
+    const ids = Array.from(new Set((list || [])
+      .map(it => Number(it?.authorId || 0))
+      .filter(id => id > 0)))
+    const missing = ids.filter(id => !profiles.value?.[id])
+    if (!missing.length) return
+    const tasks = missing.map(id => getUserProfile(id).then(p => ({ id, p })).catch(() => ({ id, p: null })))
+    const results = await Promise.allSettled(tasks)
+    results.forEach(r => {
+      const val = r?.value || r
+      const id = Number(val?.id || 0)
+      const data = val?.p
+      const nickname = data?.nickname || data?.data?.nickname || data?.profile?.nickname || ''
+      if (id > 0) profiles.value[id] = { nickname: nickname || '' }
+    })
+  } catch (_) {}
+}
 
 // 资料更新事件：当我更换头像后，更新当前页面中我发表的评论头像
 function onProfileUpdated(evt) {
@@ -208,6 +235,8 @@ function onProfileUpdated(evt) {
       const start = (page.value - 1) * size.value
       const end = start + size.value
       items.value = allItems.value.slice(start, end)
+      // 拉取昵称资料（全量）
+      ensureProfilesFor(allItems.value)
     } else {
       items.value = apply(items.value)
     }
@@ -286,6 +315,8 @@ async function load() {
       total.value = Number(data.total || 0)
       page.value = Number(data.page || page.value)
       size.value = Number(data.size || size.value)
+      // 拉取昵称资料（当前页）
+      ensureProfilesFor(items.value)
     }
   } catch (e) {
     error.value = '加载评论失败'
@@ -317,6 +348,8 @@ async function loadAllForGlobalSort() {
     const start = (page.value - 1) * size.value
     const end = start + size.value
     items.value = allItems.value.slice(start, end)
+    // 拉取昵称资料（全量）
+    ensureProfilesFor(allItems.value)
     // 加载完成后尝试滚动到指定评论
     tryScrollToId(props.scrollToPostId)
   } catch (e) {
@@ -363,6 +396,8 @@ async function submit() {
     } else {
       items.value = items.value.map(it => (it.id === optimistic.id ? created : it))
     }
+    // 新评论作者昵称
+    ensureProfilesFor([created])
     content.value = ''
     replyToPostId.value = null
   } catch (e) {
@@ -628,10 +663,10 @@ function getChildrenPage(g) {
                   </template>
                   <template v-else>
                     <div class="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs text-gray-600 dark:text-gray-300">
-                      {{ String(g.root.authorUsername || g.root.authorId || '').slice(0,1).toUpperCase() || 'U' }}
+                      {{ String(nicknameOf(g.root.authorId, g.root.authorUsername) || '').slice(0,1).toUpperCase() || 'U' }}
                     </div>
                   </template>
-                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ g.root.authorUsername || g.root.authorId }}</div>
+                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ nicknameOf(g.root.authorId, g.root.authorUsername) }}</div>
                 </router-link>
                 <span class="text-xs text-gray-400">{{ g.root.floorLabel }} · {{ formatRelativeTime(g.root.createdAt) }}</span>
               </div>
@@ -672,15 +707,15 @@ function getChildrenPage(g) {
                   </template>
                   <template v-else>
                     <div class="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] text-gray-600 dark:text-gray-300">
-                      {{ String(c.authorUsername || c.authorId || '').slice(0,1).toUpperCase() || 'U' }}
+                      {{ String(nicknameOf(c.authorId, c.authorUsername) || '').slice(0,1).toUpperCase() || 'U' }}
                     </div>
                   </template>
-                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ c.authorUsername || c.authorId }}</div>
+                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ nicknameOf(c.authorId, c.authorUsername) }}</div>
                 </router-link>
                 <span class="text-xs text-gray-400">{{ formatRelativeTime(c.createdAt) }}</span>
               </div>
               <div class="mt-1 text-xs text-gray-600 dark:text-gray-300" v-if="c.replyToPostId">
-                回复 <a :href="'#post-' + c.replyToPostId" class="text-blue-600 hover:underline">@{{ c.parentAuthorUsername || c.replyToPostId }}</a>
+                回复 <a :href="'#post-' + c.replyToPostId" class="text-blue-600 hover:underline">@{{ nicknameOf(c.parentAuthorId, c.parentAuthorUsername) }}</a>
               </div>
               <div class="mt-2 prose max-w-none dark:prose-invert" v-html="render(c.content)"></div>
               <div class="mt-2 flex items-center gap-2 text-xs">
