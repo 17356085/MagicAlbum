@@ -3,16 +3,23 @@ import { ref, onMounted } from 'vue'
 import { getMyProfile, updateMyProfile, getMySettings, updateMySettings } from '@/api/settings'
 import { listNotifications, markNotificationRead, getNotificationSettings, updateNotificationSettings } from '@/api/notifications'
 import { listConnectedAccounts, connectAccount, disconnectAccount } from '@/api/connected'
-// 回溯到头像上传前：不再引入图片上传 API
+import { uploadImage } from '@/api/uploads'
+import { useAuth } from '@/composables/useAuth'
+import { normalizeImageUrl } from '@/utils/image'
 
 const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected'
 
 // Profile
-const profile = ref({ nickname: '', bio: '', homepageUrl: '', location: '', links: [] })
+const profile = ref({ nickname: '', bio: '', homepageUrl: '', location: '', links: [], avatarUrl: '' })
 const profileSaving = ref(false)
+const avatarUploading = ref(false)
+const avatarProgress = ref(0)
+const avatarPreviewUrl = ref('')
+const { token } = useAuth()
 async function loadProfile() {
   try {
     profile.value = await getMyProfile()
+    avatarPreviewUrl.value = normalizeImageUrl(profile.value?.avatarUrl || '')
   } catch (e) {}
 }
 async function saveProfile() {
@@ -24,12 +31,50 @@ async function saveProfile() {
       homepageUrl: profile.value?.homepageUrl || '',
       location: profile.value?.location || '',
       links: Array.isArray(profile.value?.links) ? profile.value.links : [],
+      avatarUrl: profile.value?.avatarUrl || '',
     }
     const data = await updateMyProfile(payload)
     profile.value = data
+    avatarPreviewUrl.value = normalizeImageUrl(profile.value?.avatarUrl || '')
     // 广播资料更新事件，供头部头像实时刷新
     try { window.dispatchEvent(new CustomEvent('profile-updated', { detail: data })) } catch {}
   } catch (e) {} finally { profileSaving.value = false }
+}
+
+async function onAvatarSelected(evt) {
+  try {
+    const file = evt?.target?.files?.[0]
+    if (!file) return
+    // 基本校验：类型与大小（<= 2MB）
+    if (!file.type.startsWith('image/')) {
+      alert('请上传图片文件')
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      alert('图片过大（>2MB），请压缩后再试')
+      return
+    }
+    // 令牌校验
+    const t = token.value || localStorage.getItem('accessToken') || ''
+    if (!t || String(t).startsWith('mock-token-')) {
+      alert('请登录后再上传头像')
+      return
+    }
+    avatarUploading.value = true
+    avatarProgress.value = 0
+    const resp = await uploadImage(file, t, (p) => { avatarProgress.value = p })
+    const url = resp?.url || resp?.path || resp
+    // 更新本地并保存到后端资料
+    profile.value.avatarUrl = url
+    avatarPreviewUrl.value = normalizeImageUrl(url)
+    await saveProfile()
+  } catch (e) {
+    alert(e?.response?.data?.message || e?.message || '头像上传失败')
+  } finally {
+    avatarUploading.value = false
+    avatarProgress.value = 0
+    try { evt.target.value = '' } catch {}
+  }
 }
 
 // Settings (for future use)
@@ -108,6 +153,22 @@ onMounted(async () => {
     </div>
 
     <div v-if="selectedTab==='profile'" class="space-y-3">
+      <div class="text-sm">头像设置</div>
+      <div class="flex items-center gap-3">
+        <template v-if="avatarPreviewUrl">
+          <img :src="avatarPreviewUrl" alt="头像预览" class="w-16 h-16 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
+        </template>
+        <template v-else>
+          <div class="w-16 h-16 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-sm font-medium">
+            {{ String(profile.nickname || 'U').slice(0,1).toUpperCase() }}
+          </div>
+        </template>
+        <div class="text-xs">
+          <input type="file" accept="image/*" @change="onAvatarSelected" />
+          <div v-if="avatarUploading" class="mt-1 text-gray-600 dark:text-gray-300">上传中… {{ avatarProgress }}%</div>
+        </div>
+      </div>
+
       <div class="text-sm">基本资料</div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label class="text-xs">昵称

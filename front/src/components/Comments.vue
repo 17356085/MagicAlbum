@@ -7,6 +7,7 @@ import markdownItKatex from 'markdown-it-katex'
 import { listPosts, createPost, deletePost, updatePost } from '@/api/posts'
 import { uploadImage } from '@/api/uploads'
 import { formatRelativeTime } from '@/composables/time'
+import { useAuth } from '@/composables/useAuth'
 
 const props = defineProps({
   threadId: { type: Number, required: true },
@@ -18,6 +19,8 @@ const props = defineProps({
   autoCollapseHeightThreshold: { type: Number, default: 480 },
   // 楼中楼子回复分页大小
   childPageSize: { type: Number, default: 10 },
+  // 可选：用于外部传入需要滚动定位的评论ID（例如通过 URL hash）
+  scrollToPostId: { type: Number, default: null },
 })
 
 const loading = ref(false)
@@ -191,6 +194,25 @@ const content = ref('')
 const replyToPostId = ref(null)
 const isLoggedIn = computed(() => !!localStorage.getItem('accessToken'))
 const previewMode = ref(false)
+const { user } = useAuth()
+
+// 资料更新事件：当我更换头像后，更新当前页面中我发表的评论头像
+function onProfileUpdated(evt) {
+  try {
+    const next = evt?.detail?.avatarUrl || ''
+    const myId = Number(user?.value?.id || 0)
+    if (!myId || !next) return
+    const apply = (arr) => (arr || []).map(it => (Number(it?.authorId || 0) === myId ? { ...it, authorAvatarUrl: next } : it))
+    if (Array.isArray(allItems.value)) {
+      allItems.value = apply(allItems.value)
+      const start = (page.value - 1) * size.value
+      const end = start + size.value
+      items.value = allItems.value.slice(start, end)
+    } else {
+      items.value = apply(items.value)
+    }
+  } catch (_) {}
+}
 
 function normalizeImageUrl(u) {
   if (!u) return ''
@@ -295,6 +317,8 @@ async function loadAllForGlobalSort() {
     const start = (page.value - 1) * size.value
     const end = start + size.value
     items.value = allItems.value.slice(start, end)
+    // 加载完成后尝试滚动到指定评论
+    tryScrollToId(props.scrollToPostId)
   } catch (e) {
     error.value = '加载全部评论失败'
   } finally {
@@ -393,7 +417,47 @@ function setReplyTo(id, rootId) {
 }
 function cancelReply() { replyToPostId.value = null }
 
+// 外部滚动定位到指定评论：展开所在楼层、切换到包含该评论的子分页，然后滚动到视图中
+function tryScrollToId(id) {
+  const targetId = Number(id || 0)
+  if (!targetId) return
+  const gs = groups.value || []
+  let targetGroup = null
+  let isRoot = false
+  for (const g of gs) {
+    if (Number(g?.root?.id || 0) === targetId) { targetGroup = g; isRoot = true; break }
+    const idx = (g.items || []).findIndex(c => Number(c?.id || 0) === targetId)
+    if (idx >= 0) { targetGroup = g; break }
+  }
+  if (!targetGroup) return
+  const rootId = Number(targetGroup.root?.id || 0)
+  if (!rootId) return
+  // 展开所在容器
+  collapsedMap.value[rootId] = false
+  // 若是子回复，切换到包含该子回复的页码
+  if (!isRoot) {
+    const idx = (targetGroup.items || []).findIndex(c => Number(c?.id || 0) === targetId)
+    const sizeChild = Math.max(1, Number(props.childPageSize || 10))
+    if (idx >= 0) groupPageMap.value[rootId] = Math.floor(idx / sizeChild) + 1
+  }
+  nextTick(() => {
+    try {
+      const el = document.getElementById('post-' + targetId)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } catch (_) {}
+  })
+}
+
+// 当外部传入的定位评论ID变化时，尝试滚动到该评论
+watch(() => props.scrollToPostId, (nid, oid) => {
+  if (nid && nid !== oid) {
+    // 若尚未加载完 groups，等待下一次 tick 后尝试；否则直接尝试
+    nextTick(() => tryScrollToId(nid))
+  }
+})
+
 onMounted(loadAllForGlobalSort)
+onMounted(() => { window.addEventListener('profile-updated', onProfileUpdated) })
 watch(() => props.threadId, () => { page.value = 1; loadAllForGlobalSort() })
 
 // 在挂载后与分组变化时，基于数量与宽度自动折叠
@@ -427,6 +491,7 @@ watch(groups, () => {
 
 onBeforeUnmount(() => {
   if (resizeObserver) resizeObserver.disconnect()
+  try { window.removeEventListener('profile-updated', onProfileUpdated) } catch (_) {}
 })
 
 // 当后端未提供分页结构时，前端基于 allItems 本地分页

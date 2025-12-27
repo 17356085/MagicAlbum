@@ -10,7 +10,7 @@ import MyThreads from '@/pages/MyThreads.vue'
 import MyPosts from '@/pages/MyPosts.vue'
 
 const routes = [
-  { path: '/', redirect: '/sections' },
+  { path: '/', redirect: '/discover' },
   { path: '/sections', name: 'sections', component: SectionsList },
   { path: '/discover', name: 'discover', component: Discover },
   { path: '/users', name: 'users', component: UsersSearch },

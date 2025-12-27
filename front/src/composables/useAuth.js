@@ -33,6 +33,8 @@ export function useAuth() {
     }
     if (tokenRef.value) localStorage.setItem('accessToken', tokenRef.value)
     if (userRef.value) localStorage.setItem('currentUser', JSON.stringify(userRef.value))
+    // 登录后强制刷新页面，避免残留旧数据或缓存状态
+    try { setTimeout(() => { window.location.reload() }, 10) } catch {}
   }
 
   async function loginWithEmailPassword({ email, password }) {
@@ -47,6 +49,8 @@ export function useAuth() {
     }
     if (tokenRef.value) localStorage.setItem('accessToken', tokenRef.value)
     if (userRef.value) localStorage.setItem('currentUser', JSON.stringify(userRef.value))
+    // 登录后强制刷新页面，避免残留旧数据或缓存状态
+    try { setTimeout(() => { window.location.reload() }, 10) } catch {}
   }
 
   function logout() {
@@ -54,6 +58,8 @@ export function useAuth() {
     userRef.value = null
     localStorage.removeItem('accessToken')
     localStorage.removeItem('currentUser')
+    // 登出后强制刷新页面，确保所有页面状态重置
+    try { setTimeout(() => { window.location.reload() }, 10) } catch {}
   }
 
   return {

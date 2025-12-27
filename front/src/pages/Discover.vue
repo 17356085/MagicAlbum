@@ -217,7 +217,9 @@ function mdPreview(mdText) {
               <!-- 只有文本 -->
               <div v-else class="mt-2 prose prose-sm text-gray-700 line-clamp-4 dark:prose-invert" v-html="mdPreview(t.content)"></div>
               <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
-                <span>发布者: {{ t.authorUsername || t.authorId }}</span>
+                <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="hover:underline">
+                  发布者: {{ t.authorUsername || t.authorId }}
+                </router-link>
                 <span class="mx-2">·</span>
                 <span>分区: {{ t.sectionName || t.sectionId }}</span>
                 <span class="mx-2">·</span>

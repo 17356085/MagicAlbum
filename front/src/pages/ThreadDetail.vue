@@ -15,6 +15,13 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const t = ref(null)
+// 从 URL hash 中解析需要滚动定位的评论 ID（格式：#post-<id>）
+const anchorPostId = ref(null)
+function updateAnchorFromHash() {
+  const h = String(route.hash || '')
+  const m = h.match(/^#post-(\d+)$/)
+  anchorPostId.value = m ? Number(m[1]) : null
+}
 // 将相对图片路径转换为后端完整URL
 function normalizeImageUrl(u) {
   if (!u) return ''
@@ -149,6 +156,7 @@ onMounted(async () => {
   await load()
   await nextTick()
   applyRuntimeHighlight()
+  updateAnchorFromHash()
 })
 
 // 内容变化时重新应用高亮
@@ -156,6 +164,8 @@ watch(contentHtml, async () => {
   await nextTick()
   applyRuntimeHighlight()
 })
+// 监听 hash 变化，允许在同页面内切换定位到不同评论
+watch(() => route.hash, () => updateAnchorFromHash())
 </script>
 
 <template>
@@ -178,7 +188,9 @@ watch(contentHtml, async () => {
           <span class="text-xs text-gray-500 dark:text-gray-400">#{{ t.id }}</span>
         </div>
         <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          <span>发布者: {{ t.authorUsername || t.authorId }}</span>
+          <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="hover:underline">
+            发布者: {{ t.authorUsername || t.authorId }}
+          </router-link>
           <span class="mx-2">·</span>
           <span>分区: {{ t.sectionName || t.sectionId }}</span>
           <span class="mx-2">·</span>
@@ -187,7 +199,7 @@ watch(contentHtml, async () => {
         <div class="mt-4 prose max-w-none dark:prose-invert" v-html="contentHtml" ref="contentRef"></div>
       </div>
     </div>
-    <Comments v-if="t?.id" :thread-id="Number(t.id)" />
+    <Comments v-if="t?.id" :thread-id="Number(t.id)" :scroll-to-post-id="anchorPostId" />
   </div>
 </template>
 

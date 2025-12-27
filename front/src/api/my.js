@@ -13,10 +13,12 @@ export async function listMyThreads({ q, sectionId, page = 1, size = 20, sort } 
 }
 
 // 我的评论
-export async function listMyPosts({ q, threadId, page = 1, size = 20 } = {}) {
+export async function listMyPosts({ q, threadId, sectionId, page = 1, size = 20, sort } = {}) {
   const params = {}
   if (q && q.trim()) params.q = q.trim()
   if (threadId) params.threadId = threadId
+  if (sectionId) params.sectionId = sectionId
+  if (sort) params.sort = sort
   params.page = page
   params.size = size
   const { data } = await api.get('/users/me/posts', { params })

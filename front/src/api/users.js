@@ -50,7 +50,36 @@ export async function listUsers({ q, page = 1, size = 20 } = {}) {
   params.page = page
   params.size = size
   const { data } = await api.get('/users', { params })
-  return data
+  // 统一返回结构为 { items, page, size, total }
+  if (Array.isArray(data)) {
+    return { items: data, page, size, total: data.length }
+  }
+  const items = Array.isArray(data?.items) ? data.items : []
+  const total = Number(data?.total ?? items.length)
+  const retPage = Number(data?.page ?? page)
+  const retSize = Number(data?.size ?? size)
+  return { items, page: retPage, size: retSize, total }
+}
+
+// 用户搜索联想：根据关键字返回前 N 条匹配的用户
+export async function suggestUsers(q, size = 5) {
+  const keyword = String(q || '').trim()
+  if (!keyword) return []
+  if (useMock) {
+    await delay(200)
+    const items = [
+      { id: 1, username: 'alice', email: 'alice@example.com' },
+      { id: 2, username: 'bob', email: 'bob@example.com' },
+      { id: 3, username: 'charlie', email: 'charlie@example.com' },
+      { id: 4, username: 'david', email: 'david@example.com' },
+      { id: 5, username: 'eve', email: 'eve@example.com' },
+    ].filter(u => String(u.username).toLowerCase().includes(keyword.toLowerCase())).slice(0, size)
+    return items
+  }
+  const params = { q: keyword, page: 1, size }
+  const { data } = await api.get('/users', { params })
+  const arr = Array.isArray(data) ? data : (data.items || [])
+  return arr
 }
 
 // 获取当前登录用户信息，兼容不同后端路径与返回结构
@@ -80,5 +109,17 @@ export async function getCurrentUser() {
 // 获取指定用户的公开资料（昵称、头像、主页、所在地、个人介绍、外链）
 export async function getUserProfile(id) {
   const { data } = await api.get(`/users/${id}/profile`)
+  return data
+}
+
+// 列出指定用户的主题帖（公开接口），分页与默认每页10条
+export async function listUserThreads(id, { q, sectionId, sort = 'updatedAt', page = 1, size = 10 } = {}) {
+  const params = {}
+  if (q && String(q).trim()) params.q = String(q).trim()
+  if (sectionId) params.sectionId = sectionId
+  if (sort) params.sort = sort
+  params.page = page
+  params.size = size
+  const { data } = await api.get(`/users/${id}/threads`, { params })
   return data
 }

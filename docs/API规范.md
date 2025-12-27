@@ -142,7 +142,8 @@
 ### 6. 我的评论（Posts — 我发表的）
 - `GET /api/v1/users/me/posts`
   - 查询参数：`{ q?: string, threadId?: number, page?: number, size?: number }`
-  - 返回：`{ items: Post[], page, size, total }`，`Post = { id, threadId, content, createdAt, authorId, authorUsername, replyToPostId?: number }`
+  - 返回：`{ items: Post[], page, size, total }`，`Post = { id, threadId, threadTitle?, content, createdAt, authorId, authorUsername, replyToPostId?: number }`
+    - 说明：`threadTitle` 为所属帖子的标题，便于前端“我的评论”列表直观展示；若后端无法获取则可为空。
 - `GET /api/v1/posts`
   - 扩展：支持 `authorId` 或 `mine=true` 过滤当前用户，参数：`{ q?, threadId?, authorId?, mine?, page?, size? }`
 - `DELETE /api/v1/posts/:id`
@@ -155,3 +156,9 @@
 ### 变更说明
 - `listThreads` 现有接口建议兼容 `authorId` 与 `mine` 两个新参数以统一搜索逻辑。
 - `updatedAt` 字段在 `PATCH /threads/:id` 成功后由服务端更新时间戳。
+ - `Post` 返回结构新增可选字段 `threadTitle`，用于在“我的评论”列表显示所属帖子标题。
+
+### 前端交互补充（锚点跳转约定）
+- “我的评论”列表中的帖子链接格式：`/threads/{threadId}#post-{postId}`。
+- 帖子详情页接收锚点后应定位并高亮对应评论元素（`id="post-{postId}"`），必要时展开折叠楼层并切换到包含该评论的分页。
+- 该约定不影响后端接口，仅为前端内部约束，便于跨页面定位评论。

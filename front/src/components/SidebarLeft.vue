@@ -18,19 +18,19 @@
           >发现</router-link>
         </li>
         <li><a href="#" class="block rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700">排行榜</a></li>
-        <li>
+        <li v-if="isLoggedIn">
           <router-link
             to="/settings"
             class="block rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700"
           >设置</router-link>
         </li>
-        <li>
+        <li v-if="isLoggedIn">
           <router-link
             to="/my/threads"
             class="block rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700"
           >我的帖子</router-link>
         </li>
-        <li>
+        <li v-if="isLoggedIn">
           <router-link
             to="/my/posts"
             class="block rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -53,8 +53,10 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
+const { isLoggedIn } = useAuth()
 const isSectionsActive = computed(() => route.name === 'sections' || route.path === '/sections')
 const isDiscoverActive = computed(() => route.name === 'discover' || route.path === '/discover')
 </script>
