@@ -331,7 +331,8 @@ async function fetchSuggestions(keyword) {
     const items = await suggestUsers(keyword, 5)
     const base = (Array.isArray(items) ? items : [])
     suggestions.value = base.slice(0, 5)
-    activeIndex.value = suggestions.value.length > 0 ? 0 : -1
+    // 取消默认选中联想建议：仅在用户用方向键选择后才有选中项
+    activeIndex.value = -1
     // 异步预取头像/昵称，提升建议项信息密度
     const ids = suggestions.value.map(u => u.id).filter(Boolean)
     prefetchSuggestionProfiles(ids)

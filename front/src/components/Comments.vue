@@ -773,5 +773,4 @@ function getChildrenPage(g) {
 </template>
 
 <style scoped>
-.prose :deep(img) { max-width: 100%; height: auto; }
 </style>

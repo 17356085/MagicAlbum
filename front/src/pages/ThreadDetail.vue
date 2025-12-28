@@ -238,21 +238,7 @@ watch(() => route.hash, () => updateAnchorFromHash())
 </template>
 
 <style scoped>
-/* 图片在容器内自适应宽度（v-html 内容需使用 :deep 选择器） */
-.prose :deep(img) { max-width: 100%; height: auto; }
-/* 代码块主题通过全局引入并支持暗色切换 */
-/* 代码块可横向滚动、留出内边距与圆角背景，提升可读性 */
-.prose :deep(pre) { overflow-x: auto; padding: 0.75rem; border-radius: 0.375rem; }
-.prose :deep(code) { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-.prose :deep(code.hljs) { display: block; }
-/* 亮色/暗色下的代码块背景与文字颜色 */
-.prose :deep(pre) { background: #f3f4f6; color: #111827; border: 1px solid #e5e7eb; }
-.prose :deep(code) { color: #111827; }
-.dark .prose :deep(pre) { background: #1f2937; color: #e5e7eb; border-color: #374151; }
-.dark .prose :deep(code) { color: #e5e7eb; }
-/* 行内代码微背景，随主题适配 */
-.prose :deep(p code:not(.hljs)) { background-color: rgba(31,41,55,0.06); padding: 0.125rem 0.25rem; border-radius: 0.25rem; }
-.dark .prose :deep(p code:not(.hljs)) { background-color: rgba(255,255,255,0.10); }
+/* 图片尺寸由全局 .prose img 统一控制 */
 /* 代码复制按钮样式 */
 .prose :deep(pre) { position: relative; }
 .prose :deep(.code-copy-btn) {

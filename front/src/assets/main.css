@@ -9,4 +9,52 @@
   body {
     @apply min-h-screen bg-gray-50 text-gray-800 antialiased dark:bg-gray-900 dark:text-gray-100;
   }
+  /* 代码块暗/亮配色变量（全局统一） */
+  :root {
+    --code-bg: #f3f4f6; /* gray-100 */
+    --code-fg: #111827; /* gray-900 */
+    --code-inline-bg: #f3f4f6; /* inline code bg (light) */
+    --code-inline-fg: #111827; /* inline code fg (light) */
+    --code-border: #e5e7eb; /* gray-200 */
+  }
+  .dark {
+    --code-bg: #1f2937; /* gray-800 */
+    --code-fg: #e5e7eb; /* gray-200 */
+    --code-inline-bg: #111827; /* gray-900 */
+    --code-inline-fg: #e5e7eb; /* gray-200 */
+    --code-border: #374151; /* gray-700 */
+  }
+}
+
+/* 统一控制 .prose 内代码块与行内代码样式 */
+@layer components {
+  .prose pre {
+    background-color: var(--code-bg);
+    color: var(--code-fg);
+    overflow-x: auto;
+    border-radius: 0.375rem; /* rounded-md */
+    padding: 0.75rem 1rem; /* px-4 py-3 */
+    border: 1px solid var(--code-border);
+  }
+  .prose pre code.hljs {
+    display: block;
+    background: transparent !important;
+    color: inherit;
+  }
+  .prose code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+  /* 行内代码（非代码块），提供轻微背景与圆角 */
+  .prose code:not(pre code) {
+    background-color: var(--code-inline-bg);
+    color: var(--code-inline-fg);
+    padding: 0.125rem 0.375rem; /* px-1.5 py-0.5 */
+    border-radius: 0.25rem; /* rounded */
+  }
+  /* 统一 Markdown 图片尺寸与比例 */
+  .prose img {
+    max-width: 100%;
+    height: auto;
+    max-height: var(--prose-img-max-height, 480px);
+  }
 }

@@ -302,7 +302,9 @@ onUnmounted(() => {
             <span class="text-xs text-gray-500">字数：{{ String(profile.bio||'').length }}/{{ bioMax }}</span>
           </div>
           <div class="relative mt-1">
-            <MdEditor v-model="profile.bio" :onUploadImg="onUploadBioImg" :theme="isDark ? 'dark' : 'light'" :showWordCount="false" class="rounded-md border border-gray-300 dark:border-gray-700" />
+            <div class="prose max-w-none dark:prose-invert">
+              <MdEditor v-model="profile.bio" :onUploadImg="onUploadBioImg" :theme="isDark ? 'dark' : 'light'" :showWordCount="false" class="rounded-md border border-gray-300 dark:border-gray-700" />
+            </div>
             <div v-if="bioUploading" class="absolute top-2 right-3 text-xs bg-white/80 px-2 py-1 rounded border border-gray-200 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-200">
               上传中 {{ bioUploadProgress }}%
             </div>
