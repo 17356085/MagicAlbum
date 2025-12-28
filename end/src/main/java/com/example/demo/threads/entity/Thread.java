@@ -1,13 +1,18 @@
 package com.example.demo.threads.entity;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
 @Table(name = "threads")
+@TableName("threads")
 public class Thread {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
     @Column(name = "section_id", nullable = false)

@@ -7,6 +7,8 @@ import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -19,12 +21,18 @@ public class ThreadService {
     private final SectionRepository sectionRepository;
     private final UserRepository userRepository;
     private final MarkdownRenderService markdownRenderService;
+    private final com.example.demo.threads.service.mp.ThreadReadServiceMp threadReadServiceMp;
+    private final boolean mpThreadsEnabled;
 
-    public ThreadService(ThreadRepository threadRepository, SectionRepository sectionRepository, UserRepository userRepository, MarkdownRenderService markdownRenderService) {
+    public ThreadService(ThreadRepository threadRepository, SectionRepository sectionRepository, UserRepository userRepository, MarkdownRenderService markdownRenderService,
+                         ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
+                         @Value("${feature.mp.read.threads:false}") boolean mpThreadsEnabled) {
         this.threadRepository = threadRepository;
         this.sectionRepository = sectionRepository;
         this.userRepository = userRepository;
         this.markdownRenderService = markdownRenderService;
+        this.threadReadServiceMp = threadReadServiceMpProvider.getIfAvailable();
+        this.mpThreadsEnabled = mpThreadsEnabled;
     }
 
     public ThreadDto create(Long authorId, CreateThreadRequest req) {
@@ -62,8 +70,14 @@ public class ThreadService {
     }
 
     public Page<ThreadDto> list(String q, Long sectionId, int page, int size) {
-        // 每页最多10条
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 10));
+        int limit = Math.min(Math.max(size, 1), 10);
+        int pageIndex = Math.max(page - 1, 0);
+        if (mpThreadsEnabled && threadReadServiceMp != null) {
+            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Thread> mpPage = threadReadServiceMp.searchNewest(q, sectionId, page, limit);
+            java.util.List<ThreadDto> items = mpPage.getRecords().stream().map(this::toDto).toList();
+            return new org.springframework.data.domain.PageImpl<>(items, PageRequest.of(pageIndex, limit), mpPage.getTotal());
+        }
+        PageRequest pr = PageRequest.of(pageIndex, limit);
         Page<Thread> p = threadRepository.searchNewest(
                 (q == null || q.isBlank()) ? null : q,
                 sectionId,

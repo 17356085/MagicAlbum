@@ -75,6 +75,12 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
+        <!-- JDBC 基础（Spring Boot 4 将 DataSourceAutoConfiguration 拆分到 JDBC 模块） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
         <!-- Database drivers -->
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -118,6 +124,20 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Ensure Boot test autoconfigure is available for @AutoConfigureMockMvc under Boot 4 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-test-autoconfigure</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Spring Boot 4：WebMVC 专用测试 starter，提供 @AutoConfigureMockMvc 等 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- AWS SDK v2 - S3 -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -140,6 +160,7 @@
       <artifactId>flexmark-all</artifactId>
       <version>0.64.8</version>
     </dependency>
+      <!-- MyBatis-Plus 依赖交由 Maven profiles 管理，便于在 Spring Boot3/4 间切换兼容组合 -->
   </dependencies>
 
     <build>
@@ -151,6 +172,18 @@
         </plugins>
     </build>
     <repositories>
+        <!-- 显式声明 Maven Central，确保可解析正式发布的依赖 -->
+        <repository>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo1.maven.org/maven2</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
         <repository>
             <id>spring-snapshots</id>
             <name>Spring Snapshots</name>
@@ -169,6 +202,99 @@
                 <enabled>false</enabled>
             </releases>
         </pluginRepository>
-    </pluginRepositories>
+</pluginRepositories>
+
+    <!-- 兼容性 Profiles：在 Spring Boot 3 与 4 间切换 MyBatis 组合 -->
+    <profiles>
+        <!-- Spring Boot 3.x 线：使用 MP Boot3 Starter + MyBatis-Spring 3.x -->
+        <profile>
+            <id>mp-boot3</id>
+            <properties>
+                <mp.boot3.version>3.5.13</mp.boot3.version>
+                <mybatis.spring.version>3.0.5</mybatis.spring.version>
+                <mybatis.core.version>3.5.19</mybatis.core.version>
+            </properties>
+            <dependencyManagement>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.mybatis</groupId>
+                        <artifactId>mybatis</artifactId>
+                        <version>${mybatis.core.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.mybatis</groupId>
+                        <artifactId>mybatis-spring</artifactId>
+                        <version>${mybatis.spring.version}</version>
+                    </dependency>
+                </dependencies>
+            </dependencyManagement>
+            <dependencies>
+                <dependency>
+                    <groupId>com.baomidou</groupId>
+                    <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+                    <version>${mp.boot3.version}</version>
+                </dependency>
+                <!-- 显式声明 extension 以帮助 IDE 解析 PaginationInnerInterceptor（即使由 starter 传递） -->
+                <dependency>
+                    <groupId>com.baomidou</groupId>
+                    <artifactId>mybatis-plus-extension</artifactId>
+                    <version>${mp.boot3.version}</version>
+                </dependency>
+                <!-- 从 3.5.9 起分页插件拆分，需要额外引入 jsqlparser 模块 -->
+                <dependency>
+                    <groupId>com.baomidou</groupId>
+                    <artifactId>mybatis-plus-jsqlparser</artifactId>
+                    <version>${mp.boot3.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <!-- Spring Boot 4.x 线：使用 MP Boot4 Starter + MyBatis-Spring 4.x（Spring Framework 7） -->
+        <profile>
+            <id>mp-boot4</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <mp.boot4.version>3.5.15</mp.boot4.version>
+                <mybatis.spring.version>4.0.0</mybatis.spring.version>
+                <mybatis.core.version>3.5.19</mybatis.core.version>
+            </properties>
+            <dependencyManagement>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.mybatis</groupId>
+                        <artifactId>mybatis</artifactId>
+                        <version>${mybatis.core.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.mybatis</groupId>
+                        <artifactId>mybatis-spring</artifactId>
+                        <version>${mybatis.spring.version}</version>
+                    </dependency>
+                </dependencies>
+            </dependencyManagement>
+            <dependencies>
+                <!-- 使用 MyBatis 官方 Spring Boot 4 Starter，兼容 DataSourceAutoConfiguration 新包路径 -->
+                <dependency>
+                    <groupId>org.mybatis.spring.boot</groupId>
+                    <artifactId>mybatis-spring-boot-starter</artifactId>
+                    <version>4.0.0</version>
+                </dependency>
+                <!-- 显式声明 extension 以帮助 IDE 解析 PaginationInnerInterceptor -->
+                <dependency>
+                    <groupId>com.baomidou</groupId>
+                    <artifactId>mybatis-plus-extension</artifactId>
+                    <version>${mp.boot4.version}</version>
+                </dependency>
+                <!-- 从 3.5.9 起分页插件拆分，需要额外引入 jsqlparser 模块 -->
+                <dependency>
+                    <groupId>com.baomidou</groupId>
+                    <artifactId>mybatis-plus-jsqlparser</artifactId>
+                    <version>${mp.boot4.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 
 </project>
