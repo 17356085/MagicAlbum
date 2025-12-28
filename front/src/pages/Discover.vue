@@ -167,6 +167,8 @@ function textExcerpt(mdText, maxLen = 180) {
 
 // Markdown 预览：移除代码块与图片，仅渲染文本、行内元素
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+// 启用 GFM 删除线支持：~~text~~
+try { md.enable(['strikethrough']) } catch (_) {}
 function mdPreview(mdText) {
   if (!mdText) return ''
   let s = String(mdText)
@@ -180,6 +182,14 @@ function mdPreview(mdText) {
   s = s.replace(/<img[^>]*>/gi, '')
   const html = md.render(s)
   return DOMPurify.sanitize(html)
+}
+
+// 标题行内 Markdown 渲染（仅文本行内，支持删除线），并进行清理
+const mdTitle = new MarkdownIt({ html: false, linkify: true, breaks: false })
+try { mdTitle.enable(['strikethrough']) } catch (_) {}
+function renderTitle(text) {
+  const safe = String(text || '')
+  return DOMPurify.sanitize(mdTitle.renderInline(safe))
 }
 </script>
 
@@ -196,7 +206,7 @@ function mdPreview(mdText) {
           <li v-for="t in items" :key="t.id" class="rounded-md border border-gray-200 bg-white hover:border-brandDay-300 transition dark:bg-gray-800 dark:border-gray-700 dark:hover:border-brandNight-700">
             <router-link :to="`/threads/${t.id}`" class="block p-4">
               <div class="flex items-center justify-between">
-                <h2 class="text-lg font-medium">{{ t.title }}</h2>
+                <h2 class="text-lg font-medium prose dark:prose-invert" v-html="renderTitle(t.title)"></h2>
                 <span class="text-xs text-gray-500 dark:text-gray-400">#{{ t.id }}</span>
               </div>
               <!-- 图片预览：不进入详情也能看到首张图片 -->

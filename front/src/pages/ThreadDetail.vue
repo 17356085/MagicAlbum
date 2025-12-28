@@ -60,8 +60,19 @@ const md = new MarkdownIt({
   }
 })
 
+// 启用 GFM 删除线支持：~~text~~
+try { md.enable(['strikethrough']) } catch (_) {}
+
 // 数学公式支持
 md.use(markdownItKatex)
+
+// 标题使用行内 Markdown 渲染（更安全），统一支持删除线
+const mdTitle = new MarkdownIt({ html: false, linkify: true, breaks: false })
+try { mdTitle.enable(['strikethrough']) } catch (_) {}
+function renderTitle(text) {
+  const safe = String(text || '')
+  return DOMPurify.sanitize(mdTitle.renderInline(safe))
+}
 
 // 图片懒加载与响应式宽度
 const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) {
@@ -83,14 +94,18 @@ md.renderer.rules.image = function(tokens, idx, options, env, self) {
   return defaultImageRule(tokens, idx, options, env, self)
 }
 const contentHtml = computed(() => {
-  // 优先使用服务端渲染的 HTML（若提供），否则在前端渲染
+  // 为保持与列表页一致的 Markdown 行为（含删除线），优先使用前端渲染
+  const raw = t.value?.content
+  if (typeof raw === 'string' && raw.length > 0) {
+    const rendered = md.render(raw)
+    return DOMPurify.sanitize(rendered)
+  }
+  // 若无原始内容（仅返回已渲染的 HTML），再使用服务端 HTML
   const serverHtml = t.value?.contentHtml
-  if (serverHtml && typeof serverHtml === 'string') {
+  if (typeof serverHtml === 'string' && serverHtml.length > 0) {
     return DOMPurify.sanitize(serverHtml)
   }
-  const raw = t.value?.content || ''
-  const rendered = md.render(raw)
-  return DOMPurify.sanitize(rendered)
+  return ''
 })
 
 // 针对服务端返回的 HTML 或未走 markdown-it highlight 的情况，渲染后执行 hljs
@@ -141,6 +156,16 @@ function applyRuntimeHighlight() {
   })
 }
 
+// 安全返回：若直接通过地址栏进入或无站内来源，则跳转到发现页
+function safeBack() {
+  const ref = document.referrer || ''
+  const sameOrigin = ref && ref.startsWith(location.origin)
+  if (!sameOrigin || window.history.length <= 1) {
+    router.replace({ name: 'discover' })
+  } else {
+    router.back()
+  }
+}
 async function load() {
   loading.value = true
   error.value = ''
@@ -210,12 +235,12 @@ watch(() => route.hash, () => updateAnchorFromHash())
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <!-- 返回上一页：图标按钮，内联到标题左侧 -->
-<button @click="router.back()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500" aria-label="返回上一页" title="返回上一页">
+<button @click="safeBack()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500" aria-label="返回上一页" title="返回上一页">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
                 <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
               </svg>
             </button>
-            <h1 class="text-xl font-semibold">{{ t.title }}</h1>
+            <h1 class="text-xl font-semibold prose dark:prose-invert" v-html="renderTitle(t.title)"></h1>
           </div>
           <span class="text-xs text-gray-500 dark:text-gray-400">#{{ t.id }}</span>
         </div>

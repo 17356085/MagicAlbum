@@ -33,6 +33,17 @@ function clearAll() {
   load()
 }
 
+// 安全返回：若直接通过地址栏进入或无站内来源，则跳转到发现页
+function safeBack() {
+  const ref = document.referrer || ''
+  const sameOrigin = ref && ref.startsWith(location.origin)
+  if (!sameOrigin || window.history.length <= 1) {
+    router.replace({ name: 'discover' })
+  } else {
+    router.back()
+  }
+}
+
 // 仅在点击搜索或按下回车时执行搜索
 function applySearch() {
   query.value.q = String(searchText.value || '').trim()
@@ -111,7 +122,7 @@ watch(isLoggedIn, (v) => {
       <div class="flex items-center justify-between border-b px-3 py-2 text-sm font-medium dark:border-gray-700 dark:text-gray-100">
         <div class="flex items-center gap-2">
           <!-- 返回箭头置于黑框标题栏左上角 -->
-          <button @click="router.back()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
+          <button @click="safeBack()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
               <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
             </svg>

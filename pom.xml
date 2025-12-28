@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- 继承 Spring Boot 父 POM，集中管理版本与插件 -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.2-SNAPSHOT</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.study.spring</groupId>
+    <artifactId>bluealbum-parent</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>bluealbum-parent</name>
+    <description>BlueAlbum 根父项目（集中属性与构建配置）</description>
+
+    <!-- 全局属性（对子模块生效） -->
+    <properties>
+        <java.version>21</java.version>
+        <jjwt.version>0.12.5</jjwt.version>
+        <!-- 全局禁用 AOT 与测试 AOT，避免 Windows 环境下触发删除目录异常 -->
+        <spring.aot.enabled>false</spring.aot.enabled>
+        <spring.test.aot.enabled>false</spring.test.aot.enabled>
+    </properties>
+
+    <!-- 聚合模块 -->
+    <modules>
+        <module>end</module>
+    </modules>
+
+    <!-- 统一插件版本与执行配置，定义在父 POM 的 pluginManagement 中 -->
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>4.0.1</version>
+                    <!-- 全局禁用所有 spring-boot-maven-plugin 目标的执行（包括直接调用） -->
+                    <configuration>
+                        <skip>true</skip>
+                    </configuration>
+                    <executions>
+                        <!-- 显式禁用应用 AOT 目标 -->
+                        <execution>
+                            <id>disable-process-aot</id>
+                            <goals>
+                                <goal>process-aot</goal>
+                            </goals>
+                            <configuration>
+                                <skip>true</skip>
+                            </configuration>
+                        </execution>
+                        <!-- 显式禁用测试 AOT 目标 -->
+                        <execution>
+                            <id>disable-process-test-aot</id>
+                            <goals>
+                                <goal>process-test-aot</goal>
+                            </goals>
+                            <configuration>
+                                <skip>true</skip>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+</project>

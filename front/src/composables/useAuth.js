@@ -58,6 +58,8 @@ export function useAuth() {
     userRef.value = null
     localStorage.removeItem('accessToken')
     localStorage.removeItem('currentUser')
+    // 退出登录时清理发帖草稿，避免跨账号残留
+    try { localStorage.removeItem('thread-draft-v1') } catch {}
     // 登出后强制刷新页面，确保所有页面状态重置
     try { setTimeout(() => { window.location.reload() }, 10) } catch {}
   }

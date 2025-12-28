@@ -1,0 +1,32 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:bluealbum_test;DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_UPPER=false
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false
+
+# 关闭 MyBatis-Plus 读取线程的条件配置，避免测试环境未准备数据表时加载
+feature:
+  mp:
+    read:
+      threads: false
+
+logging:
+  level:
+    root: info
+
+# 关闭文档生成，避免 springdoc 在测试上下文中加载并触发 Querydsl 自定义器
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

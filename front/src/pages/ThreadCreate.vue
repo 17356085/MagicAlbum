@@ -1,11 +1,12 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { listSections } from '@/api/sections'
 import { createThread } from '@/api/threads'
 import { uploadImage } from '@/api/uploads'
 import { useAuth } from '@/composables/useAuth'
+import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -31,6 +32,23 @@ function updateIsDark() {
   isDark.value = hasDarkClass || prefersDark
 }
 let themeObserver = null
+
+// 草稿存储键与提示信息
+const DRAFT_KEY = 'thread-draft-v1'
+const draftMessage = ref('')
+// 通用草稿：面向整个 form 对象，防抖自动保存
+const { draftHasData, saveDraft, restoreDraft, clearDraft, startAutoSave, stopAutoSave } = useDraft(DRAFT_KEY, {
+  sourceRef: form,
+  autoSaveMs: 800,
+  serialize: (val) => JSON.stringify({
+    sectionId: val?.sectionId || '',
+    title: val?.title || '',
+    content: val?.content || '',
+    savedAt: Date.now(),
+  }),
+  deserialize: (raw) => JSON.parse(raw),
+  restoreMode: 'fill-empty',
+})
 
 // 规范化图片URL：将相对路径（/uploads/... 或 uploads/...）拼接为后端完整地址
 function normalizeImageUrl(u) {
@@ -100,6 +118,8 @@ async function submit() {
     }
     await createThread(payload)
     success.value = '发布成功'
+    // 发布成功后清除草稿
+    clearDraft()
     // 成功后重置所有输入：分区、标题、内容
     form.value = { sectionId: '', title: '', content: '' }
   } catch (e) {
@@ -107,6 +127,31 @@ async function submit() {
     error.value = msg
   } finally {
     submitting.value = false
+  }
+}
+
+// 手动按钮：在页面上给予提示，但逻辑已由 composable 处理
+function onSaveDraft() {
+  saveDraft()
+  draftMessage.value = '已保存草稿'
+  setTimeout(() => { draftMessage.value = '' }, 1500)
+}
+
+function onClearDraft() {
+  clearDraft()
+  draftMessage.value = '已清除草稿'
+  setTimeout(() => { draftMessage.value = '' }, 1500)
+}
+
+// 标准化美化：调用通用 beautifyMarkdown
+async function beautifyContent() {
+  try {
+    form.value.content = await beautifyMarkdown(form.value.content)
+    draftMessage.value = '已美化内容'
+    setTimeout(() => { draftMessage.value = '' }, 1500)
+  } catch (e) {
+    draftMessage.value = '美化失败'
+    setTimeout(() => { draftMessage.value = '' }, 1500)
   }
 }
 
@@ -122,6 +167,13 @@ onMounted(() => {
   }
   themeObserver = new MutationObserver(updateIsDark)
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  // 草稿检测与自动恢复
+  if (draftHasData.value && !form.value.title && !form.value.content) {
+    restoreDraft()
+    draftMessage.value = '已恢复草稿'
+    setTimeout(() => { draftMessage.value = '' }, 1500)
+  }
+  startAutoSave()
 })
 
 onUnmounted(() => {
@@ -129,7 +181,10 @@ onUnmounted(() => {
     try { themeObserver.disconnect() } catch (_) {}
     themeObserver = null
   }
+  stopAutoSave()
 })
+
+// 自动保存交由 composable 管理
 </script>
 
 <template>
@@ -162,12 +217,16 @@ onUnmounted(() => {
         </div>
 
         <div class="flex items-center gap-2">
+          <button type="button" class="rounded border px-3 py-1 text-sm dark:border-gray-700 dark:text-gray-200" @click="onSaveDraft">保存草稿</button>
+          <button type="button" class="rounded border px-3 py-1 text-sm dark:border-gray-700 dark:text-gray-200" @click="beautifyContent">美化内容</button>
           <button :disabled="submitting" class="inline-flex items-center rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-4 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:cursor-not-allowed disabled:opacity-50 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="submit">
             {{ submitting ? '发布中...' : '发布' }}
           </button>
           <span v-if="!isLoggedIn" class="text-sm text-gray-600 dark:text-gray-300">请先登录后再发帖</span>
           <span v-if="success" class="text-sm text-green-600 dark:text-green-400">{{ success }}</span>
           <span v-if="error" class="text-sm text-red-600 dark:text-red-400">{{ error }}</span>
+          <span v-if="draftMessage" class="text-xs text-gray-500 dark:text-gray-400">{{ draftMessage }}</span>
+          <button v-if="draftHasData" type="button" class="text-xs text-gray-500 underline decoration-dotted" @click="onClearDraft">清除草稿</button>
         </div>
       </div>
     </div>

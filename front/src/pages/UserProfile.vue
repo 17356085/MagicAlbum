@@ -5,7 +5,7 @@
     <div v-else class="space-y-6 rounded-xl border border-gray-200 bg-white/90 p-6 shadow-sm dark:bg-gray-800/80 dark:border-gray-700">
       <!-- 返回按钮：单独一行显示在卡片顶部 -->
       <div>
-<button @click="router.back()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
+<button @click="safeBack()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
             <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
           </svg>
@@ -130,6 +130,8 @@ const md = new MarkdownIt({
   }
 })
 md.use(markdownItKatex)
+// 启用 GFM 删除线支持：~~text~~
+try { md.enable(['strikethrough']) } catch (_) {}
 const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) { return self.renderToken(tokens, idx, options) }
 md.renderer.rules.image = function(tokens, idx, options, env, self) {
   const token = tokens[idx]
@@ -141,6 +143,17 @@ md.renderer.rules.image = function(tokens, idx, options, env, self) {
   const srcIdx = token.attrIndex('src')
   if (srcIdx >= 0) token.attrs[srcIdx][1] = normalizeImageUrl(token.attrs[srcIdx][1])
   return defaultImageRule(tokens, idx, options, env, self)
+}
+
+// 安全返回：若直接通过地址栏进入或无站内来源，则跳转到发现页
+function safeBack() {
+  const ref = document.referrer || ''
+  const sameOrigin = ref && ref.startsWith(location.origin)
+  if (!sameOrigin || window.history.length <= 1) {
+    router.replace({ name: 'discover' })
+  } else {
+    router.back()
+  }
 }
 
 function renderBio(raw) {

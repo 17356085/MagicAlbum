@@ -3,10 +3,10 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.2-SNAPSHOT</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <groupId>com.study.spring</groupId>
+        <artifactId>bluealbum-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
     <groupId>com.study.spring</groupId>
     <artifactId>demo1</artifactId>
@@ -29,6 +29,9 @@
     <properties>
         <java.version>21</java.version>
         <jjwt.version>0.12.5</jjwt.version>
+        <!-- 全局禁用 AOT 与测试 AOT，避免在 Windows 环境下触发删除目录异常 -->
+        <spring.aot.enabled>false</spring.aot.enabled>
+        <spring.test.aot.enabled>false</spring.test.aot.enabled>
     </properties>
   <dependencies>
         <dependency>
@@ -161,6 +164,11 @@
       <version>0.64.8</version>
     </dependency>
       <!-- MyBatis-Plus 依赖交由 Maven profiles 管理，便于在 Spring Boot3/4 间切换兼容组合 -->
+    <!-- 提供 org.springframework.data.util.TypeInformation，避免 springdoc 在 AOT 期间反射失败 -->
+    <dependency>
+      <groupId>org.springframework.data</groupId>
+      <artifactId>spring-data-commons</artifactId>
+    </dependency>
   </dependencies>
 
     <build>
@@ -168,6 +176,14 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>4.0.1</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
@@ -259,6 +275,9 @@
                 <mp.boot4.version>3.5.15</mp.boot4.version>
                 <mybatis.spring.version>4.0.0</mybatis.spring.version>
                 <mybatis.core.version>3.5.19</mybatis.core.version>
+                <!-- 关闭 AOT（尤其是测试 AOT），避免插件在 Windows 上删除目录异常导致构建失败 -->
+                <spring.test.aot.enabled>false</spring.test.aot.enabled>
+                <spring.aot.enabled>false</spring.aot.enabled>
             </properties>
             <dependencyManagement>
                 <dependencies>
