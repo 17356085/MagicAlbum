@@ -4,7 +4,6 @@ import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import { useRoute, useRouter } from 'vue-router'
 import { listThreads } from '@/api/threads'
-import { getUserProfile } from '@/api/users'
 
 const loading = ref(false)
 const error = ref('')
@@ -200,45 +199,44 @@ function renderTitle(text) {
     <div v-if="loading" class="text-gray-600 dark:text-gray-300">正在加载...</div>
     <div v-else>
       <div v-if="error" class="text-red-600 mb-3">{{ error }}</div>
-      <div v-if="items.length === 0" class="text-gray-600 dark:text-gray-300">暂无帖子</div>
-      <template v-else>
-        <ul class="space-y-3">
-          <li v-for="t in items" :key="t.id" class="rounded-md border border-gray-200 bg-white hover:border-brandDay-300 transition dark:bg-gray-800 dark:border-gray-700 dark:hover:border-brandNight-700">
-            <router-link :to="`/threads/${t.id}`" class="block p-4">
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-medium prose dark:prose-invert" v-html="renderTitle(t.title)"></h2>
-                <span class="text-xs text-gray-500 dark:text-gray-400">#{{ t.id }}</span>
-              </div>
-              <!-- 图片预览：不进入详情也能看到首张图片 -->
-              <!-- 同时存在图片与文本：左右布局（移动端隐藏图片） -->
-              <div v-if="firstImageUrl(t.content) && textExcerpt(t.content)" class="mt-2">
-                <div class="flex gap-3 items-start sm:flex-row flex-col">
-                  <div class="sm:w-48 w-full hidden sm:block">
-                    <div class="overflow-hidden rounded-md max-h-48">
-                      <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full max-h-48 object-contain" />
-                    </div>
+      <div v-else-if="items.length === 0" class="text-gray-600 dark:text-gray-300">暂无帖子</div>
+      <div v-else class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700">
+        <ul class="space-y-4">
+          <li v-for="t in items" :key="t.id" class="group rounded-lg border border-gray-100 bg-white p-4 transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700">
+            <router-link :to="`/threads/${t.id}`" class="block">
+              <div class="flex flex-col md:flex-row items-start gap-5">
+                
+                <!-- 缩略图 (左侧) -->
+                <div v-if="firstImageUrl(t.content)" class="shrink-0 w-full md:w-64 h-48 md:h-40 overflow-hidden rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 relative group/img">
+                   <!-- 背景：高斯模糊填充 -->
+                   <img :src="firstImageUrl(t.content)" alt="" class="absolute inset-0 h-full w-full object-cover opacity-50 blur-sm scale-110" />
+                   <!-- 前景：完整显示 -->
+                   <img :src="firstImageUrl(t.content)" alt="封面" loading="lazy" class="relative z-10 h-full w-full object-contain transition-transform duration-500 group-hover:scale-105" style="-webkit-mask-image: radial-gradient(circle, black 60%, transparent 100%); mask-image: radial-gradient(circle, black 60%, transparent 100%);" />
+                </div>
+
+                <!-- 内容 (右侧) -->
+                <div class="flex-1 min-w-0 w-full">
+                  <h2 class="text-lg font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400 line-clamp-2 mb-2.5" v-html="renderTitle(t.title)"></h2>
+                  <div class="text-sm text-gray-600 line-clamp-3 dark:text-gray-300" v-html="mdPreview(t.content)"></div>
+                  
+                  <div class="mt-3 flex items-center gap-3 text-xs text-gray-400">
+                    <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="flex items-center gap-1.5 hover:text-gray-600 dark:hover:text-gray-200">
+                      <img 
+                        :src="t.authorAvatar ? normalizeImageUrl(t.authorAvatar) : `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || 'U'}`" 
+                        class="h-5 w-5 rounded-full object-cover bg-gray-100 dark:bg-gray-700" 
+                        alt=""
+                      />
+                      {{ t.authorNickname || t.authorUsername || t.authorId }}
+                    </router-link>
+                    <span>·</span>
+                    <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="rounded bg-gray-100 px-2 py-0.5 font-medium hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors">
+                      {{ t.sectionName || t.sectionId }}
+                    </router-link>
+                    <span>·</span>
+                    <span>{{ new Date(t.createdAt).toLocaleString() }}</span>
                   </div>
-                  <div class="prose prose-sm max-w-none line-clamp-4 flex-1 dark:prose-invert" v-html="mdPreview(t.content)"></div>
                 </div>
-              </div>
-              <!-- 只有图片 -->
-              <div v-else-if="firstImageUrl(t.content)" class="mt-2 hidden sm:block">
-                <div class="overflow-hidden rounded-md max-h-48">
-                  <img :src="firstImageUrl(t.content)" alt="预览图" loading="lazy" class="max-w-full max-h-48 object-contain" />
-                </div>
-              </div>
-              <!-- 只有文本 -->
-              <div v-else class="mt-2 prose prose-sm max-w-none text-gray-700 line-clamp-4 dark:prose-invert" v-html="mdPreview(t.content)"></div>
-              <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
-                <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="hover:underline">
-                  发布者: {{ profiles[t.authorId]?.nickname || t.authorNickname || t.authorUsername || t.authorId }}
-                </router-link>
-                <span class="mx-2">·</span>
-                <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="hover:underline">
-                  分区: {{ t.sectionName || t.sectionId }}
-                </router-link>
-                <span class="mx-2">·</span>
-                <span>发布于: {{ new Date(t.createdAt).toLocaleString() }}</span>
+                
               </div>
             </router-link>
           </li>
@@ -261,7 +259,7 @@ function renderTitle(text) {
             <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page >= totalPages" @click="nextPage">下一页</button>
           </div>
         </div>
-      </template>
+      </div>
     </div>
   </div>
   </template>

@@ -112,10 +112,11 @@
         <template v-else>
           <div class="flex items-center gap-2">
             <router-link :to="user?.id ? ('/users/' + user.id) : '/settings'" class="flex items-center gap-2 hover:opacity-90">
-              <img v-if="avatarUrl" :src="normalizeImageUrl(avatarUrl)" alt="avatar" class="w-8 h-8 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-              <div v-else class="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs font-medium">
-                {{ String(displayName || 'U').slice(0,1).toUpperCase() }}
-              </div>
+              <img 
+                :src="avatarUrl ? normalizeImageUrl(avatarUrl) : `https://api.dicebear.com/7.x/initials/svg?seed=${displayName || 'U'}`" 
+                alt="avatar" 
+                class="w-8 h-8 rounded-full object-cover border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700" 
+              />
               <span class="text-gray-700 dark:text-gray-200">{{ displayName || user?.username }}</span>
             </router-link>
             <!-- 登出：电源图标按钮 -->

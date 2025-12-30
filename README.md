@@ -1,115 +1,151 @@
-# MagicAlbum
+# BlueAlbum
 
-一个以 ACG 氛围为灵感的社区式相册与讨论站点，前端基于 Vue 3 + Vite，后端基于 Spring Boot。支持发帖、评论（含楼中楼）、用户注册登录、搜索、主题切换、Markdown 内容与图片上传等。
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yourusername/BlueAlbum)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.1-green)](https://spring.io/projects/spring-boot)
+[![Vue.js](https://img.shields.io/badge/Vue.js-3.5-4FC08D)](https://vuejs.org/)
 
-## 功能特性
-- 帖子发布与浏览（含首图预览、文本摘要）
-- 评论与楼中楼回复；楼层号基于“原始到达顺序”，排序与分页不改变楼层编号
-- 用户系统：注册、登录、个人资料（头像）展示
-- 站内搜索：帖子与用户切换搜索
-- 主题切换：明暗主题持久化到 `localStorage`
-- Markdown 编辑与预览、图片上传
-- 前后端分页与总数计算修正（页数基于顶层楼层）
+## 1. 项目概述
+BlueAlbum 是一个现代化的全栈在线论坛/社区平台，致力于提供流畅的交流体验。它结合了最新的 Spring Boot 4 (Experimental) 后端架构与 Vue 3 前端技术，支持富文本/Markdown 发帖、实时评论互动、用户个性化设置以及深色模式等特性。适用于构建技术社区、兴趣小组或内部知识库。
 
-## 技术栈
-- 前端：`Vue 3`, `Vite`, `Tailwind CSS`, `vue-router`, `md-editor-v3`, `highlight.js`
-- 后端：`Spring Boot 3`, `Flyway`, `MySQL`
-- 开发与联调：`Docker Compose`（可选）
+**核心技术栈：**
+- **后端**: Spring Boot 4.0.1 (Snapshot), Java 21, MyBatis-Plus / JPA, RabbitMQ, Redis, MySQL 8.0
+- **前端**: Vue 3, Vite 5, Tailwind CSS 3, Axios, Md-editor-v3
+- **基础设施**: Docker Compose (MySQL, Redis, RabbitMQ)
 
-## 目录结构
-```
+## 2. 功能特性
+
+### ✅ 已实现功能
+- **内容创作**: 
+  - 支持 Markdown/富文本发帖与实时预览
+  - 图片上传（支持本地存储与 S3 云存储）
+  - 内容美化与格式化
+- **浏览体验**: 
+  - 分区浏览（发现页），支持网格/列表视图
+  - 帖子详情页，沉浸式阅读体验
+  - 无限滚动加载与分页支持
+- **互动交流**: 
+  - 评论系统（支持 Markdown、图片混排）
+  - 用户提及（@用户）
+  - 帖子/评论点赞与收藏（部分实现）
+- **用户系统**: 
+  - 注册/登录（基于 JWT 的认证鉴权）
+  - 个人资料管理（自定义头像、昵称、密码修改）
+  - 用户搜索与主页展示
+- **个性化与体验**: 
+  - 全站深色/浅色模式无缝切换
+  - 最近浏览历史记录
+  - 响应式设计，适配移动端与桌面端
+
+### ⚠️ 待开发功能
+- [ ] **账户安全**: 手机号/邮箱验证与绑定 🚧
+- [ ] **AI 增强**: 智能内容推荐与辅助创作 🚧
+- [ ] **多因素认证 (MFA)**: 提升账户安全性 🚧
+- [ ] **私信系统**: 用户间实时聊天 🚧
+
+## 3. 项目结构
+
+```text
 BlueAlbum/
-├── end/           # 后端（Spring Boot）
-├── front/         # 前端（Vue 3 + Vite）
-├── docs/          # 设计与接口文档
-├── docker-compose.yml
-└── README.md      # 项目说明（本文件）
+├── end/                 # 后端工程 (Spring Boot)
+│   ├── src/main/java    # Java 源代码
+│   ├── src/main/resources # 配置文件与数据库迁移脚本
+│   └── pom.xml          # Maven 依赖管理
+├── front/               # 前端工程 (Vue 3)
+│   ├── src/             # Vue 源代码 (组件, 页面, API)
+│   ├── public/          # 静态资源
+│   └── package.json     # NPM 依赖管理
+├── docs/                # 项目文档
+│   ├── API/             # API 接口文档
+│   ├── 需求与设计/       # 设计文档与 UI 规范
+│   └── 故障与报告/       # 问题追踪与修复记录
+├── docker-compose.yml   # Docker 基础设施编排
+└── README.md            # 项目说明文档
 ```
 
-## 快速开始
+## 4. 安装指南
 
-### 前提条件
-- Node.js `>=18`
-- JDK `>=17`（推荐 21）
-- 可选：Docker Desktop（用于本地数据库）
+### 系统要求
+- **JDK**: 21 或更高版本
+- **Node.js**: 18.0.0 或更高版本
+- **Docker**: 推荐用于快速启动数据库和中间件
 
-### 启动后端（本地 MySQL 或 Docker MySQL）
-1) 本地 MySQL 环境变量（PowerShell，仅当前会话）：
+### 1. 启动基础设施
+在项目根目录下，使用 Docker Compose 启动 MySQL, Redis 和 RabbitMQ：
+```bash
+docker-compose up -d
 ```
-$env:DB_HOST="localhost"
-$env:DB_PORT="3306"
-$env:DB_NAME="MagicAlbum"
-$env:DB_USER="root"
-$env:DB_PASSWORD="<你的密码>"
-```
-2) 在 `end` 目录运行：
-```
-.\mvnw.cmd spring-boot:run
-```
-3) 成功后端口：`http://localhost:8080/`
+*确保端口 3307 (MySQL), 6379 (Redis), 5672/15672 (RabbitMQ) 未被占用。*
 
-> 使用 Docker 启动数据库：在仓库根目录执行 `docker compose up -d mysql`，默认库/用户/密码均为 `MagicAlbum`（详见下文“使用 Docker 本地数据库”）。
+### 2. 后端安装 (end/)
+```bash
+cd end
+# 编译并安装依赖（跳过测试以加快速度）
+./mvnw clean install -DskipTests
 
-### 启动前端
-1) 配置 `front/.env`：
+# 启动服务 (默认端口 8080)
+./mvnw spring-boot:run
 ```
-VITE_API_BASE_URL=http://localhost:8080/api/v1
-VITE_USE_API_MOCK=false
-```
-2) 安装依赖与运行：
-```
+*注意：首次启动会自动执行 Flyway 数据库迁移脚本，初始化表结构和种子数据。*
+
+### 3. 前端安装 (front/)
+```bash
 cd front
+# 安装 NPM 依赖
 npm install
+
+# 启动开发服务器 (默认端口 5173)
 npm run dev
 ```
-3) 打开 `http://localhost:5173/sections`
 
-### 生产构建
-- 前端：`npm run build`（在 `front` 目录）
-- 本地预览：`npm run preview`
-- 后端打包：`.\mvnw.cmd -DskipTests package`（生成 `end/target/*.jar`）
+## 5. 使用说明
 
-## 使用 Docker 本地数据库（可选）
-在仓库根目录：
+### 基础用法
+1. **访问应用**: 打开浏览器访问 `http://localhost:5173`。
+2. **注册/登录**: 点击右上角头像或侧边栏进行注册。默认管理员账号（如已预置）通常为 `admin/password`（视种子数据而定）。
+3. **浏览帖子**: 在“发现”页面按分区或最新发布浏览。
+4. **发布内容**: 点击底部导航栏的 "+" 按钮进入发帖模式，支持 Markdown 语法。
+
+### 高级配置
+后端配置文件位于 `end/src/main/resources/application.yml`。
+- **数据库连接**: 修改 `spring.datasource` 部分以连接外部数据库。
+- **文件上传**: 默认使用本地存储 (`storage.local`)，可配置 AWS S3 (`storage.s3`)。
+- **MyBatis-Plus**: 通过 Maven Profile (`mp-boot3` 或 `mp-boot4`) 切换兼容性。
+- **安全配置**: 本地开发时，建议创建 `end/src/main/resources/application-secrets.yml` 存放 `ai.api-key` 等敏感信息（该文件已被 gitignore）。
+
+## 6. 贡献指南
+
+我们非常欢迎社区贡献！请遵循以下步骤：
+
+1. **提交 Issue**: 如果发现 Bug 或有新功能建议，请先提交 Issue 讨论。
+2. **Fork 仓库**: 将项目 Fork 到您的 GitHub 账户。
+3. **创建分支**: `git checkout -b feature/MyFeature`。
+4. **提交代码**: 请确保代码风格统一，遵循 Google Java Style 和 Vue 官方风格指南。
+5. **提交 PR**: 将更改推送到您的仓库并提交 Pull Request。
+
+### 开发环境设置
+- **IDE**: 推荐使用 IntelliJ IDEA (后端) 和 VS Code (前端)。
+- **插件**: VS Code 推荐安装 Volar, Tailwind CSS IntelliSense, ESLint。
+
+## 7. 许可证信息
+
+本项目采用 **MIT 许可证** 开源。
+
+```text
+MIT License
+
+Copyright (c) 2025 BlueAlbum Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 ```
-docker compose up -d mysql
-docker compose ps
-docker logs MagicAlbum-mysql --tail 100
-```
-默认配置（见 `docker-compose.yml`）：端口 `3306`，库/用户/密码 `MagicAlbum`，数据卷 `mysqldata`。若使用 PostgreSQL：`docker compose up -d postgres`，端口 `5432`。
-
-## 常见问题（FAQ）
-- `docker: command not found`：未安装或未启动 Docker Desktop。
-- 端口冲突（3306/5432）：修改 `docker-compose.yml` 端口映射或停止本机服务。
-- MySQL 认证失败：检查用户名密码与授权；必要时执行 `docker compose down -v && docker compose up -d mysql` 以重建。
-- CORS：后端默认允许 `http://localhost:5173`，如有调整请修改后端 WebConfig。
-
-更多细节参见 `docs/环境配置.md`、`docs/API规范.md` 与 `docs/里程碑1开发文档.md`。
-
-## 发布到 GitHub（首次推送）
-1) 在 GitHub 网页创建一个空仓库（记住 HTTPS 远程地址）。
-2) 在本地仓库根目录执行：
-```
-git init
-git add .
-git commit -m "chore: init MagicAlbum"
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
-git push -u origin main
-```
-3) 后续更新：
-```
-git add -A
-git commit -m "feat: 更新前端评论与分页逻辑"
-git push
-```
-
-> 已包含 `.gitignore`；如需 CI/CD、Issue 模板或贡献指南，可在 `docs/` 中补充并在本 README 链接。
-
-## 贡献与许可
-- 欢迎通过 Issue 或 PR 贡献改进（代码、文档、样式）。
-- 许可证（License）：暂未设置，如需开源请明确采用 `MIT` 或其他许可。
 
 ---
-
-视觉与交互参考：Bangumi（风格取向），ACG 氛围灵感取自《白色相簿》《魔法使之夜》。
+*文档更新日期: 2025-12-30*

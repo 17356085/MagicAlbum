@@ -7,6 +7,7 @@ import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.user.service.UserProfileService;
+import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.repo.UserRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -139,15 +140,29 @@ public class PostService {
         } catch (Exception ignored) {}
         dto.setAuthorId(p.getAuthorId());
         dto.setAuthorUsername(userRepository.findById(p.getAuthorId()).map(u -> u.getUsername()).orElse(null));
-        // 从用户资料服务获取头像 URL（允许为空字符串）
+        // 从用户资料服务获取头像 URL 和昵称
         try {
-            String avatar = userProfileService.getProfile(p.getAuthorId()).getAvatarUrl();
+            ProfileDto profile = userProfileService.getProfile(p.getAuthorId());
+            String avatar = profile.getAvatarUrl();
             dto.setAuthorAvatarUrl(avatar == null ? "" : avatar);
+            dto.setAuthorNickname(profile.getNickname());
         } catch (Exception ignored) {
             dto.setAuthorAvatarUrl("");
         }
         dto.setContent(p.getContentMd());
         dto.setReplyToPostId(p.getReplyToPostId());
+        // 填充父评论作者信息
+        if (p.getReplyToPostId() != null) {
+            try {
+                postRepository.findById(p.getReplyToPostId()).ifPresent(parent -> {
+                    dto.setParentAuthorId(parent.getAuthorId());
+                    userRepository.findById(parent.getAuthorId()).ifPresent(u -> dto.setParentAuthorUsername(u.getUsername()));
+                    try {
+                        dto.setParentAuthorNickname(userProfileService.getProfile(parent.getAuthorId()).getNickname());
+                    } catch (Exception ignored) {}
+                });
+            } catch (Exception ignored) {}
+        }
         dto.setCreatedAt(p.getCreatedAt());
         dto.setUpdatedAt(p.getUpdatedAt());
         return dto;

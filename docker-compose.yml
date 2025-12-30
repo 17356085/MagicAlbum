@@ -1,29 +1,27 @@
-version: "3.8"
-
 services:
-  postgres:
-    image: postgres:16
-    container_name: MagicAlbum-postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: MagicAlbum
-      POSTGRES_USER: MagicAlbum
-      POSTGRES_PASSWORD: MagicAlbum
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+#  postgres:
+#    image: m.daocloud.io/docker.io/postgres:16
+#    container_name: MagicAlbum-postgres
+#    ports:
+#      - "5432:5432"
+#    environment:
+#      POSTGRES_DB: MagicAlbum
+#      POSTGRES_USER: MagicAlbum
+#      POSTGRES_PASSWORD: MagicAlbum
+#    volumes:
+#      - pgdata:/var/lib/postgresql/data
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
 
   mysql:
-    image: mysql:8.0
+    image: m.daocloud.io/docker.io/mysql:8.0
     container_name: MagicAlbum-mysql
     command: ["--default-authentication-plugin=mysql_native_password", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     ports:
-      - "3306:3306"
+      - "3307:3306"
     environment:
       MYSQL_DATABASE: MagicAlbum
       MYSQL_USER: MagicAlbum
@@ -33,6 +31,32 @@ services:
       - mysqldata:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: m.daocloud.io/docker.io/redis:alpine
+    container_name: MagicAlbum-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: m.daocloud.io/docker.io/rabbitmq:management
+    container_name: MagicAlbum-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5

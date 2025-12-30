@@ -391,7 +391,7 @@ onUnmounted(() => {
       <div class="text-sm">第三方关联</div>
       <div v-if="connectedLoading" class="text-xs text-gray-500">正在加载...</div>
       <ul v-else class="space-y-2 text-xs">
-        <li v-for="acc in (connected.items||[])" :key="acc.provider" class="rounded border p-2 dark:border-gray-700 flex items-center justify-between">
+        <li v-for="acc in (connected.items||[])" :key="acc.provider" class="rounded-lg border border-gray-100 p-2 dark:border-gray-700 flex items-center justify-between">
           <div>
             <span class="font-medium">{{ acc.provider }}</span>
             <span class="ml-2 text-gray-500">{{ acc.connected ? '已绑定' : '未绑定' }}</span>

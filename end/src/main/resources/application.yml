@@ -53,3 +53,8 @@ app:
     local:
       # 本地存储目录（相对于项目根目录或绝对路径）
       baseDir: uploads
+
+ai:
+  api-key: ${AI_API_KEY:ChangeMe} # 请在 application-secrets.yml 或环境变量中设置
+  base-url: ${AI_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+  model: ${AI_MODEL:doubao-1-5-pro-32k-250115}

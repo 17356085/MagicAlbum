@@ -91,54 +91,73 @@ function nextPage() {
 </script>
 
 <template>
-  <div class="rounded-md border border-gray-200 bg-white p-4 dark:bg-gray-800 dark:border-gray-700">
-    <div class="text-sm font-medium mb-2">我的评论</div>
-    <div class="flex items-center gap-2 text-xs mb-2">
-      <input v-model="query.q" placeholder="关键词" @keyup.enter="query.page=1; load()" class="rounded border px-2 py-1 text-xs dark:bg-gray-800 dark:border-gray-700" />
-      <select v-model="query.sort" @change="query.page=1; load()" class="rounded border px-2 py-1 text-xs dark:bg-gray-800 dark:border-gray-700">
-        <option value="createdAt">按创建</option>
-        <option value="updatedAt">按更新</option>
-      </select>
-      <button class="rounded px-2 py-1 border text-xs dark:border-gray-700" @click="query.page=1; load()">搜索</button>
-      <div class="ml-auto flex items-center gap-2">
-        <label class="text-xs text-gray-600 dark:text-gray-300">分区</label>
-        <select v-model="query.sectionId" @change="query.page=1; load()" class="rounded border px-2 py-1 text-xs dark:bg-gray-800 dark:border-gray-700">
-          <option value="">全部</option>
-          <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name || ('#' + s.id) }}</option>
+  <div class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm dark:bg-gray-800 dark:border-gray-700">
+    <div class="mb-4 flex items-center justify-between">
+      <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100">我的评论</h2>
+      <div class="flex items-center gap-3">
+        <select v-model="query.sort" @change="query.page=1; load()" class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 focus:border-brandDay-500 focus:ring-1 focus:ring-brandDay-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+          <option value="createdAt">最新发布</option>
+          <option value="updatedAt">最近更新</option>
         </select>
+        <div class="flex items-center gap-2">
+          <select v-model="query.sectionId" @change="query.page=1; load()" class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 focus:border-brandDay-500 focus:ring-1 focus:ring-brandDay-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+            <option value="">全部分区</option>
+            <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name || ('#' + s.id) }}</option>
+          </select>
+        </div>
       </div>
     </div>
-    <div v-if="loading" class="text-xs text-gray-500">正在加载...</div>
-    <div v-else-if="error" class="text-xs text-red-600">{{ error }}</div>
-    <ul class="space-y-3">
-      <li v-for="item in (list.items||[])" :key="item.id" class="rounded border p-3 dark:border-gray-700">
-        <div class="text-xs text-gray-600 dark:text-gray-300">
-          <span class="mr-2">#{{ item.id }}</span>
-          <span>发布于：{{ formatRelativeTime(item.createdAt) }}</span>
-          <span class="ml-2" v-if="item.updatedAt">更新：{{ formatRelativeTime(item.updatedAt) }}</span>
-        </div>
-        <div class="mt-2 text-sm">{{ item.content }}</div>
-        <div class="mt-2 text-xs">
-          所属帖子：
-          <router-link :to="'/threads/' + item.threadId + '#post-' + item.id" class="hover:underline">{{ item.threadTitle || ('#' + item.threadId) }}</router-link>
-        </div>
-        <div class="mt-2 flex items-center gap-2 text-xs">
-          <button class="rounded px-2 py-1 border dark:border-gray-700" @click="askRemove(item.id)">删除</button>
+
+    <div class="mb-4 flex gap-2">
+      <input 
+        v-model="query.q" 
+        placeholder="搜索我的评论..." 
+        @keyup.enter="query.page=1; load()" 
+        class="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brandDay-500 focus:ring-1 focus:ring-brandDay-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 dark:placeholder-gray-400" 
+      />
+      <button class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click="query.page=1; load()">
+        搜索
+      </button>
+    </div>
+
+    <div v-if="loading" class="py-8 text-center text-sm text-gray-500">正在加载...</div>
+    <div v-else-if="error" class="py-8 text-center text-sm text-red-500">{{ error }}</div>
+    <ul v-else class="space-y-3">
+      <li v-for="item in (list.items||[])" :key="item.id" class="group rounded-lg border border-gray-100 bg-white p-4 transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-2">
+               <router-link :to="'/threads/' + item.threadId + '#post-' + item.id" class="text-sm font-medium text-gray-800 group-hover:text-brandDay-600 dark:text-gray-200 dark:group-hover:text-brandNight-400 transition-colors line-clamp-1">
+                 RE: {{ item.threadTitle || ('#' + item.threadId) }}
+               </router-link>
+            </div>
+            
+            <div class="text-sm text-gray-600 dark:text-gray-300 leading-relaxed break-words whitespace-pre-wrap line-clamp-3 mb-2">{{ item.content }}</div>
+
+            <div class="flex items-center gap-3 text-xs text-gray-400">
+               <span>{{ formatRelativeTime(item.createdAt) }}</span>
+               <span v-if="item.updatedAt && item.updatedAt !== item.createdAt">编辑于 {{ formatRelativeTime(item.updatedAt) }}</span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2 shrink-0">
+            <button class="rounded px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 transition-colors" @click="askRemove(item.id)">删除</button>
+          </div>
         </div>
       </li>
     </ul>
+
     <!-- 分页控件 -->
-    <div class="mt-3 flex items-center justify-between text-xs">
-      <div class="text-gray-600 dark:text-gray-300">共 {{ list.total || 0 }} 条，每页 {{ list.size || query.size || 10 }} 条</div>
+    <div class="mt-6 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-gray-700">
+      <div class="text-xs text-gray-500">共 {{ list.total || 0 }} 条</div>
       <div class="flex items-center gap-2">
         <button
-          class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200"
+          class="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50 disabled:hover:bg-white dark:border-gray-600 dark:hover:bg-gray-700"
           :disabled="loading || (query.page || 1) <= 1"
           @click="prevPage"
         >上一页</button>
-        <span>第 {{ query.page || 1 }} / {{ totalPages }} 页</span>
+        <span class="text-xs text-gray-600 dark:text-gray-300">{{ query.page || 1 }} / {{ totalPages }}</span>
         <button
-          class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200"
+          class="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50 disabled:hover:bg-white dark:border-gray-600 dark:hover:bg-gray-700"
           :disabled="loading || (query.page || 1) >= totalPages"
           @click="nextPage"
         >下一页</button>

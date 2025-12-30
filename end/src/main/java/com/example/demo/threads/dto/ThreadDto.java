@@ -8,6 +8,8 @@ public class ThreadDto {
     private String sectionName;
     private Long authorId;
     private String authorUsername;
+    private String authorNickname;
+    private String authorAvatar;
     private String title;
     private String content;
     private String contentHtml;
@@ -25,6 +27,10 @@ public class ThreadDto {
     public void setAuthorId(Long authorId) { this.authorId = authorId; }
     public String getAuthorUsername() { return authorUsername; }
     public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+    public String getAuthorNickname() { return authorNickname; }
+    public void setAuthorNickname(String authorNickname) { this.authorNickname = authorNickname; }
+    public String getAuthorAvatar() { return authorAvatar; }
+    public void setAuthorAvatar(String authorAvatar) { this.authorAvatar = authorAvatar; }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
     public String getContent() { return content; }

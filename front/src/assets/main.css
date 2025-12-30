@@ -57,4 +57,15 @@
     height: auto;
     max-height: var(--prose-img-max-height, 480px);
   }
+
+  /* 统一视觉规范：圆角矩形 */
+  .u-card {
+    @apply rounded-xl border border-gray-100 bg-white shadow-sm dark:bg-gray-800 dark:border-gray-700;
+  }
+  .u-item {
+    @apply rounded-lg border border-gray-100 bg-white dark:bg-gray-800 dark:border-gray-700;
+  }
+  .u-control {
+    @apply rounded border border-gray-200 dark:border-gray-700;
+  }
 }

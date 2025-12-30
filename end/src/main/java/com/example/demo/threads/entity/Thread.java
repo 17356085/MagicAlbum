@@ -39,7 +39,11 @@ public class Thread {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    
+    @Column(name = "summary", columnDefinition = "TEXT")
+    private String summary;
+
+    @Column(name = "summary_status", length = 32)
+    private String summaryStatus = "PENDING";
 
     @PrePersist
     public void prePersist() {
@@ -48,6 +52,7 @@ public class Thread {
         if (updatedAt == null) updatedAt = now;
         if (status == null || status.isBlank()) status = "NORMAL";
         if (spoiler == null) spoiler = false;
+        if (summaryStatus == null) summaryStatus = "PENDING";
     }
 
     @PreUpdate
@@ -73,4 +78,8 @@ public class Thread {
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public String getSummary() { return summary; }
+    public void setSummary(String summary) { this.summary = summary; }
+    public String getSummaryStatus() { return summaryStatus; }
+    public void setSummaryStatus(String summaryStatus) { this.summaryStatus = summaryStatus; }
 }

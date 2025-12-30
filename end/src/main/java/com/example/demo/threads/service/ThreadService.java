@@ -2,11 +2,15 @@ package com.example.demo.threads.service;
 
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.repo.UserProfileRepository;
+import com.example.demo.user.entity.UserProfile;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
+import com.example.demo.common.config.RabbitMQConfig;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -20,19 +24,26 @@ public class ThreadService {
     private final ThreadRepository threadRepository;
     private final SectionRepository sectionRepository;
     private final UserRepository userRepository;
+    private final UserProfileRepository userProfileRepository;
     private final MarkdownRenderService markdownRenderService;
     private final com.example.demo.threads.service.mp.ThreadReadServiceMp threadReadServiceMp;
     private final boolean mpThreadsEnabled;
+    private final RabbitTemplate rabbitTemplate;
 
-    public ThreadService(ThreadRepository threadRepository, SectionRepository sectionRepository, UserRepository userRepository, MarkdownRenderService markdownRenderService,
+    public ThreadService(ThreadRepository threadRepository, SectionRepository sectionRepository, UserRepository userRepository,
+                         UserProfileRepository userProfileRepository,
+                         MarkdownRenderService markdownRenderService,
                          ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
-                         @Value("${feature.mp.read.threads:false}") boolean mpThreadsEnabled) {
+                         @Value("${feature.mp.read.threads:false}") boolean mpThreadsEnabled,
+                         RabbitTemplate rabbitTemplate) {
         this.threadRepository = threadRepository;
         this.sectionRepository = sectionRepository;
         this.userRepository = userRepository;
+        this.userProfileRepository = userProfileRepository;
         this.markdownRenderService = markdownRenderService;
         this.threadReadServiceMp = threadReadServiceMpProvider.getIfAvailable();
         this.mpThreadsEnabled = mpThreadsEnabled;
+        this.rabbitTemplate = rabbitTemplate;
     }
 
     public ThreadDto create(Long authorId, CreateThreadRequest req) {
@@ -54,6 +65,14 @@ public class ThreadService {
         t.setTitle(req.getTitle().trim());
         t.setContentMd(req.getContent());
         Thread saved = threadRepository.save(t);
+
+        // 触发异步摘要生成
+        try {
+            rabbitTemplate.convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, saved.getId());
+        } catch (Exception e) {
+            // 记录日志但不影响发帖主流程
+            System.err.println("Failed to send summary generation task: " + e.getMessage());
+        }
 
         ThreadDto dto = new ThreadDto();
         dto.setId(saved.getId());
@@ -119,6 +138,11 @@ public class ThreadService {
         dto.setSectionName(sectionRepository.findById(t.getSectionId()).map(s -> s.getName()).orElse(null));
         dto.setAuthorId(t.getAuthorId());
         dto.setAuthorUsername(userRepository.findById(t.getAuthorId()).map(u -> u.getUsername()).orElse(null));
+        UserProfile profile = userProfileRepository.findById(t.getAuthorId()).orElse(null);
+        if (profile != null) {
+            dto.setAuthorNickname(profile.getNickname());
+            dto.setAuthorAvatar(profile.getAvatarUrl());
+        }
         dto.setTitle(t.getTitle());
         dto.setContent(t.getContentMd());
         dto.setStatus(t.getStatus());

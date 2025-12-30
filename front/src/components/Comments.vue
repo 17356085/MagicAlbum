@@ -8,7 +8,7 @@ import { listPosts, createPost, deletePost, updatePost } from '@/api/posts'
 import { uploadImage } from '@/api/uploads'
 import { formatRelativeTime } from '@/composables/time'
 import { useAuth } from '@/composables/useAuth'
-import { getUserProfile } from '@/api/users'
+import { normalizeImageUrl } from '@/utils/image'
 
 const props = defineProps({
   threadId: { type: Number, required: true },
@@ -236,24 +236,11 @@ function onProfileUpdated(evt) {
       const end = start + size.value
       items.value = allItems.value.slice(start, end)
       // 拉取昵称资料（全量）
-      ensureProfilesFor(allItems.value)
+      // ensureProfilesFor(allItems.value)
     } else {
       items.value = apply(items.value)
     }
   } catch (_) {}
-}
-
-function normalizeImageUrl(u) {
-  if (!u) return ''
-  const url = String(u).trim()
-  if (!url) return ''
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
-    return url
-  }
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
-  const backendBase = apiBase.replace(/\/api\/v1$/, '')
-  if (url.startsWith('/')) return backendBase + url
-  return backendBase + '/' + url
 }
 
 const md = new MarkdownIt({ html: true, linkify: true, breaks: true, langPrefix: 'language-',
@@ -658,15 +645,13 @@ function getChildrenPage(g) {
           <div :id="'post-' + g.root.id" class="">
               <div class="flex items-center justify-between">
                 <router-link :to="g.root.authorId ? ('/users/' + g.root.authorId) : '/users'" class="flex items-center gap-2 hover:opacity-90">
-                  <template v-if="g.root.authorAvatarUrl">
-                    <img :src="normalizeImageUrl(g.root.authorAvatarUrl)" alt="头像" class="w-7 h-7 rounded-full object-cover" loading="lazy" />
-                  </template>
-                  <template v-else>
-                    <div class="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs text-gray-600 dark:text-gray-300">
-                      {{ String(nicknameOf(g.root.authorId, g.root.authorUsername) || '').slice(0,1).toUpperCase() || 'U' }}
-                    </div>
-                  </template>
-                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ nicknameOf(g.root.authorId, g.root.authorUsername) }}</div>
+                  <img 
+                    :src="g.root.authorAvatarUrl ? normalizeImageUrl(g.root.authorAvatarUrl) : `https://api.dicebear.com/7.x/initials/svg?seed=${g.root.authorNickname || g.root.authorUsername || 'U'}`" 
+                    alt="头像" 
+                    class="w-7 h-7 rounded-full object-cover bg-gray-100 dark:bg-gray-700" 
+                    loading="lazy" 
+                  />
+                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ g.root.authorNickname || g.root.authorUsername }}</div>
                 </router-link>
                 <span class="text-xs text-gray-400">{{ g.root.floorLabel }} · {{ formatRelativeTime(g.root.createdAt) }}</span>
               </div>
@@ -702,20 +687,18 @@ function getChildrenPage(g) {
                  :style="{ paddingLeft: '24px' }">
               <div class="flex items-center justify-between">
                 <router-link :to="c.authorId ? ('/users/' + c.authorId) : '/users'" class="flex items-center gap-2 hover:opacity-90">
-                  <template v-if="c.authorAvatarUrl">
-                    <img :src="normalizeImageUrl(c.authorAvatarUrl)" alt="头像" class="w-6 h-6 rounded-full object-cover" loading="lazy" />
-                  </template>
-                  <template v-else>
-                    <div class="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] text-gray-600 dark:text-gray-300">
-                      {{ String(nicknameOf(c.authorId, c.authorUsername) || '').slice(0,1).toUpperCase() || 'U' }}
-                    </div>
-                  </template>
-                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ nicknameOf(c.authorId, c.authorUsername) }}</div>
+                  <img 
+                    :src="c.authorAvatarUrl ? normalizeImageUrl(c.authorAvatarUrl) : `https://api.dicebear.com/7.x/initials/svg?seed=${c.authorNickname || c.authorUsername || 'U'}`" 
+                    alt="头像" 
+                    class="w-6 h-6 rounded-full object-cover bg-gray-100 dark:bg-gray-700" 
+                    loading="lazy" 
+                  />
+                  <div class="text-xs text-gray-600 dark:text-gray-300">{{ c.authorNickname || c.authorUsername }}</div>
                 </router-link>
                 <span class="text-xs text-gray-400">{{ formatRelativeTime(c.createdAt) }}</span>
               </div>
               <div class="mt-1 text-xs text-gray-600 dark:text-gray-300" v-if="c.replyToPostId">
-回复 <a :href="'#post-' + c.replyToPostId" class="text-brandDay-600 dark:text-brandNight-400 hover:underline">@{{ nicknameOf(c.parentAuthorId, c.parentAuthorUsername) }}</a>
+                回复 <a :href="'#post-' + c.replyToPostId" class="text-brandDay-600 dark:text-brandNight-400 hover:underline">@{{ c.parentAuthorNickname || c.parentAuthorUsername }}</a>
               </div>
               <div class="mt-2 prose max-w-none dark:prose-invert" v-html="render(c.content)"></div>
               <div class="mt-2 flex items-center gap-2 text-xs">

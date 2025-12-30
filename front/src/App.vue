@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import HeaderBangumi from '@/components/HeaderBangumi.vue'
 import SidebarLeft from '@/components/SidebarLeft.vue'
+import AiChat from '@/components/AiChat.vue'
 import { useUISettings } from '@/composables/useUISettings'
 
 // UI 设置（动态背景开关）
@@ -260,6 +261,7 @@ onUnmounted(() => { window.removeEventListener('resize', onResizeStars); stopSta
     <footer class="mt-auto border-t border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700 w-full motion-safe:transition-colors motion-safe:duration-300 motion-reduce:transition-none">
       <div class="mx-auto max-w-7xl px-4 py-6 text-xs text-gray-500 dark:text-gray-400">© 2025 MagicAlbum · 设计参考 bangumi.tv</div>
     </footer>
+    <AiChat ref="aiChatRef" />
   </div>
 </template>
 

@@ -3,6 +3,7 @@ package com.example.demo.user.controller;
 import com.example.demo.auth.JwtTokenProvider;
 import com.example.demo.user.dto.RegisterRequest;
 import com.example.demo.user.dto.UserDto;
+import com.example.demo.user.dto.UserSummaryDto;
 import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.dto.UserSettingsDto;
 import com.example.demo.user.dto.BasicInfoUpdateRequest;
@@ -63,8 +64,26 @@ public class UserController {
             @RequestParam(value = "fields", required = false) String fields
     ) {
         Page<UserDto> p = userService.list(q, page, size, fields);
+        
+        java.util.List<UserSummaryDto> summaries = p.getContent().stream().map(u -> {
+            UserSummaryDto dto = new UserSummaryDto();
+            dto.setId(u.getId());
+            dto.setUsername(u.getUsername());
+            dto.setCreatedAt(u.getCreatedAt());
+            
+            try {
+                ProfileDto profile = userProfileService.getProfile(u.getId());
+                dto.setNickname(profile.getNickname());
+                dto.setAvatarUrl(profile.getAvatarUrl());
+            } catch (Exception e) {
+                dto.setNickname("");
+                dto.setAvatarUrl("");
+            }
+            return dto;
+        }).toList();
+
         java.util.Map<String, Object> body = new java.util.HashMap<>();
-        body.put("items", p.getContent());
+        body.put("items", summaries);
         body.put("page", page);
         body.put("size", size);
         body.put("total", p.getTotalElements());

@@ -189,13 +189,13 @@ onUnmounted(() => {
 
 <template>
   <div>
-    <div class="rounded-md border border-gray-200 bg-white p-4 dark:bg-gray-800 dark:border-gray-700">
+    <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700">
       <h1 class="text-2xl font-semibold mb-4">发帖</h1>
 
       <div class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">分区</label>
-          <select v-model="form.sectionId" class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400">
+          <select v-model="form.sectionId" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400">
             <option value="" disabled>请选择分区</option>
             <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name || s.title }}</option>
           </select>
@@ -203,13 +203,13 @@ onUnmounted(() => {
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">标题</label>
-          <input v-model="form.title" type="text" class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="请输入标题" />
+          <input v-model="form.title" type="text" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="请输入标题" />
         </div>
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">内容（支持 Markdown）</label>
           <div class="relative">
-            <MdEditor v-model="form.content" :onUploadImg="onUploadImg" :theme="isDark ? 'dark' : 'light'" class="rounded-md border border-gray-300 dark:border-gray-700" />
+            <MdEditor v-model="form.content" :onUploadImg="onUploadImg" :theme="isDark ? 'dark' : 'light'" class="rounded-lg border border-gray-300 dark:border-gray-700" />
             <div v-if="isUploading" class="absolute top-2 right-3 text-xs bg-white/80 px-2 py-1 rounded border border-gray-200 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-200">
               上传中 {{ uploadProgress }}%
             </div>
@@ -219,7 +219,7 @@ onUnmounted(() => {
         <div class="flex items-center gap-2">
           <button type="button" class="rounded border px-3 py-1 text-sm dark:border-gray-700 dark:text-gray-200" @click="onSaveDraft">保存草稿</button>
           <button type="button" class="rounded border px-3 py-1 text-sm dark:border-gray-700 dark:text-gray-200" @click="beautifyContent">美化内容</button>
-          <button :disabled="submitting" class="inline-flex items-center rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-4 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:cursor-not-allowed disabled:opacity-50 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="submit">
+          <button :disabled="submitting" class="inline-flex items-center rounded bg-brandDay-600 dark:bg-brandNight-600 px-4 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:cursor-not-allowed disabled:opacity-50 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="submit">
             {{ submitting ? '发布中...' : '发布' }}
           </button>
           <span v-if="!isLoggedIn" class="text-sm text-gray-600 dark:text-gray-300">请先登录后再发帖</span>

@@ -118,7 +118,7 @@ watch(isLoggedIn, (v) => {
 
 <template>
   <div>
-    <div v-if="isLoggedIn" class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
+    <div v-if="isLoggedIn" class="rounded-xl border border-gray-100 bg-white shadow-sm dark:bg-gray-800 dark:border-gray-700">
       <div class="flex items-center justify-between border-b px-3 py-2 text-sm font-medium dark:border-gray-700 dark:text-gray-100">
         <div class="flex items-center gap-2">
           <!-- 返回箭头置于黑框标题栏左上角 -->
