@@ -24,7 +24,7 @@ public class AiService {
     private final String apiKey;
 
     public AiService(@Value("${ai.base-url}") String baseUrl,
-                     @Value("${ai.api-key}") String apiKey) {
+                     @Value("${ai.api-key:fake-key-for-testing}") String apiKey) {
         this.apiKey = apiKey;
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
