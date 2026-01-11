@@ -205,12 +205,14 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 import { getRecentVisits } from '@/composables/useRecentVisits'
 import { listSections } from '@/api/sections'
 
 const route = useRoute()
-const { isLoggedIn } = useAuth()
+const authStore = useAuthStore()
+const { isLoggedIn } = storeToRefs(authStore)
 const isSectionsActive = computed(() => route.name === 'sections' || route.path === '/sections')
 const isDiscoverActive = computed(() => route.name === 'discover' || route.path === '/discover')
 const isSettingsActive = computed(() => route.path.startsWith('/settings'))

@@ -5,7 +5,8 @@ import 'md-editor-v3/lib/style.css'
 import { listSections } from '@/api/sections'
 import { createThread } from '@/api/threads'
 import { uploadImage } from '@/api/uploads'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
 
 const loading = ref(false)
@@ -13,7 +14,8 @@ const submitting = ref(false)
 const error = ref('')
 const success = ref('')
 const sections = ref([])
-const { isLoggedIn, token } = useAuth()
+const authStore = useAuthStore()
+const { isLoggedIn, token } = storeToRefs(authStore)
 
 const form = ref({
   sectionId: '',

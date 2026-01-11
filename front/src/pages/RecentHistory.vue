@@ -2,7 +2,8 @@
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllRecentVisits, clearAllRecentVisits, pruneExpired } from '@/composables/useRecentVisits'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 import { listSections } from '@/api/sections'
 
 const router = useRouter()
@@ -11,7 +12,8 @@ const query = ref({ q: '', sectionId: '', page: 1, size: 20 })
 // 本地输入值：仅在触发搜索后同步到 query.q
 const searchText = ref('')
 const sections = ref([])
-const { isLoggedIn } = useAuth()
+const authStore = useAuthStore()
+const { isLoggedIn } = storeToRefs(authStore)
 
 function load() {
   // 修剪过期记录并加载

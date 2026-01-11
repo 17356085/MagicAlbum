@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { useUISettings } from '@/composables/useUISettings'
+import { storeToRefs } from 'pinia'
+import { useUIStore } from '@/stores/ui'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { getMyProfile, updateMyProfile, getMySettings, updateMySettings } from '@/api/settings'
@@ -8,7 +9,7 @@ import SettingsAccount from '@/pages/SettingsAccount.vue'
 import { listNotifications, markNotificationRead, getNotificationSettings, updateNotificationSettings } from '@/api/notifications'
 import { listConnectedAccounts, connectAccount, disconnectAccount } from '@/api/connected'
 import { uploadImage } from '@/api/uploads'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
 import { normalizeImageUrl } from '@/utils/image'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
@@ -18,7 +19,9 @@ import 'katex/dist/katex.min.css'
 
 const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected' | 'account'
 // UI 设置开关
-const { dynamicBackgroundEnabled, setDynamicBackgroundEnabled } = useUISettings()
+const uiStore = useUIStore()
+const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
+const { setDynamicBackgroundEnabled } = uiStore
 
 // Profile
 const profile = ref({ nickname: '', bio: '', homepageUrl: '', location: '', links: [], avatarUrl: '' })
@@ -83,7 +86,8 @@ function renderBioPreview(raw) {
   const html = md.render(s)
   return DOMPurify.sanitize(html)
 }
-const { token } = useAuth()
+const authStore = useAuthStore()
+const { token } = storeToRefs(authStore)
 // MdEditor 图片上传（与发帖同款）
 const bioUploading = ref(false)
 const bioUploadProgress = ref(0)

@@ -155,9 +155,10 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 import RegisterModal from './RegisterModal.vue'
 import LoginModal from './LoginModal.vue'
-import { useAuth } from '@/composables/useAuth'
 import { getMyProfile } from '@/api/settings'
 import IconMagicalbum from '@/components/icons/IconMagicalbum.vue'
 import { suggestUsers, getUserProfile } from '@/api/users'
@@ -166,7 +167,9 @@ import DOMPurify from 'dompurify'
 const showRegister = ref(false)
 const showLogin = ref(false)
 const showLogoutConfirm = ref(false)
-const { isLoggedIn, user, logout } = useAuth()
+const authStore = useAuthStore()
+const { isLoggedIn, user } = storeToRefs(authStore)
+const { logout } = authStore
 const router = useRouter()
 const route = useRoute()
 const searchType = ref('threads')

@@ -7,7 +7,8 @@ import markdownItKatex from 'markdown-it-katex'
 import { listPosts, createPost, deletePost, updatePost } from '@/api/posts'
 import { uploadImage } from '@/api/uploads'
 import { formatRelativeTime } from '@/composables/time'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 import { normalizeImageUrl } from '@/utils/image'
 
 const props = defineProps({
@@ -194,9 +195,9 @@ const size = ref(15)
 const total = ref(0)
 const content = ref('')
 const replyToPostId = ref(null)
-const isLoggedIn = computed(() => !!localStorage.getItem('accessToken'))
+const authStore = useAuthStore()
+const { isLoggedIn, user } = storeToRefs(authStore)
 const previewMode = ref(false)
-const { user } = useAuth()
 // 用户资料缓存与工具：用于显示昵称
 const profiles = ref({})
 function nicknameOf(id, username) {

@@ -90,7 +90,8 @@ import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getUserProfile, listUserThreads } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 import { formatRelativeTime } from '@/composables/time'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
@@ -104,7 +105,8 @@ const userId = computed(() => route.params.id)
 const loading = ref(true)
 const error = ref('')
 const profile = ref({})
-const { user } = useAuth()
+const authStore = useAuthStore()
+const { user } = storeToRefs(authStore)
 const isMe = computed(() => String(user?.value?.id || '') === String(userId.value || ''))
 
 // 与帖子/评论一致的 Markdown 渲染配置：支持 HTML、代码高亮、数学公式、图片懒加载/响应式

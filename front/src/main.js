@@ -1,6 +1,7 @@
 import './assets/main.css'
 
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { initRecentVisitsTracking } from './composables/useRecentVisits'
@@ -64,4 +65,7 @@ observer.observe(document.documentElement, { attributes: true, attributeFilter: 
 // 初始化最近浏览追踪（路由 afterEach）
 try { initRecentVisitsTracking(router) } catch (_) {}
 
-createApp(App).use(router).mount('#app')
+const app = createApp(App)
+app.use(createPinia())
+app.use(router)
+app.mount('#app')

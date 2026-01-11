@@ -3,10 +3,12 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import HeaderBangumi from '@/components/HeaderBangumi.vue'
 import SidebarLeft from '@/components/SidebarLeft.vue'
 import AiChat from '@/components/AiChat.vue'
-import { useUISettings } from '@/composables/useUISettings'
+import { useUIStore } from '@/stores/ui'
+import { storeToRefs } from 'pinia'
 
 // UI 设置（动态背景开关）
-const { dynamicBackgroundEnabled } = useUISettings()
+const uiStore = useUIStore()
+const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
 
 // 监听暗色模式（检测 html.dark 与系统偏好）
 const isDark = ref(false)

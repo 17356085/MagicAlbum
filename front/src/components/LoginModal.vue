@@ -75,7 +75,7 @@
 
 <script setup>
 import { reactive, ref } from 'vue'
-import { useAuth } from '@/composables/useAuth'
+import { useAuthStore } from '@/stores/auth'
 
 const emit = defineEmits(['close', 'success'])
 
@@ -157,11 +157,11 @@ async function onSubmit() {
 
   submitting.value = true
   try {
-    const auth = useAuth()
+    const authStore = useAuthStore()
     if (mode.value === 'phone') {
-      await auth.loginWithPhonePassword({ phone: form.phone, password: form.password })
+      await authStore.loginWithPhonePassword({ phone: form.phone, password: form.password })
     } else {
-      await auth.loginWithEmailPassword({ email: form.email, password: form.password })
+      await authStore.loginWithEmailPassword({ email: form.email, password: form.password })
     }
     showToast('登录成功')
     emit('success')
