@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.2-SNAPSHOT</version>
+        <version>4.0.0</version>
         <relativePath/>
     </parent>
 
@@ -39,7 +39,7 @@
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
-                    <version>4.0.1</version>
+                    <version>4.0.0</version>
                     <!-- 全局禁用所有 spring-boot-maven-plugin 目标的执行（包括直接调用） -->
                     <configuration>
                         <skip>true</skip>
