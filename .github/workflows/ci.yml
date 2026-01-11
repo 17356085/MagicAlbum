@@ -1,0 +1,52 @@
+name: CI
+
+# 触发条件：推送到 main, master, dev 分支，或提交 Pull Request 时触发
+on:
+  push:
+    branches: [ main, master, dev ]
+  pull_request:
+    branches: [ main, master, dev ]
+
+jobs:
+  # 任务1：前端构建检查
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front # 进入 front 目录执行
+    steps:
+      - uses: actions/checkout@v4 # 拉取代码
+      
+      - uses: pnpm/action-setup@v2 # 安装 pnpm
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4 # 安装 Node.js
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+          cache-dependency-path: front/pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install # 安装依赖
+
+      - name: Build
+        run: pnpm build # 尝试打包 (检查是否有 TS 类型错误或构建错误)
+
+  # 任务2：后端构建检查
+  backend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # 拉取代码
+
+      - uses: actions/setup-java@v4 # 安装 Java 环境
+        with:
+          distribution: 'temurin'
+          java-version: '21' # 你项目使用的是 Java 21
+          cache: 'maven'
+
+      - name: Build with Maven
+        # 运行打包命令，但跳过测试 (-DskipTests)
+        # 现阶段跳过测试是因为 CI 环境没有连接 Redis/MySQL，运行集成测试会失败。
+        # 等未来配置好测试容器后，可以去掉这个参数。
+        run: mvn package -DskipTests
