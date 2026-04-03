@@ -1,0 +1,157 @@
+version: "3.9"
+
+services:
+  mysql_perf:
+    image: mysql:8.0
+    container_name: MagicAlbum-mysql-perf
+    command: ["--default-authentication-plugin=mysql_native_password", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_DATABASE: MagicAlbum_perf
+      MYSQL_USER: MagicAlbum
+      MYSQL_PASSWORD: MagicAlbum
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - mysqlperfdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis_perf:
+    image: redis:alpine
+    container_name: MagicAlbum-redis-perf
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq_perf:
+    image: rabbitmq:management
+    container_name: MagicAlbum-rabbitmq-perf
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: end/Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: perf,mysql
+      DB_HOST: mysql_perf
+      DB_PORT: 3306
+      DB_NAME: MagicAlbum_perf
+      DB_USER: MagicAlbum
+      DB_PASSWORD: MagicAlbum
+      SPRING_RABBITMQ_HOST: rabbitmq_perf
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      SPRING_DATA_REDIS_HOST: redis_perf
+      SPRING_DATA_REDIS_PORT: 6379
+      MANAGEMENT_PORT: 9090
+      DB_LEAK_DETECT_MS: 20000
+      JAVA_OPTS: -XX:MaxRAMPercentage=75 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError
+    depends_on:
+      mysql_perf:
+        condition: service_healthy
+      redis_perf:
+        condition: service_healthy
+      rabbitmq_perf:
+        condition: service_healthy
+    expose:
+      - "8080"
+      - "9090"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: MagicAlbum-nginx-perf
+    ports:
+      - "8088:8080"
+    depends_on:
+      - api
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: MagicAlbum-cadvisor-perf
+    ports:
+      - "8089:8080"
+    command: ["--docker_only=true", "--housekeeping_interval=10s"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  mysqld_exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: MagicAlbum-mysqld-exporter-perf
+    environment:
+      DATA_SOURCE_NAME: root:rootpass@(mysql_perf:3306)/
+    depends_on:
+      mysql_perf:
+        condition: service_healthy
+    ports:
+      - "9104:9104"
+
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: MagicAlbum-redis-exporter-perf
+    environment:
+      REDIS_ADDR: redis_perf:6379
+    depends_on:
+      redis_perf:
+        condition: service_healthy
+    ports:
+      - "9121:9121"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: MagicAlbum-prometheus-perf
+    ports:
+      - "9099:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: MagicAlbum-grafana-perf
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  k6:
+    image: grafana/k6:0.51.0
+    container_name: MagicAlbum-k6
+    volumes:
+      - ./k6:/scripts:ro
+      - ./results:/results
+    entrypoint: ["k6"]
+    profiles: ["tools"]
+
+volumes:
+  mysqlperfdata:
+  grafanadata:

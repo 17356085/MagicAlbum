@@ -1,0 +1,38 @@
+groups:
+  - name: magicalbum-perf-sla
+    rules:
+      - alert: ApiHighP99Latency
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{uri=~"/api/v1/.*"}[5m]))) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API P99 延迟超标"
+          description: "P99 > 500ms 持续 2m（Prometheus 计算）"
+
+      - alert: ApiHighErrorRate
+        expr: (sum(rate(http_server_requests_seconds_count{status=~"5..", uri=~"/api/v1/.*"}[5m])) / sum(rate(http_server_requests_seconds_count{uri=~"/api/v1/.*"}[5m]))) > 0.001
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx 错误率超标"
+          description: "5xx 比例 > 0.1% 持续 2m"
+
+      - alert: JvmDeadlockDetected
+        expr: max(jvm_threads_deadlocked) > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "JVM 线程死锁"
+          description: "检测到死锁线程数 > 0"
+
+      - alert: HikariPoolSaturated
+        expr: max(hikaricp_connections_active) / max(hikaricp_connections_max) > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB 连接池接近耗尽"
+          description: "active/max > 90% 持续 2m"

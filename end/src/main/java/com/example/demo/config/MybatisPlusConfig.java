@@ -9,6 +9,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * @author 17356
+ */
 @Configuration
 @ConditionalOnProperty(name = "feature.mp.read.threads", havingValue = "true")
 @MapperScan(basePackages = "com.example.demo.threads.repo.mp", annotationClass = Mapper.class)

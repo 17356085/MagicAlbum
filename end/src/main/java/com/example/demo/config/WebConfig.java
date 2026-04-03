@@ -8,6 +8,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+/**
+ * @author 17356
+ */
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
     @Value("${app.storage.local.baseDir:uploads}")
