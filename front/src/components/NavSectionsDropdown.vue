@@ -1,31 +1,33 @@
-<script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { listSections } from '@/api/sections'
+import type { Section } from '@/types'
 
 const open = ref(false)
 const loading = ref(false)
 const error = ref('')
-const sections = ref([])
-const container = ref(null)
+const sections = ref<Section[]>([])
+const container = ref<HTMLElement | null>(null)
 
-function toggle() { open.value = !open.value }
-function close() { open.value = false }
+function toggle(): void { open.value = !open.value }
+function close(): void { open.value = false }
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
     const data = await listSections({ size: 100 })
     sections.value = Array.isArray(data) ? data : (data.items || [])
-  } catch (e) {
+  } catch (_) {
     error.value = '分区加载失败'
   } finally {
     loading.value = false
   }
 }
 
-function onDocClick(e) {
+function onDocClick(e: MouseEvent): void {
   if (!container.value) return
+  if (!(e.target instanceof Node)) return
   if (!container.value.contains(e.target)) close()
 }
 
@@ -56,7 +58,7 @@ onBeforeUnmount(() => {
       <ul v-else class="p-2 grid grid-cols-1 sm:grid-cols-2 gap-1 text-sm">
         <li v-for="s in sections" :key="s.id">
           <router-link :to="{ name: 'discover', query: { sectionId: s.id } }" class="block truncate rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700">
-            {{ s.name || s.title }}
+            {{ s.name }}
             <span v-if="s.slug" class="ml-1 text-[10px] text-gray-500">/{{ s.slug }}</span>
           </router-link>
         </li>

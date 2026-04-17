@@ -1,14 +1,16 @@
-<script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listUsers } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
+import { getSingleQueryValue } from '@/utils/router'
+import type { User } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const error = ref('')
-const items = ref([])
+const items = ref<User[]>([])
 const page = ref(1)
 const size = ref(20)
 const total = ref(0)
@@ -18,49 +20,54 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const rq = route.query.q ? String(route.query.q) : ''
-    const rp = route.query.page ? Number(route.query.page) : 1
+    const rq = route.query.q ? getSingleQueryValue(route.query.q) : ''
+    const rp = route.query.page ? Number(getSingleQueryValue(route.query.page)) : 1
     page.value = isNaN(rp) ? 1 : rp
     q.value = rq
-    // 后端已更新为返回 UserSummaryDto，包含 nickname 和 avatarUrl
     const data = await listUsers({ q: rq, page: page.value, size: size.value })
-    const base = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : [])
-    items.value = base
-    total.value = Number(data?.total || (items.value?.length || 0))
-    page.value = Number(data?.page || page.value)
-    size.value = Number(data?.size || size.value)
-  } catch (e) {
+    items.value = Array.isArray(data.items) ? data.items : []
+    total.value = Number(data.total || items.value.length || 0)
+    page.value = Number(data.page || page.value)
+    size.value = Number(data.size || size.value)
+  } catch (_) {
     error.value = '加载用户失败'
   } finally {
     loading.value = false
   }
 }
 
-// 仅支持用户名或昵称匹配的过滤列表
 const filteredItems = computed(() => {
   const kw = String(q.value || '').trim().toLowerCase()
-  const src = Array.isArray(items.value) ? items.value : []
+  const src = items.value
   if (!kw) return src
   return src.filter(u => {
-    const nameOk = String(u?.username || '').toLowerCase().includes(kw)
-    const nickOk = String(u?.nickname || '').toLowerCase().includes(kw)
+    const nameOk = String(u.username || '').toLowerCase().includes(kw)
+    const nickOk = String(u.nickname || '').toLowerCase().includes(kw)
     return nameOk || nickOk
   })
 })
 
-function setPage(p) {
-  const totalPages = Math.max(1, Math.ceil((Number(total.value)||0) / (Number(size.value)||20)))
+function setPage(p: number) {
+  const totalPages = Math.max(1, Math.ceil((Number(total.value) || 0) / (Number(size.value) || 20)))
   const next = Math.min(Math.max(1, p), totalPages)
   page.value = next
   router.push({ name: 'users', query: { ...route.query, page: next } })
 }
 
-function prevPage() { setPage(Number(page.value) - 1) }
-function nextPage() { setPage(Number(page.value) + 1) }
+function prevPage() {
+  setPage(Number(page.value) - 1)
+}
+
+function nextPage() {
+  setPage(Number(page.value) + 1)
+}
 
 onMounted(load)
 watch(() => route.query.page, load)
-watch(() => route.query.q, () => { page.value = 1; load() })
+watch(() => route.query.q, () => {
+  page.value = 1
+  load()
+})
 </script>
 
 <template>

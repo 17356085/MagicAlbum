@@ -2,12 +2,11 @@ package com.example.demo.posts.service;
 
 import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.dto.PostDto;
+import com.example.demo.posts.dto.PostQueryView;
 import com.example.demo.posts.dto.UpdatePostRequest;
 import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.service.UserProfileService;
-import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.repo.UserRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -20,13 +19,11 @@ public class PostService {
     private final PostRepository postRepository;
     private final ThreadRepository threadRepository;
     private final UserRepository userRepository;
-    private final UserProfileService userProfileService;
 
-    public PostService(PostRepository postRepository, ThreadRepository threadRepository, UserRepository userRepository, UserProfileService userProfileService) {
+    public PostService(PostRepository postRepository, ThreadRepository threadRepository, UserRepository userRepository) {
         this.postRepository = postRepository;
         this.threadRepository = threadRepository;
         this.userRepository = userRepository;
-        this.userProfileService = userProfileService;
     }
 
     public Page<PostDto> listByThread(Long threadId, int page, int size) {
@@ -34,35 +31,35 @@ public class PostService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
         PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 50));
-        Page<Post> p = postRepository.findByThreadAsc(threadId, pr);
-        return p.map(this::toDto);
+        Page<PostQueryView> p = postRepository.findByThreadAscView(threadId, pr);
+        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
     public Page<PostDto> listByAuthor(Long authorId, int page, int size) {
         PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 50));
-        Page<Post> p = postRepository.findByAuthorDesc(authorId, pr);
-        return p.map(this::toDto);
+        Page<PostQueryView> p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, null, null, pr);
+        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
     public Page<PostDto> listByAuthor(Long authorId, String q, Long sectionId, String sort, int page, int size) {
         PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 50));
         String s = (sort == null || sort.isBlank()) ? "createdAt" : sort.trim();
         String keyword = (q == null || q.isBlank()) ? null : q.trim();
-        Page<Post> p;
+        Page<PostQueryView> p;
         if (keyword == null) {
             if ("updatedAt".equalsIgnoreCase(s)) {
-                p = postRepository.findByAuthorUpdatedDescWithSection(authorId, sectionId, pr);
+                p = postRepository.searchByAuthorUpdatedDescWithSectionView(authorId, null, sectionId, pr);
             } else {
-                p = postRepository.findByAuthorCreatedDescWithSection(authorId, sectionId, pr);
+                p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, null, sectionId, pr);
             }
         } else {
             if ("updatedAt".equalsIgnoreCase(s)) {
-                p = postRepository.searchByAuthorUpdatedDescWithSection(authorId, keyword, sectionId, pr);
+                p = postRepository.searchByAuthorUpdatedDescWithSectionView(authorId, keyword, sectionId, pr);
             } else {
-                p = postRepository.searchByAuthorCreatedDescWithSection(authorId, keyword, sectionId, pr);
+                p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, keyword, sectionId, pr);
             }
         }
-        return p.map(this::toDto);
+        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
     public PostDto create(Long authorId, Long threadId, CreatePostRequest req) {
@@ -130,41 +127,26 @@ public class PostService {
     }
 
     private PostDto toDto(Post p) {
+        if (p == null) return null;
+        return postRepository.findViewById(p.getId()).map(this::toDto).orElse(null);
+    }
+
+    private PostDto toDto(PostQueryView view) {
         PostDto dto = new PostDto();
-        dto.setId(p.getId());
-        dto.setThreadId(p.getThreadId());
-        // 帖子标题用于在“我的评论”页面显示所属帖子更直观的名称
-        try {
-            String title = threadRepository.findById(p.getThreadId()).map(t -> t.getTitle()).orElse(null);
-            dto.setThreadTitle(title);
-        } catch (Exception ignored) {}
-        dto.setAuthorId(p.getAuthorId());
-        dto.setAuthorUsername(userRepository.findById(p.getAuthorId()).map(u -> u.getUsername()).orElse(null));
-        // 从用户资料服务获取头像 URL 和昵称
-        try {
-            ProfileDto profile = userProfileService.getProfile(p.getAuthorId());
-            String avatar = profile.getAvatarUrl();
-            dto.setAuthorAvatarUrl(avatar == null ? "" : avatar);
-            dto.setAuthorNickname(profile.getNickname());
-        } catch (Exception ignored) {
-            dto.setAuthorAvatarUrl("");
-        }
-        dto.setContent(p.getContentMd());
-        dto.setReplyToPostId(p.getReplyToPostId());
-        // 填充父评论作者信息
-        if (p.getReplyToPostId() != null) {
-            try {
-                postRepository.findById(p.getReplyToPostId()).ifPresent(parent -> {
-                    dto.setParentAuthorId(parent.getAuthorId());
-                    userRepository.findById(parent.getAuthorId()).ifPresent(u -> dto.setParentAuthorUsername(u.getUsername()));
-                    try {
-                        dto.setParentAuthorNickname(userProfileService.getProfile(parent.getAuthorId()).getNickname());
-                    } catch (Exception ignored) {}
-                });
-            } catch (Exception ignored) {}
-        }
-        dto.setCreatedAt(p.getCreatedAt());
-        dto.setUpdatedAt(p.getUpdatedAt());
+        dto.setId(view.getId());
+        dto.setThreadId(view.getThreadId());
+        dto.setThreadTitle(view.getThreadTitle());
+        dto.setAuthorId(view.getAuthorId());
+        dto.setAuthorUsername(view.getAuthorUsername());
+        dto.setAuthorNickname(view.getAuthorNickname());
+        dto.setAuthorAvatarUrl(view.getAuthorAvatarUrl() == null ? "" : view.getAuthorAvatarUrl());
+        dto.setContent(view.getContent());
+        dto.setReplyToPostId(view.getReplyToPostId());
+        dto.setParentAuthorId(view.getParentAuthorId());
+        dto.setParentAuthorUsername(view.getParentAuthorUsername());
+        dto.setParentAuthorNickname(view.getParentAuthorNickname());
+        dto.setCreatedAt(view.getCreatedAt());
+        dto.setUpdatedAt(view.getUpdatedAt());
         return dto;
     }
 }

@@ -11,6 +11,10 @@ spring:
 management:
   server:
     port: ${MANAGEMENT_PORT:9090}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
   endpoints:
     web:
       exposure:

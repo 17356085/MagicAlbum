@@ -1,10 +1,35 @@
-<script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+<script setup lang="ts">
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import HeaderBangumi from '@/components/HeaderBangumi.vue'
 import SidebarLeft from '@/components/SidebarLeft.vue'
 import AiChat from '@/components/AiChat.vue'
 import { useUIStore } from '@/stores/ui'
 import { storeToRefs } from 'pinia'
+
+interface SnowParticle {
+  x: number
+  y: number
+  w: number
+  h: number
+  angle: number
+  spin: number
+  vy: number
+  vx: number
+  swayAmp: number
+  swayFreq: number
+  swayPhase: number
+  alpha: number
+}
+
+interface StarParticle {
+  x: number
+  y: number
+  r: number
+  base: number
+  amp: number
+  phase: number
+  speed: number
+}
 
 // UI 设置（动态背景开关）
 const uiStore = useUIStore()
@@ -12,30 +37,30 @@ const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
 
 // 监听暗色模式（检测 html.dark 与系统偏好）
 const isDark = ref(false)
-function updateIsDark() {
+function updateIsDark(): void {
   const hasDarkClass = document.documentElement.classList.contains('dark')
   const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
   isDark.value = hasDarkClass || prefersDark
 }
-let themeObserver = null
+let themeObserver: MutationObserver | null = null
 
 // 减少动效偏好
 const prefersReducedMotion = ref(false)
-function updateReducedMotion() {
+function updateReducedMotion(): void {
   prefersReducedMotion.value = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
 }
 
 // Day 模式下雪：Canvas 粒子（限帧 + 空闲启动）
-const snowCanvas = ref(null)
-let snowCtx = null
-let snowParticles = []
-let snowRAF = null
-  let snowLastTime = 0
-  const snowTargetFPS = 28
-  const snowFrameInterval = 1000 / snowTargetFPS
+const snowCanvas = ref<HTMLCanvasElement | null>(null)
+let snowCtx: CanvasRenderingContext2D | null = null
+let snowParticles: SnowParticle[] = []
+let snowRAF: number | null = null
+let snowLastTime = 0
+const snowTargetFPS = 28
+const snowFrameInterval = 1000 / snowTargetFPS
 
-function makeParticles(width, height, count = 100) {
-  const ps = []
+function makeParticles(width: number, height: number, count = 100): SnowParticle[] {
+  const ps: SnowParticle[] = []
   for (let i = 0; i < count; i++) {
     // 片状雪花：更像“薄片”而非圆点；带轻微旋转与横向摆动
     const isLargeFlake = Math.random() < 0.30 // 更大：提升大雪片比例到 30%
@@ -57,7 +82,7 @@ function makeParticles(width, height, count = 100) {
   }
   return ps
 }
-function drawSnow(ts) {
+function drawSnow(ts: number): void {
   if (!snowCtx) return
   if (ts - snowLastTime < snowFrameInterval) { snowRAF = requestAnimationFrame(drawSnow); return }
   snowLastTime = ts
@@ -89,7 +114,7 @@ function drawSnow(ts) {
   }
   snowRAF = requestAnimationFrame(drawSnow)
 }
-function startSnow() {
+function startSnow(): void {
   if (prefersReducedMotion.value) return
   const canvas = snowCanvas.value
   if (!canvas) return
@@ -97,26 +122,30 @@ function startSnow() {
   const w = canvas.clientWidth, h = canvas.clientHeight
   canvas.width = w * dpr; canvas.height = h * dpr
   snowCtx = canvas.getContext('2d')
+  if (!snowCtx) return
   snowCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
   snowParticles = makeParticles(w, h, 60)
   snowLastTime = 0
   snowRAF = requestAnimationFrame(drawSnow)
 }
-function stopSnow() {
+function stopSnow(): void {
   try { if (snowRAF) cancelAnimationFrame(snowRAF) } catch {}
   snowRAF = null
   snowCtx = null
   snowParticles = []
 }
-function refreshSnow() { stopSnow(); startSnow() }
+function refreshSnow(): void { stopSnow(); startSnow() }
 
-function scheduleStartSnow() {
-  if ('requestIdleCallback' in window) {
-    try { window.requestIdleCallback(() => startSnow()) } catch { setTimeout(startSnow, 200) }
+function scheduleStartSnow(): void {
+  const idleWindow = window as Window & typeof globalThis & {
+    requestIdleCallback?: (callback: IdleRequestCallback) => number
+  }
+  if (typeof idleWindow.requestIdleCallback === 'function') {
+    try { idleWindow.requestIdleCallback(() => startSnow()) } catch { setTimeout(startSnow, 200) }
   } else { setTimeout(startSnow, 200) }
 }
 
-  function onResize() { if (snowCtx) refreshSnow() }
+function onResize(): void { if (snowCtx) refreshSnow() }
 
 // 依据开关与主题决定是否启用下雪
 watch([dynamicBackgroundEnabled, isDark], () => {
@@ -124,7 +153,7 @@ watch([dynamicBackgroundEnabled, isDark], () => {
   else stopSnow()
 })
 
-  onMounted(() => {
+onMounted(() => {
   updateIsDark(); updateReducedMotion()
   // 监听系统动效偏好变化
   if (window.matchMedia) {
@@ -145,24 +174,24 @@ watch([dynamicBackgroundEnabled, isDark], () => {
   // 初始根据状态启用下雪
   if (dynamicBackgroundEnabled.value && !isDark.value && !prefersReducedMotion.value) scheduleStartSnow()
   window.addEventListener('resize', onResize)
-  })
+})
 
-  onUnmounted(() => {
+onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   stopSnow()
   if (themeObserver) { try { themeObserver.disconnect() } catch {}; themeObserver = null }
-  })
+})
 // Night：星光 Canvas（更自然、非规则稀疏的点点微光）
-const starsCanvas = ref(null)
-let starsCtx = null
-let stars = []
-let starsRAF = null
+const starsCanvas = ref<HTMLCanvasElement | null>(null)
+let starsCtx: CanvasRenderingContext2D | null = null
+let stars: StarParticle[] = []
+let starsRAF: number | null = null
 let starsLastTime = 0
 const starsTargetFPS = 20
 const starsFrameInterval = 1000 / starsTargetFPS
 
-function makeStars(w, h, count = 40) {
-  const arr = []
+function makeStars(w: number, h: number, count = 40): StarParticle[] {
+  const arr: StarParticle[] = []
   for (let i = 0; i < count; i++) {
     arr.push({
       x: Math.random() * w,
@@ -177,7 +206,7 @@ function makeStars(w, h, count = 40) {
   }
   return arr
 }
-function drawStars(ts) {
+function drawStars(ts: number): void {
   if (!starsCtx) return
   if (ts - starsLastTime < starsFrameInterval) { starsRAF = requestAnimationFrame(drawStars); return }
   starsLastTime = ts
@@ -199,7 +228,7 @@ function drawStars(ts) {
   }
   starsRAF = requestAnimationFrame(drawStars)
 }
-function startStars() {
+function startStars(): void {
   if (prefersReducedMotion.value) return
   const canvas = starsCanvas.value
   if (!canvas) return
@@ -207,18 +236,19 @@ function startStars() {
   const w = canvas.clientWidth, h = canvas.clientHeight
   canvas.width = w * dpr; canvas.height = h * dpr
   starsCtx = canvas.getContext('2d')
+  if (!starsCtx) return
   starsCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
   stars = makeStars(w, h, 68)
   starsLastTime = 0
   starsRAF = requestAnimationFrame(drawStars)
 }
-function stopStars() {
+function stopStars(): void {
   try { if (starsRAF) cancelAnimationFrame(starsRAF) } catch {}
   starsRAF = null
   starsCtx = null
   stars = []
 }
-function refreshStars() { stopStars(); startStars() }
+function refreshStars(): void { stopStars(); startStars() }
 
 // 启停逻辑：夜间且启用开关时展示星光
 watch([dynamicBackgroundEnabled, isDark], () => {
@@ -227,7 +257,7 @@ watch([dynamicBackgroundEnabled, isDark], () => {
 })
 
 // 复用 resize 钩子
-function onResizeStars() { if (starsCtx) refreshStars() }
+function onResizeStars(): void { if (starsCtx) refreshStars() }
 onMounted(() => { window.addEventListener('resize', onResizeStars) })
 onUnmounted(() => { window.removeEventListener('resize', onResizeStars); stopStars() })
 

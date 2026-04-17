@@ -24,6 +24,15 @@ logging:
   level:
     root: info
 
+app:
+  auth:
+    verify:
+      mode: off
+  security:
+    jwt:
+      secret: TestOnlyJwtSecretKey_ForBlueAlbum_0123456789
+      access-token-ttl-minutes: 30
+
 # 关闭文档生成，避免 springdoc 在测试上下文中加载并触发 Querydsl 自定义器
 springdoc:
   api-docs:

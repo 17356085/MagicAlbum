@@ -92,21 +92,41 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { registerUser, checkUsernameAvailable } from '@/api/users'
 import { isValidUsername, isValidPhone, isValidEmail, isStrongPassword, getPasswordError } from '@/utils/validators'
+import type { ApiError } from '@/types'
 
-const emit = defineEmits(['close', 'success'])
+interface RegisterForm {
+  username: string
+  phone: string
+  email: string
+  password: string
+  confirmPassword: string
+}
 
-const form = reactive({
+interface RegisterErrors {
+  username: string
+  phone: string
+  email: string
+  password: string
+  confirmPassword: string
+}
+
+const emit = defineEmits<{
+  close: []
+  success: []
+}>()
+
+const form = reactive<RegisterForm>({
   username: '',
   phone: '',
   email: '',
   password: '',
   confirmPassword: '',
 })
-const errors = reactive({
+const errors = reactive<RegisterErrors>({
   username: '',
   phone: '',
   email: '',
@@ -116,12 +136,12 @@ const errors = reactive({
 const submitting = ref(false)
 const toast = ref('')
 
-function showToast(msg) {
+function showToast(msg: string): void {
   toast.value = msg
   setTimeout(() => (toast.value = ''), 2000)
 }
 
-function resetErrors() {
+function resetErrors(): void {
   errors.username = ''
   errors.phone = ''
   errors.email = ''
@@ -129,7 +149,7 @@ function resetErrors() {
   errors.confirmPassword = ''
 }
 
-async function validateUsername() {
+async function validateUsername(): Promise<boolean> {
   if (!form.username) {
     errors.username = '请输入用户名'
     return false
@@ -146,13 +166,13 @@ async function validateUsername() {
     }
     errors.username = ''
     return true
-  } catch (e) {
+  } catch (_) {
     errors.username = '无法验证用户名，请稍后再试'
     return false
   }
 }
 
-function validatePhone() {
+function validatePhone(): boolean {
   if (!form.phone) {
     errors.phone = '请输入手机号'
     return false
@@ -165,7 +185,7 @@ function validatePhone() {
   return true
 }
 
-function validateEmail() {
+function validateEmail(): boolean {
   if (!form.email) {
     errors.email = '请输入电子邮箱'
     return false
@@ -178,7 +198,7 @@ function validateEmail() {
   return true
 }
 
-function validatePassword() {
+function validatePassword(): boolean {
   if (!form.password) {
     errors.password = '请输入密码'
     return false
@@ -191,7 +211,7 @@ function validatePassword() {
   return true
 }
 
-function validateConfirmPassword() {
+function validateConfirmPassword(): boolean {
   if (!form.confirmPassword) {
     errors.confirmPassword = '请再次输入密码'
     return false
@@ -204,7 +224,12 @@ function validateConfirmPassword() {
   return true
 }
 
-async function onSubmit() {
+function getRegisterErrorMessage(error: unknown): string {
+  const e = error as ApiError | null | undefined
+  return e?.response?.data?.message || e?.message || ''
+}
+
+async function onSubmit(): Promise<void> {
   resetErrors()
   const okUsername = await validateUsername()
   const okPhone = validatePhone()
@@ -227,8 +252,8 @@ async function onSubmit() {
     showToast('注册成功')
     emit('success')
     onClose()
-  } catch (e) {
-    const rawMsg = e?.response?.data?.message || e?.message || ''
+  } catch (e: unknown) {
+    const rawMsg = getRegisterErrorMessage(e)
     let toastMsg = '注册失败，请稍后再试'
     // 将后端“用户名不可重复/邮箱已被使用/手机号已被使用”映射为更清晰的提示，并标注到对应字段
     if (rawMsg && /用户名/.test(rawMsg) && /(不可重复|已被使用)/.test(rawMsg)) {
@@ -252,7 +277,7 @@ async function onSubmit() {
   }
 }
 
-function onClose() {
+function onClose(): void {
   emit('close')
 }
 </script>

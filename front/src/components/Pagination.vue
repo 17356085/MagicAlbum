@@ -13,7 +13,7 @@
       <select
         class="rounded-md border border-gray-300 bg-white px-2 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:hover:bg-gray-700"
         :value="size"
-        @change="$emit('update:size', Number(($event.target).value))"
+        @change="onSizeChange"
       >
         <option :value="10">10/页</option>
         <option :value="20">20/页</option>
@@ -28,19 +28,33 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  page: { type: Number, default: 1 },
-  size: { type: Number, default: 20 },
-  total: { type: Number, default: null }
+interface PaginationProps {
+  page?: number
+  size?: number
+  total?: number | null
+}
+
+const props = withDefaults(defineProps<PaginationProps>(), {
+  page: 1,
+  size: 20,
+  total: null,
 })
 
-defineEmits(['update:page', 'update:size'])
+const emit = defineEmits<{
+  'update:page': [value: number]
+  'update:size': [value: number]
+}>()
 
-const totalPages = computed(() => {
+const totalPages = computed<number>(() => {
   if (!props.total || props.size <= 0) return 1
   return Math.max(1, Math.ceil(props.total / props.size))
 })
+
+function onSizeChange(event: Event): void {
+  const target = event.target as HTMLSelectElement | null
+  emit('update:size', Number(target?.value || props.size))
+}
 </script>

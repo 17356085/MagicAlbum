@@ -10,7 +10,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class MarkdownRenderService {
     private final Parser parser = Parser.builder().build();
-    private final HtmlRenderer renderer = HtmlRenderer.builder().build();
+    private final HtmlRenderer renderer = HtmlRenderer.builder()
+            .escapeHtml(true)
+            .build();
 
     private static class CacheEntry {
         final Instant updatedAt;

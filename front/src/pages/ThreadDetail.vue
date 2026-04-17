@@ -1,116 +1,76 @@
-<script setup>
-import { ref, onMounted, computed, nextTick, watch } from 'vue'
+<script setup lang="ts">
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getThread } from '@/api/threads'
 import { getSummary, triggerSummary } from '@/api/ai'
+import { getUserProfile } from '@/api/users'
 import { formatRelativeTime } from '@/composables/time'
 import { normalizeImageUrl } from '@/utils/image'
-import MarkdownIt from 'markdown-it'
-import DOMPurify from 'dompurify'
-import hljs from 'highlight.js/lib/common'
-import markdownItKatex from 'markdown-it-katex'
-import 'katex/dist/katex.min.css'
+import { applyRuntimeHighlight, createMarkdownRenderer, renderInlineMarkdown, renderMarkdown, sanitizeHtml } from '@/utils/markdown'
+import { safeBack as navigateBackSafely } from '@/utils/router'
 import Comments from '@/components/Comments.vue'
 import { updateVisitTitleByPath, updateVisitTitleById, updateVisitSectionById } from '@/composables/useRecentVisits'
+import type { Id, Thread } from '@/types'
+import type { AiSummaryData } from '@/api/ai'
 
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const error = ref('')
-const t = ref(null)
-const authorNickname = ref('')
+const t = ref<Thread | null>(null)
+const authorProfileAvatarUrl = ref('')
 const aiSummary = ref('')
 const aiStatus = ref('')
 const aiLoading = ref(false)
 
 // 从 URL hash 中解析需要滚动定位的评论 ID（格式：#post-<id>）
-const anchorPostId = ref(null)
-function updateAnchorFromHash() {
+const anchorPostId = ref<number | null>(null)
+
+function getRouteParamId(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '')
+}
+
+function updateAnchorFromHash(): void {
   const h = String(route.hash || '')
   const m = h.match(/^#post-(\d+)$/)
   anchorPostId.value = m ? Number(m[1]) : null
 }
 
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  breaks: true,
-  langPrefix: 'language-',
-  highlight: (str, lang) => {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        const out = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
-        return '<pre><code class="hljs language-' + lang + '">' + out + '</code></pre>'
-      } catch (_) {}
-    } else {
-      try {
-        const auto = hljs.highlightAuto(str)
-        const langGuess = auto.language ? (' language-' + auto.language) : ''
-        return '<pre><code class="hljs' + langGuess + '">' + auto.value + '</code></pre>'
-      } catch (_) {}
-    }
-    return '<pre><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>'
-  }
-})
+const md = createMarkdownRenderer({ katex: true, normalizeImages: true })
+const mdTitle = createMarkdownRenderer({ html: false, breaks: false, highlight: false })
 
-// 启用 GFM 删除线支持：~~text~~
-try { md.enable(['strikethrough']) } catch (_) {}
-
-// 数学公式支持
-md.use(markdownItKatex)
-
-// 标题使用行内 Markdown 渲染（更安全），统一支持删除线
-const mdTitle = new MarkdownIt({ html: false, linkify: true, breaks: false })
-try { mdTitle.enable(['strikethrough']) } catch (_) {}
-function renderTitle(text) {
-  const safe = String(text || '')
-  return DOMPurify.sanitize(mdTitle.renderInline(safe))
+function renderTitleMarkdownHtml(text: string | undefined) {
+  return renderInlineMarkdown(mdTitle, text)
 }
 
-// 图片懒加载与响应式宽度
-const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) {
-  return self.renderToken(tokens, idx, options)
+function safeBack(): void {
+  navigateBackSafely(router)
 }
-md.renderer.rules.image = function(tokens, idx, options, env, self) {
-  const token = tokens[idx]
-  const loadingIdx = token.attrIndex('loading')
-  if (loadingIdx < 0) token.attrPush(['loading', 'lazy'])
-  const clsIdx = token.attrIndex('class')
-  if (clsIdx < 0) token.attrPush(['class', 'max-w-full h-auto'])
-  else token.attrs[clsIdx][1] += ' max-w-full h-auto'
-  // 重写 src 为完整后端URL（解决 /uploads/... 在前端相对路径的问题）
-  const srcIdx = token.attrIndex('src')
-  if (srcIdx >= 0) {
-    const srcVal = token.attrs[srcIdx][1]
-    token.attrs[srcIdx][1] = normalizeImageUrl(srcVal)
-  }
-  return defaultImageRule(tokens, idx, options, env, self)
-}
-const contentHtml = computed(() => {
+
+const displayAuthorAvatarUrl = computed(() => normalizeImageUrl(t.value?.authorAvatarUrl || authorProfileAvatarUrl.value || ''))
+
+const contentMarkdownHtml = computed(() => {
   // 为保持与列表页一致的 Markdown 行为（含删除线），优先使用前端渲染
   const raw = t.value?.content
   if (typeof raw === 'string' && raw.length > 0) {
-    const rendered = md.render(raw)
-    return DOMPurify.sanitize(rendered)
+    return renderMarkdown(md, raw)
   }
   // 若无原始内容（仅返回已渲染的 HTML），再使用服务端 HTML
   const serverHtml = t.value?.contentHtml
   if (typeof serverHtml === 'string' && serverHtml.length > 0) {
-    return DOMPurify.sanitize(serverHtml)
+    return sanitizeHtml(serverHtml)
   }
   return ''
 })
 
 // 针对服务端返回的 HTML 或未走 markdown-it highlight 的情况，渲染后执行 hljs
-const contentRef = ref(null)
-function applyRuntimeHighlight() {
+const contentRef = ref<HTMLElement | null>(null)
+function enhanceRenderedContent(): void {
   const el = contentRef.value
+  applyRuntimeHighlight(el)
   if (!el) return
-  const nodes = el.querySelectorAll('pre code')
+  const nodes = el.querySelectorAll<HTMLElement>('pre code')
   nodes.forEach((node) => {
-    try {
-      hljs.highlightElement(node)
-    } catch (_) {}
     const pre = node.closest('pre')
     if (pre && !pre.querySelector('.code-copy-btn')) {
       const btn = document.createElement('button')
@@ -135,37 +95,22 @@ function applyRuntimeHighlight() {
       pre.appendChild(btn)
     }
   })
-  // 运行时重写服务端HTML中的图片src
-  const imgs = el.querySelectorAll('img')
-  imgs.forEach((img) => {
-    try {
-      const src = img.getAttribute('src') || ''
-      const fixed = normalizeImageUrl(src)
-      if (fixed && fixed !== src) img.setAttribute('src', fixed)
-      // 保证响应式类名
-      img.classList.add('max-w-full', 'h-auto')
-      img.setAttribute('loading', img.getAttribute('loading') || 'lazy')
-    } catch (_) {}
-  })
 }
 
-// 安全返回：若直接通过地址栏进入或无站内来源，则跳转到发现页
-function safeBack() {
-  const ref = document.referrer || ''
-  const sameOrigin = ref && ref.startsWith(location.origin)
-  if (!sameOrigin || window.history.length <= 1) {
-    router.replace({ name: 'discover' })
-  } else {
-    router.back()
-  }
-}
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const id = route.params.id
+    const id = getRouteParamId(route.params.id as string | string[] | undefined)
     const data = await getThread(id)
     t.value = data
+    authorProfileAvatarUrl.value = ''
+    if (!t.value?.authorAvatarUrl && t.value?.authorId) {
+      try {
+        const profile = await getUserProfile(t.value.authorId)
+        authorProfileAvatarUrl.value = profile?.avatarUrl || ''
+      } catch (_) {}
+    }
     // 更新最近浏览的分区信息，便于历史页分区筛选
     try {
       const sid = t.value?.sectionId
@@ -180,41 +125,30 @@ async function load() {
         const path = route.fullPath || route.path
         updateVisitTitleByPath(path, titleText)
         // 同步按帖子 ID 更新，保证在 path 不一致（含 hash/query）时也能更新到正确记录
-        try { updateVisitTitleById(Number(route.params.id), titleText) } catch (_) {}
+        try { updateVisitTitleById(Number(id), titleText) } catch (_) {}
       }
     } catch (_) {}
-    // 补充作者昵称
-    const uid = t.value?.authorId
-    if (uid) {
-      try {
-        const p = await getUserProfile(uid)
-        authorNickname.value = p?.nickname || ''
-      } catch (_) {
-        authorNickname.value = ''
-      }
-    } else {
-      authorNickname.value = ''
-    }
-  } catch (e) {
+  } catch (_) {
     error.value = '加载帖子详情失败'
   } finally {
     loading.value = false
   }
 }
 
-async function loadSummary(id) {
+async function loadSummary(id: Id): Promise<void> {
   try {
     const res = await getSummary(id)
-    if (res.data) {
-      aiSummary.value = res.data.summary
-      aiStatus.value = res.data.status
+    const payload = (res.data || {}) as AiSummaryData
+    if (payload) {
+      aiSummary.value = payload.summary || ''
+      aiStatus.value = payload.status || ''
     }
-  } catch (e) {
+  } catch (_) {
     // ignore
   }
 }
 
-async function handleGenerateSummary() {
+async function handleGenerateSummary(): Promise<void> {
   if (!t.value?.id) return
   aiLoading.value = true
   try {
@@ -230,7 +164,7 @@ async function handleGenerateSummary() {
         aiLoading.value = false
       }
     }, 2000)
-  } catch (e) {
+  } catch (_) {
     aiLoading.value = false
   }
 }
@@ -238,14 +172,14 @@ async function handleGenerateSummary() {
 onMounted(async () => {
   await load()
   await nextTick()
-  applyRuntimeHighlight()
+  enhanceRenderedContent()
   updateAnchorFromHash()
 })
 
 // 内容变化时重新应用高亮
-watch(contentHtml, async () => {
+watch(contentMarkdownHtml, async () => {
   await nextTick()
-  applyRuntimeHighlight()
+  enhanceRenderedContent()
 })
 // 监听 hash 变化，允许在同页面内切换定位到不同评论
 watch(() => route.hash, () => updateAnchorFromHash())
@@ -277,12 +211,12 @@ watch(() => route.hash, () => updateAnchorFromHash())
                   (编辑于 {{ formatRelativeTime(t.updatedAt) }})
                 </span>
               </div>
-              <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100 break-words leading-tight" v-html="renderTitle(t.title)"></h1>
+              <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100 break-words leading-tight" v-html="renderTitleMarkdownHtml(t.title)"></h1>
               
               <div class="mt-4 flex items-center gap-3">
                 <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="flex items-center gap-2 group">
                   <img 
-                    :src="t.authorAvatar ? normalizeImageUrl(t.authorAvatar) : `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || 'U'}`" 
+                    :src="displayAuthorAvatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || 'U'}`" 
                     class="h-8 w-8 rounded-full object-cover ring-2 ring-transparent group-hover:ring-brandDay-100 dark:group-hover:ring-brandNight-900 transition-all bg-gray-100 dark:bg-gray-700"
                     alt=""
                   />
@@ -329,7 +263,7 @@ watch(() => route.hash, () => updateAnchorFromHash())
 
         <!-- 正文内容 -->
         <div class="p-5 sm:p-8">
-          <div class="prose prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-a:text-brandDay-600 dark:prose-a:text-brandNight-400 prose-img:rounded-xl prose-img:shadow-sm" v-html="contentHtml" ref="contentRef"></div>
+          <div class="prose prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-a:text-brandDay-600 dark:prose-a:text-brandNight-400 prose-img:rounded-xl prose-img:shadow-sm" v-html="contentMarkdownHtml" ref="contentRef"></div>
         </div>
       </div>
     </div>

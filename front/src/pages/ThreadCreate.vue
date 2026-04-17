@@ -1,39 +1,36 @@
-<script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { MdEditor } from 'md-editor-v3'
-import 'md-editor-v3/lib/style.css'
+<script setup lang="ts">
+import { onMounted, onUnmounted, ref } from 'vue'
 import { listSections } from '@/api/sections'
 import { createThread } from '@/api/threads'
 import { uploadImage } from '@/api/uploads'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
+import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
+import type { Section } from '@/types'
 
 const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const success = ref('')
-const sections = ref([])
+const sections = ref<Section[]>([])
 const authStore = useAuthStore()
 const { isLoggedIn, token } = storeToRefs(authStore)
 
-const form = ref({
+interface ThreadCreateForm {
+  sectionId: string
+  title: string
+  content: string
+}
+
+const form = ref<ThreadCreateForm>({
   sectionId: '',
   title: '',
-  content: ''
+  content: '',
 })
 
 const isUploading = ref(false)
 const uploadProgress = ref(0)
-
-// 跟随全局暗色模式：监听 html.dark 与系统偏好
-const isDark = ref(false)
-function updateIsDark() {
-  const hasDarkClass = document.documentElement.classList.contains('dark')
-  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-  isDark.value = hasDarkClass || prefersDark
-}
-let themeObserver = null
 
 // 草稿存储键与提示信息
 const DRAFT_KEY = 'thread-draft-v1'
@@ -52,50 +49,42 @@ const { draftHasData, saveDraft, restoreDraft, clearDraft, startAutoSave, stopAu
   restoreMode: 'fill-empty',
 })
 
-// 规范化图片URL：将相对路径（/uploads/... 或 uploads/...）拼接为后端完整地址
-function normalizeImageUrl(u) {
-  if (!u) return ''
-  const url = String(u).trim()
-  if (!url) return ''
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
-    return url
-  }
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
-  const backendBase = apiBase.replace(/\/api\/v1$/, '')
-  if (url.startsWith('/')) return backendBase + url
-  return backendBase + '/' + url
+function requestLogin(source = 'thread-create'): void {
+  try {
+    window.dispatchEvent(new CustomEvent('open-login-modal', { detail: { source } }))
+  } catch (_) {}
 }
 
-async function onUploadImg(files, callback) {
+async function uploadThreadImage(file: File): Promise<string> {
   try {
     isUploading.value = true
     uploadProgress.value = 0
-    const urls = []
-    for (const f of files) {
-      const { url } = await uploadImage(f, token.value, (p) => {
-        uploadProgress.value = p
-      })
-      urls.push(normalizeImageUrl(url))
-    }
-    callback(urls)
-  } catch (e) {
+    const { url, path } = await uploadImage(file, token.value, (p) => {
+      uploadProgress.value = p
+    })
+    return String(url || path || '')
+  } catch (e: any) {
     error.value = e?.response?.data?.message || e?.message || '图片上传失败'
+    return ''
   } finally {
     isUploading.value = false
     uploadProgress.value = 0
   }
 }
 
-async function loadSections() {
+async function loadSections(): Promise<void> {
+  loading.value = true
   try {
     const data = await listSections({ size: 100 })
     sections.value = Array.isArray(data) ? data : (data.items || [])
-  } catch (e) {
+  } catch (_) {
     // 保持空列表即可
+  } finally {
+    loading.value = false
   }
 }
 
-async function submit() {
+async function submit(): Promise<void> {
   error.value = ''
   success.value = ''
   if (!form.value.sectionId || !form.value.title || !form.value.content) {
@@ -105,6 +94,7 @@ async function submit() {
   // 未登录或无令牌时阻止提交
   if (!isLoggedIn.value || !token.value) {
     error.value = '请先登录后再发帖'
+    requestLogin()
     return
   }
   if (String(token.value).startsWith('mock-token-')) {
@@ -124,7 +114,7 @@ async function submit() {
     clearDraft()
     // 成功后重置所有输入：分区、标题、内容
     form.value = { sectionId: '', title: '', content: '' }
-  } catch (e) {
+  } catch (e: any) {
     const msg = e?.response?.data?.message || e?.message || '发布失败，请稍后重试'
     error.value = msg
   } finally {
@@ -133,25 +123,30 @@ async function submit() {
 }
 
 // 手动按钮：在页面上给予提示，但逻辑已由 composable 处理
-function onSaveDraft() {
+function onSaveDraft(): void {
   saveDraft()
   draftMessage.value = '已保存草稿'
   setTimeout(() => { draftMessage.value = '' }, 1500)
 }
 
-function onClearDraft() {
+function onClearDraft(): void {
   clearDraft()
   draftMessage.value = '已清除草稿'
   setTimeout(() => { draftMessage.value = '' }, 1500)
 }
 
+function onLoginClick(): void {
+  error.value = '请先登录后再发帖'
+  requestLogin()
+}
+
 // 标准化美化：调用通用 beautifyMarkdown
-async function beautifyContent() {
+async function beautifyContent(): Promise<void> {
   try {
     form.value.content = await beautifyMarkdown(form.value.content)
     draftMessage.value = '已美化内容'
     setTimeout(() => { draftMessage.value = '' }, 1500)
-  } catch (e) {
+  } catch (_) {
     draftMessage.value = '美化失败'
     setTimeout(() => { draftMessage.value = '' }, 1500)
   }
@@ -159,16 +154,6 @@ async function beautifyContent() {
 
 onMounted(() => {
   loadSections()
-  // 初始化与监听暗色状态
-  updateIsDark()
-  if (window.matchMedia) {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = () => updateIsDark()
-    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', handler)
-    else if (typeof mq.addListener === 'function') mq.addListener(handler)
-  }
-  themeObserver = new MutationObserver(updateIsDark)
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   // 草稿检测与自动恢复
   if (draftHasData.value && !form.value.title && !form.value.content) {
     restoreDraft()
@@ -179,10 +164,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (themeObserver) {
-    try { themeObserver.disconnect() } catch (_) {}
-    themeObserver = null
-  }
   stopAutoSave()
 })
 
@@ -199,7 +180,7 @@ onUnmounted(() => {
           <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">分区</label>
           <select v-model="form.sectionId" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400">
             <option value="" disabled>请选择分区</option>
-            <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name || s.title }}</option>
+            <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
         </div>
 
@@ -210,12 +191,15 @@ onUnmounted(() => {
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">内容（支持 Markdown）</label>
-          <div class="relative">
-            <MdEditor v-model="form.content" :onUploadImg="onUploadImg" :theme="isDark ? 'dark' : 'light'" class="rounded-lg border border-gray-300 dark:border-gray-700" />
-            <div v-if="isUploading" class="absolute top-2 right-3 text-xs bg-white/80 px-2 py-1 rounded border border-gray-200 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-200">
-              上传中 {{ uploadProgress }}%
-            </div>
-          </div>
+          <MarkdownTextareaEditor
+            v-model="form.content"
+            :rows="16"
+            :uploading="isUploading"
+            :upload-progress="uploadProgress"
+            :upload-image="uploadThreadImage"
+            placeholder="请输入帖子正文，支持 Markdown"
+            preview-label="正文预览"
+          />
         </div>
 
         <div class="flex items-center gap-2">
@@ -224,7 +208,16 @@ onUnmounted(() => {
           <button :disabled="submitting" class="inline-flex items-center rounded bg-brandDay-600 dark:bg-brandNight-600 px-4 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:cursor-not-allowed disabled:opacity-50 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="submit">
             {{ submitting ? '发布中...' : '发布' }}
           </button>
-          <span v-if="!isLoggedIn" class="text-sm text-gray-600 dark:text-gray-300">请先登录后再发帖</span>
+          <div v-if="!isLoggedIn" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <span>请先登录后再发帖</span>
+            <button
+              type="button"
+              class="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700"
+              @click="onLoginClick"
+            >
+              立即登录
+            </button>
+          </div>
           <span v-if="success" class="text-sm text-green-600 dark:text-green-400">{{ success }}</span>
           <span v-if="error" class="text-sm text-red-600 dark:text-red-400">{{ error }}</span>
           <span v-if="draftMessage" class="text-xs text-gray-500 dark:text-gray-400">{{ draftMessage }}</span>

@@ -61,21 +61,22 @@ public class UserController {
             @RequestParam(value = "fields", required = false) String fields
     ) {
         Page<UserDto> p = userService.list(q, page, size, fields);
-        
+
+        java.util.List<Long> userIds = p.getContent().stream()
+                .map(UserDto::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        java.util.Map<Long, ProfileDto> profileMap = userProfileService.getProfiles(userIds);
+
         java.util.List<UserSummaryDto> summaries = p.getContent().stream().map(u -> {
             UserSummaryDto dto = new UserSummaryDto();
             dto.setId(u.getId());
             dto.setUsername(u.getUsername());
             dto.setCreatedAt(u.getCreatedAt());
-            
-            try {
-                ProfileDto profile = userProfileService.getProfile(u.getId());
-                dto.setNickname(profile.getNickname());
-                dto.setAvatarUrl(profile.getAvatarUrl());
-            } catch (Exception e) {
-                dto.setNickname("");
-                dto.setAvatarUrl("");
-            }
+
+            ProfileDto profile = profileMap.get(u.getId());
+            dto.setNickname(profile != null ? profile.getNickname() : "");
+            dto.setAvatarUrl(profile != null ? profile.getAvatarUrl() : "");
             return dto;
         }).toList();
 
@@ -89,14 +90,9 @@ public class UserController {
 
     @GetMapping("/me")
     public ResponseEntity<ProfileDto> getMe() {
-        try {
-            Long userId = getUserId();
-            ProfileDto profile = userProfileService.getProfile(userId);
-            return ResponseEntity.ok(profile);
-        } catch (RuntimeException e) {
-            // 暂时捕获异常并以更明确的信息返回，便于定位 500 根因
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "获取我的资料失败: " + e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage()));
-        }
+        Long userId = getUserId();
+        ProfileDto profile = userProfileService.getProfile(userId);
+        return ResponseEntity.ok(profile);
     }
 
     @GetMapping("/me/basic")
@@ -107,14 +103,10 @@ public class UserController {
     }
 
     @PatchMapping("/me")
-    public ResponseEntity<ProfileDto> updateMe(@RequestBody ProfileDto payload) {
-        try {
-            Long userId = getUserId();
-            ProfileDto updated = userProfileService.updateProfile(userId, payload);
-            return ResponseEntity.ok(updated);
-        } catch (RuntimeException e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "更新我的资料失败: " + e.getClass().getSimpleName() + ": " + (e.getMessage() == null ? "" : e.getMessage()));
-        }
+    public ResponseEntity<ProfileDto> updateMe(@Valid @RequestBody ProfileDto payload) {
+        Long userId = getUserId();
+        ProfileDto updated = userProfileService.updateProfile(userId, payload);
+        return ResponseEntity.ok(updated);
     }
 
     @GetMapping("/me/settings")
@@ -132,14 +124,14 @@ public class UserController {
     }
 
     @PatchMapping("/me/basic")
-    public ResponseEntity<UserDto> updateMyBasic(@RequestBody BasicInfoUpdateRequest payload) {
+    public ResponseEntity<UserDto> updateMyBasic(@Valid @RequestBody BasicInfoUpdateRequest payload) {
         Long userId = getUserId();
         UserDto updated = userService.updateBasicInfo(userId, payload);
         return ResponseEntity.ok(updated);
     }
 
     @PostMapping("/me/password")
-    public ResponseEntity<Void> changeMyPassword(@RequestBody ChangePasswordRequest payload) {
+    public ResponseEntity<Void> changeMyPassword(@Valid @RequestBody ChangePasswordRequest payload) {
         Long userId = getUserId();
         userService.changePassword(userId, payload);
         return ResponseEntity.status(HttpStatus.NO_CONTENT).build();

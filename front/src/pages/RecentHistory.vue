@@ -1,27 +1,36 @@
-<script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllRecentVisits, clearAllRecentVisits, pruneExpired } from '@/composables/useRecentVisits'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { listSections } from '@/api/sections'
+import { safeBack as navigateBackSafely } from '@/utils/router'
+import type { RecentVisit, Section } from '@/types'
 
 const router = useRouter()
-const items = ref([])
-const query = ref({ q: '', sectionId: '', page: 1, size: 20 })
+interface RecentHistoryQuery {
+  q: string
+  sectionId: string
+  page: number
+  size: number
+}
+
+const items = ref<RecentVisit[]>([])
+const query = ref<RecentHistoryQuery>({ q: '', sectionId: '', page: 1, size: 20 })
 // 本地输入值：仅在触发搜索后同步到 query.q
 const searchText = ref('')
-const sections = ref([])
+const sections = ref<Section[]>([])
 const authStore = useAuthStore()
 const { isLoggedIn } = storeToRefs(authStore)
 
-function load() {
+function load(): void {
   // 修剪过期记录并加载
   try { pruneExpired() } catch (_) {}
   items.value = getAllRecentVisits()
 }
 
-async function loadSections() {
+async function loadSections(): Promise<void> {
   try {
     const data = await listSections({ size: 200 })
     sections.value = Array.isArray(data) ? data : (data.items || [])
@@ -30,29 +39,23 @@ async function loadSections() {
   }
 }
 
-function clearAll() {
+function clearAll(): void {
   clearAllRecentVisits()
   load()
 }
 
 // 安全返回：若直接通过地址栏进入或无站内来源，则跳转到发现页
-function safeBack() {
-  const ref = document.referrer || ''
-  const sameOrigin = ref && ref.startsWith(location.origin)
-  if (!sameOrigin || window.history.length <= 1) {
-    router.replace({ name: 'discover' })
-  } else {
-    router.back()
-  }
+function safeBack(): void {
+  navigateBackSafely(router)
 }
 
 // 仅在点击搜索或按下回车时执行搜索
-function applySearch() {
+function applySearch(): void {
   query.value.q = String(searchText.value || '').trim()
   query.value.page = 1
 }
 
-function formatRelative(ts) {
+function formatRelative(ts: number | string | null | undefined): string {
   const diff = Date.now() - Number(ts || 0)
   const m = Math.floor(diff / 60000)
   if (m < 1) return '刚刚'
@@ -64,11 +67,11 @@ function formatRelative(ts) {
 }
 
 // 过滤、排序与分页（参考我的帖子/我的评论）
-const filteredItems = computed(() => {
+const filteredItems = computed<RecentVisit[]>(() => {
   const q = String(query.value.q || '').trim().toLowerCase()
   const sid = String(query.value.sectionId || '')
   const src = Array.isArray(items.value) ? items.value.slice() : []
-  const filtered = src.filter(it => {
+  const filtered = src.filter((it) => {
     // 分区过滤（若选择了分区）
     if (sid) {
       const itemSid = String(it.sectionId == null ? '' : it.sectionId)
@@ -84,26 +87,26 @@ const filteredItems = computed(() => {
   return filtered
 })
 
-const totalPages = computed(() => {
+const totalPages = computed<number>(() => {
   const size = Number(query.value.size || 20)
   const pages = Math.ceil((filteredItems.value.length || 0) / (size || 20))
   return Math.max(1, pages || 1)
 })
 
-const pagedItems = computed(() => {
+const pagedItems = computed<RecentVisit[]>(() => {
   const size = Number(query.value.size || 20)
   const page = Math.min(Math.max(1, Number(query.value.page || 1)), totalPages.value)
   const start = (page - 1) * size
   return filteredItems.value.slice(start, start + size)
 })
 
-function setPage(p) {
+function setPage(p: number): void {
   const target = Math.min(Math.max(1, p), totalPages.value)
   query.value.page = target
 }
 
-function prevPage() { setPage((query.value.page || 1) - 1) }
-function nextPage() { setPage((query.value.page || 1) + 1) }
+function prevPage(): void { setPage((query.value.page || 1) - 1) }
+function nextPage(): void { setPage((query.value.page || 1) + 1) }
 
 onMounted(load)
 onMounted(loadSections)

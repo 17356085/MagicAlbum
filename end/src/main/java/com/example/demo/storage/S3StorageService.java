@@ -37,6 +37,11 @@ public class S3StorageService {
     private boolean aclPublicRead;
     @Value("${app.storage.s3.pathPrefix:threads}")
     private String pathPrefix;
+    private final ImageUploadValidator imageUploadValidator;
+
+    public S3StorageService(ImageUploadValidator imageUploadValidator) {
+        this.imageUploadValidator = imageUploadValidator;
+    }
 
     public boolean isConfigured() {
         return bucket != null && !bucket.isBlank()
@@ -59,36 +64,21 @@ public class S3StorageService {
     }
 
     public String uploadImage(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "文件不能为空");
-        }
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "仅支持图片上传");
-        }
-        if (file.getSize() > 10 * 1024 * 1024) { // 10MB 上限
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "图片大小不能超过10MB");
-        }
-
-        String original = file.getOriginalFilename();
-        String ext = "";
-        if (original != null && original.contains(".")) {
-            ext = original.substring(original.lastIndexOf('.'));
-        }
+        ImageUploadValidator.ValidatedImage validated = imageUploadValidator.validate(file);
         LocalDate today = LocalDate.now();
         String uuid = UUID.randomUUID().toString().replace("-", "");
-        String key = String.format("%s/%04d/%02d/%02d/%s%s", pathPrefix, today.getYear(), today.getMonthValue(), today.getDayOfMonth(), uuid, ext);
+        String key = String.format("%s/%04d/%02d/%02d/%s%s", pathPrefix, today.getYear(), today.getMonthValue(), today.getDayOfMonth(), uuid, validated.extension());
 
         S3Client client = buildClient();
         PutObjectRequest.Builder putReq = PutObjectRequest.builder()
                 .bucket(bucket)
                 .key(key)
-                .contentType(contentType);
+                .contentType(validated.contentType());
         if (aclPublicRead) {
             putReq = putReq.acl(ObjectCannedACL.PUBLIC_READ);
         }
         try {
-            client.putObject(putReq.build(), RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
+            client.putObject(putReq.build(), RequestBody.fromBytes(validated.bytes()));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "上传失败", e);
         }

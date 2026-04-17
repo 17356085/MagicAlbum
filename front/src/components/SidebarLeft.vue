@@ -202,13 +202,27 @@
   </aside>
 </template>
 
-<script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { getRecentVisits } from '@/composables/useRecentVisits'
 import { listSections } from '@/api/sections'
+import type { RecentVisit, Section } from '@/types'
+
+interface FollowedActivity {
+  text: string
+  time: string
+}
+
+interface FollowedUser {
+  id: number
+  username: string
+  nickname: string
+  avatarUrl: string
+  activities: FollowedActivity[]
+}
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -221,23 +235,22 @@ const isMyPostsActive = computed(() => route.name === 'my-posts' || route.path =
 
 // 分区折叠逻辑
 const sectionsOpen = ref(true)
-const sections = ref([])
+const sections = ref<Section[]>([])
 const loadingSections = ref(false)
 
-async function loadSectionsData() {
+async function loadSectionsData(): Promise<void> {
   if (sections.value.length > 0) return
   loadingSections.value = true
   try {
     const data = await listSections({ size: 20 })
     sections.value = Array.isArray(data) ? data : (data.items || [])
-  } catch (e) {
-    console.error(e)
+  } catch (_) {
   } finally {
     loadingSections.value = false
   }
 }
 
-function toggleSections() {
+function toggleSections(): void {
   sectionsOpen.value = !sectionsOpen.value
   if (sectionsOpen.value) {
     loadSectionsData()
@@ -246,12 +259,12 @@ function toggleSections() {
 
 // 关注的用户（假数据）与折叠状态
 const followCollapsed = ref(false)
-function toggleFollowCollapsed() {
+function toggleFollowCollapsed(): void {
   followCollapsed.value = !followCollapsed.value
   try { localStorage.setItem('sidebar_follow_collapsed', String(followCollapsed.value)) } catch (_) {}
 }
 
-const followedUsers = ref([
+const followedUsers = ref<FollowedUser[]>([
   {
     id: 1,
     username: 'alice',
@@ -275,15 +288,15 @@ const followedUsers = ref([
 ])
 
 // 最近浏览
-const recentVisits = ref(getRecentVisits(5))
-function refreshRecent() { recentVisits.value = getRecentVisits(5) }
-function onRecentUpdated() { refreshRecent() }
-function clearRecent() {
+const recentVisits = ref<RecentVisit[]>(getRecentVisits(5))
+function refreshRecent(): void { recentVisits.value = getRecentVisits(5) }
+function onRecentUpdated(): void { refreshRecent() }
+function clearRecent(): void {
   try { localStorage.removeItem('recent_visits_v1') } catch (_) {}
   refreshRecent()
 }
 
-function formatRelativeShort(ts) {
+function formatRelativeShort(ts: number | string | null | undefined): string {
   const diff = Date.now() - Number(ts || 0)
   const m = Math.floor(diff / 60000)
   if (m < 1) return '刚刚'

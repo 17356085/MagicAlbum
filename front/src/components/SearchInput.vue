@@ -19,21 +19,30 @@
   </div>
   </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch } from 'vue'
 
-const props = defineProps({
-  modelValue: { type: String, default: '' },
-  placeholder: { type: String, default: '搜索分区名称或描述' },
-  showReset: { type: Boolean, default: true }
+interface SearchInputProps {
+  modelValue?: string
+  placeholder?: string
+  showReset?: boolean
+}
+
+const props = withDefaults(defineProps<SearchInputProps>(), {
+  modelValue: '',
+  placeholder: '搜索分区名称或描述',
+  showReset: true,
 })
 
-const emit = defineEmits(['update:modelValue', 'search'])
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  search: [value: string]
+}>()
 const localValue = ref(props.modelValue)
 
 watch(() => props.modelValue, (v) => { localValue.value = v })
 watch(localValue, (v) => emit('update:modelValue', v))
 
-function emitSearch () { emit('search', localValue.value) }
-function reset () { localValue.value = ''; emitSearch() }
+function emitSearch(): void { emit('search', localValue.value) }
+function reset(): void { localValue.value = ''; emitSearch() }
 </script>

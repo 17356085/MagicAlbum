@@ -1,1 +1,69 @@
+# Docs
 /docs/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.local.example
+!.env.*.example
+
+# Logs and crash dumps
+*.log
+hs_err_pid*
+replay_pid*
+output.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE and local workspace
+.idea/
+.vscode/
+.run/
+.trae/
+.workbuddy/
+.codex
+
+# Java / Maven / Gradle
+target/
+build/
+.gradle/
+*/target/
+*/build/
+**/target/
+**/build/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+
+# Generated Maven artifacts
+effective-pom
+
+# Node / frontend
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+front/.playwright-browsers/
+
+# Test outputs
+test-artifacts/
+playwright-report/
+
+# Runtime uploads / local generated content
+end/uploads/
+
+# Local secrets kept out of repo
+end/src/main/resources/application-secrets.yml

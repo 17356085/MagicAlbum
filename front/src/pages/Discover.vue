@@ -1,39 +1,53 @@
-<script setup>
-import { ref, onMounted, watch, computed } from 'vue'
-import MarkdownIt from 'markdown-it'
-import DOMPurify from 'dompurify'
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listThreads } from '@/api/threads'
+import { getUserProfile } from '@/api/users'
+import { normalizeImageUrl } from '@/utils/image'
+import { createMarkdownRenderer, renderInlineMarkdown, renderMarkdown } from '@/utils/markdown'
+import { getSingleQueryValue } from '@/utils/router'
+import type { Id, PageResult, Thread } from '@/types'
 
 const loading = ref(false)
 const error = ref('')
-const items = ref([])
+const items = ref<Thread[]>([])
 const page = ref(1)
 const size = ref(10)
 const total = ref(0)
 const route = useRoute()
 const router = useRouter()
-const sectionId = ref(null)
+const sectionId = ref<Id | null>(null)
 const currentSectionName = ref('')
 const q = ref('')
 // 手动页码输入与校验
 const inputPage = ref('')
-// 用户资料缓存：按用户ID存储 { nickname }
-const profiles = ref({})
+interface DiscoverProfileCache {
+  nickname: string
+  avatarUrl: string
+}
+
+// 用户资料缓存：按用户ID存储 { nickname, avatarUrl }
+const profiles = ref<Record<string, DiscoverProfileCache>>({})
+
 const totalPages = computed(() => {
   const s = Number(size.value || 20)
   const t = Number(total.value || 0)
   return Math.max(1, Math.ceil(t / s))
 })
 
-function setPage(p) {
+function setPage(p: number) {
   const next = Math.min(Math.max(1, p), totalPages.value)
   page.value = next
   router.push({ name: 'discover', query: { ...route.query, page: next, sectionId: route.query.sectionId } })
 }
 
-function prevPage() { setPage(Number(page.value) - 1) }
-function nextPage() { setPage(Number(page.value) + 1) }
+function prevPage() {
+  setPage(Number(page.value) - 1)
+}
+
+function nextPage() {
+  setPage(Number(page.value) + 1)
+}
 
 function goToInputPage() {
   const raw = String(inputPage.value || '').trim()
@@ -54,45 +68,63 @@ function goToInputPage() {
   setPage(target)
 }
 
+function createEmptyThreads(page = 1, size = 10): PageResult<Thread> {
+  return { items: [], page, size, total: 0 }
+}
+
+function normalizeThreadsResult(data: PageResult<Thread> | Thread[]): PageResult<Thread> {
+  if (Array.isArray(data)) {
+    return createEmptyThreads(page.value, size.value)
+  }
+  return data
+}
+
+function sortThreadsByCreatedAt(list: Thread[]): Thread[] {
+  return [...list].sort((a, b) => {
+    const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0
+    const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0
+    const diff = tb - ta
+    if (diff !== 0) return diff
+    return Number(b?.id || 0) - Number(a?.id || 0)
+  })
+}
+
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const sid = route.query.sectionId ? Number(route.query.sectionId) : undefined
-    const rp = route.query.page ? Number(route.query.page) : 1
-    const rq = route.query.q ? String(route.query.q) : ''
+    const sidRaw = route.query.sectionId ? getSingleQueryValue(route.query.sectionId) : ''
+    const sid = sidRaw ? Number(sidRaw) : undefined
+    const rp = route.query.page ? Number(getSingleQueryValue(route.query.page)) : 1
+    const rq = route.query.q ? getSingleQueryValue(route.query.q) : ''
     page.value = isNaN(rp) ? 1 : rp
     inputPage.value = String(page.value || '')
     sectionId.value = sid || null
     q.value = rq
     const data = await listThreads({ q: rq, page: page.value, size: size.value, sectionId: sid })
-    const arr = Array.isArray(data) ? data : (data.items || [])
-    // 稳定倒序（同一时间戳下按 id 倒序）
-    items.value = [...arr].sort((a, b) => {
-      const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0
-      const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0
-      const diff = tb - ta
-      if (diff !== 0) return diff
-      return (b?.id || 0) - (a?.id || 0)
-    })
+    const normalized = normalizeThreadsResult(data)
+    const arr = Array.isArray(data) ? data : (normalized.items || [])
+    items.value = sortThreadsByCreatedAt(arr)
     currentSectionName.value = arr.length > 0 ? (arr[0].sectionName || '') : ''
-    if (!Array.isArray(data)) {
-      total.value = Number(data.total || 0)
-      page.value = Number(data.page || page.value)
-      size.value = Number(data.size || size.value)
-    }
+    total.value = Array.isArray(data) ? arr.length : Number(normalized.total || 0)
+    page.value = Array.isArray(data) ? page.value : Number(normalized.page || page.value)
+    size.value = Array.isArray(data) ? size.value : Number(normalized.size || size.value)
     // 异步补充作者昵称（不阻塞列表展示）
-    const authorIds = [...new Set((items.value || []).map(t => t?.authorId).filter(Boolean))]
+    const authorIds = [...new Set(items.value.map((t) => t.authorId).filter(Boolean))] as Id[]
     for (const uid of authorIds) {
-      if (profiles.value[uid]?.nickname !== undefined) continue
+      const cacheKey = String(uid)
+      if (profiles.value[cacheKey]?.nickname !== undefined) continue
       try {
         const p = await getUserProfile(uid)
-        profiles.value[uid] = { nickname: p?.nickname || '' }
+        profiles.value[cacheKey] = {
+          nickname: p?.nickname || '',
+          avatarUrl: p?.avatarUrl || '',
+        }
       } catch (_) {
-        profiles.value[uid] = { nickname: '' }
+        profiles.value[cacheKey] = { nickname: '', avatarUrl: '' }
       }
     }
-  } catch (e) {
+  } catch (_) {
     error.value = '加载帖子失败'
   } finally {
     loading.value = false
@@ -100,7 +132,9 @@ async function load() {
 }
 
 onMounted(load)
-watch(page, (val) => { inputPage.value = String(val || '') })
+watch(page, (val) => {
+  inputPage.value = String(val || '')
+})
 watch(() => route.query.sectionId, () => {
   page.value = 1
   load()
@@ -113,22 +147,7 @@ watch(() => route.query.q, () => {
   load()
 })
 
-// 提取首张图片 URL（支持 Markdown 与 <img>）
-function normalizeImageUrl(u) {
-  if (!u) return null
-  const url = String(u).trim()
-  if (!url) return null
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
-    return url
-  }
-  // 相对路径：拼接后端基础地址（将 VITE_API_BASE_URL 去掉 /api/v1）
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
-  const backendBase = apiBase.replace(/\/api\/v1$/, '')
-  if (url.startsWith('/')) return backendBase + url
-  return backendBase + '/' + url
-}
-
-function firstImageUrl(mdText) {
+function firstImageUrl(mdText: string | undefined) {
   if (!mdText) return null
   const text = String(mdText)
   // Markdown 图片语法 ![alt](url "title")
@@ -141,7 +160,7 @@ function firstImageUrl(mdText) {
 }
 
 // 提取纯文本摘要：移除图片、链接与 HTML 标签
-function textExcerpt(mdText, maxLen = 180) {
+function textExcerpt(mdText: string | undefined, maxLen = 180) {
   if (!mdText) return ''
   let s = String(mdText)
   // 移除 Markdown 代码块（```...``` 或 ~~~...~~~）与缩进代码块、行内代码
@@ -165,10 +184,8 @@ function textExcerpt(mdText, maxLen = 180) {
 // 预览图不再支持展开/收起，统一在固定最大尺寸内完整显示
 
 // Markdown 预览：移除代码块与图片，仅渲染文本、行内元素
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
-// 启用 GFM 删除线支持：~~text~~
-try { md.enable(['strikethrough']) } catch (_) {}
-function mdPreview(mdText) {
+const md = createMarkdownRenderer({ html: false, highlight: false })
+function renderPreviewMarkdownHtml(mdText: string | undefined) {
   if (!mdText) return ''
   let s = String(mdText)
   // 移除代码块（```/~~~/缩进）与行内代码，避免预览过长与样式干扰
@@ -179,16 +196,18 @@ function mdPreview(mdText) {
   // 移除图片（Markdown与HTML），避免与左侧预览图重复
   s = s.replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
   s = s.replace(/<img[^>]*>/gi, '')
-  const html = md.render(s)
-  return DOMPurify.sanitize(html)
+  return renderMarkdown(md, s)
 }
 
 // 标题行内 Markdown 渲染（仅文本行内，支持删除线），并进行清理
-const mdTitle = new MarkdownIt({ html: false, linkify: true, breaks: false })
-try { mdTitle.enable(['strikethrough']) } catch (_) {}
-function renderTitle(text) {
-  const safe = String(text || '')
-  return DOMPurify.sanitize(mdTitle.renderInline(safe))
+const mdTitle = createMarkdownRenderer({ html: false, breaks: false, highlight: false })
+function renderTitleMarkdownHtml(text: string | undefined) {
+  return renderInlineMarkdown(mdTitle, text)
+}
+
+function getAuthorAvatarUrl(thread: Thread): string {
+  const cacheKey = String(thread.authorId || '')
+  return normalizeImageUrl(thread.authorAvatarUrl || profiles.value[cacheKey]?.avatarUrl || '')
 }
 </script>
 
@@ -216,17 +235,17 @@ function renderTitle(text) {
 
                 <!-- 内容 (右侧) -->
                 <div class="flex-1 min-w-0 w-full">
-                  <h2 class="text-lg font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400 line-clamp-2 mb-2.5" v-html="renderTitle(t.title)"></h2>
-                  <div class="text-sm text-gray-600 line-clamp-3 dark:text-gray-300" v-html="mdPreview(t.content)"></div>
+                  <h2 class="text-lg font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400 line-clamp-2 mb-2.5" v-html="renderTitleMarkdownHtml(t.title)"></h2>
+                  <div class="text-sm text-gray-600 line-clamp-3 dark:text-gray-300" v-html="renderPreviewMarkdownHtml(t.content)"></div>
                   
                   <div class="mt-3 flex items-center gap-3 text-xs text-gray-400">
                     <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="flex items-center gap-1.5 hover:text-gray-600 dark:hover:text-gray-200">
                       <img 
-                        :src="t.authorAvatar ? normalizeImageUrl(t.authorAvatar) : `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || 'U'}`" 
+                        :src="getAuthorAvatarUrl(t) || `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || profiles[String(t.authorId || '')]?.nickname || t.authorUsername || 'U'}`" 
                         class="h-5 w-5 rounded-full object-cover bg-gray-100 dark:bg-gray-700" 
                         alt=""
                       />
-                      {{ t.authorNickname || t.authorUsername || t.authorId }}
+                      {{ t.authorNickname || profiles[String(t.authorId || '')]?.nickname || t.authorUsername || t.authorId }}
                     </router-link>
                     <span>·</span>
                     <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="rounded bg-gray-100 px-2 py-0.5 font-medium hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors">

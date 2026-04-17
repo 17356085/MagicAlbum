@@ -1,30 +1,51 @@
-<script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+<script setup lang="ts">
+import { onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useUIStore } from '@/stores/ui'
-import { MdEditor } from 'md-editor-v3'
-import 'md-editor-v3/lib/style.css'
-import { getMyProfile, updateMyProfile, getMySettings, updateMySettings } from '@/api/settings'
+import { getMyProfile, updateMyProfile, getMySettings } from '@/api/settings'
 import SettingsAccount from '@/pages/SettingsAccount.vue'
 import { listNotifications, markNotificationRead, getNotificationSettings, updateNotificationSettings } from '@/api/notifications'
 import { listConnectedAccounts, connectAccount, disconnectAccount } from '@/api/connected'
 import { uploadImage } from '@/api/uploads'
 import { useAuthStore } from '@/stores/auth'
 import { normalizeImageUrl } from '@/utils/image'
-import MarkdownIt from 'markdown-it'
-import DOMPurify from 'dompurify'
-import hljs from 'highlight.js/lib/common'
-import markdownItKatex from 'markdown-it-katex'
-import 'katex/dist/katex.min.css'
+import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
+import type {
+  ConnectedAccount,
+  NotificationItem,
+  NotificationSettings,
+  PageResult,
+  UserProfile,
+  UserSettings,
+} from '@/types'
+import type { UploadImageResponse } from '@/api/uploads'
 
-const selectedTab = ref('profile') // 'profile' | 'notifications' | 'connected' | 'account'
+type SettingsTab = 'profile' | 'notifications' | 'connected' | 'account'
+
+interface ProfileForm extends UserProfile {
+  username?: string
+}
+
+interface NotificationQuery {
+  type: string
+  unread: boolean
+  page: number
+  size: number
+}
+
+interface ConnectedAccountsState {
+  items: ConnectedAccount[]
+}
+
+const selectedTab = ref<SettingsTab>('profile')
 // UI 设置开关
 const uiStore = useUIStore()
 const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
 const { setDynamicBackgroundEnabled } = uiStore
 
 // Profile
-const profile = ref({ nickname: '', bio: '', homepageUrl: '', location: '', links: [], avatarUrl: '' })
+const profile = ref<ProfileForm>({ nickname: '', bio: '', homepageUrl: '', location: '', links: [], avatarUrl: '' })
 const profileSaving = ref(false)
 const avatarUploading = ref(false)
 const avatarProgress = ref(0)
@@ -39,82 +60,36 @@ watch(() => profile.value.bio, (val) => {
     profile.value.bio = s.slice(0, bioMax)
   }
 })
-// 跟随全局暗色模式：监听 html.dark 与系统偏好
-const isDark = ref(false)
-function updateIsDark() {
-  const hasDarkClass = document.documentElement.classList.contains('dark')
-  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-  isDark.value = hasDarkClass || prefersDark
-}
-let themeObserver = null
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  breaks: true,
-  langPrefix: 'language-',
-  highlight: (str, lang) => {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        const out = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
-        return '<pre><code class="hljs language-' + lang + '">' + out + '</code></pre>'
-      } catch (_) {}
-    } else {
-      try {
-        const auto = hljs.highlightAuto(str)
-        const langGuess = auto.language ? (' language-' + auto.language) : ''
-        return '<pre><code class="hljs' + langGuess + '">' + auto.value + '</code></pre>'
-      } catch (_) {}
-    }
-    return '<pre><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>'
-  }
-})
-md.use(markdownItKatex)
-const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) { return self.renderToken(tokens, idx, options) }
-md.renderer.rules.image = function(tokens, idx, options, env, self) {
-  const token = tokens[idx]
-  const loadingIdx = token.attrIndex('loading')
-  if (loadingIdx < 0) token.attrPush(['loading', 'lazy'])
-  const clsIdx = token.attrIndex('class')
-  if (clsIdx < 0) token.attrPush(['class', 'max-w-full h-auto'])
-  else token.attrs[clsIdx][1] += ' max-w-full h-auto'
-  const srcIdx = token.attrIndex('src')
-  if (srcIdx >= 0) token.attrs[srcIdx][1] = normalizeImageUrl(token.attrs[srcIdx][1])
-  return defaultImageRule(tokens, idx, options, env, self)
-}
-function renderBioPreview(raw) {
-  const s = String(raw || '')
-  const html = md.render(s)
-  return DOMPurify.sanitize(html)
-}
 const authStore = useAuthStore()
 const { token } = storeToRefs(authStore)
-// MdEditor 图片上传（与发帖同款）
+function onDynamicBackgroundChange(event: Event): void {
+  const target = event.target as HTMLInputElement | null
+  setDynamicBackgroundEnabled(!!target?.checked)
+}
+// 简介图片上传（与发帖同款）
 const bioUploading = ref(false)
 const bioUploadProgress = ref(0)
-async function onUploadBioImg(files, callback) {
+async function uploadBioImage(file: File): Promise<string> {
   try {
     bioUploading.value = true
     bioUploadProgress.value = 0
-    const urls = []
-    for (const f of files) {
-      const { url } = await uploadImage(f, token.value, (p) => { bioUploadProgress.value = p })
-      urls.push(normalizeImageUrl(url))
-    }
-    callback(urls)
-  } catch (e) {
+    const { url, path } = await uploadImage(file, token.value, (p) => { bioUploadProgress.value = p })
+    return normalizeImageUrl(url || path || '')
+  } catch (e: any) {
     alert(e?.response?.data?.message || e?.message || '图片上传失败')
+    return ''
   } finally {
     bioUploading.value = false
     bioUploadProgress.value = 0
   }
 }
-async function loadProfile() {
+async function loadProfile(): Promise<void> {
   try {
     profile.value = await getMyProfile()
     avatarPreviewUrl.value = normalizeImageUrl(profile.value?.avatarUrl || '')
-  } catch (e) {}
+  } catch (_) {}
 }
-async function saveProfile() {
+async function saveProfile(): Promise<void> {
   profileSaving.value = true
   try {
     const payload = {
@@ -134,7 +109,7 @@ async function saveProfile() {
     profileSaveError.value = false
     profileSaveMessage.value = '保存成功'
     setTimeout(() => { profileSaveMessage.value = '' }, 3000)
-  } catch (e) {
+  } catch (e: any) {
     // 显示保存失败提示（红色）
     const msg = e?.response?.data?.message || e?.message || '保存失败'
     profileSaveError.value = true
@@ -143,9 +118,10 @@ async function saveProfile() {
   } finally { profileSaving.value = false }
 }
 
-async function onAvatarSelected(evt) {
+async function onAvatarSelected(evt: Event): Promise<void> {
   try {
-    const file = evt?.target?.files?.[0]
+    const target = evt.target as HTMLInputElement | null
+    const file = target?.files?.[0]
     if (!file) return
     // 基本校验：类型与大小（<= 2MB）
     if (!file.type.startsWith('image/')) {
@@ -157,84 +133,92 @@ async function onAvatarSelected(evt) {
       return
     }
     // 令牌校验
-    const t = token.value || localStorage.getItem('accessToken') || ''
-    if (!t || String(t).startsWith('mock-token-')) {
+    const t = token.value || getStoredAccessToken()
+    if (!hasRealToken(t)) {
       alert('请登录后再上传头像')
       return
     }
     avatarUploading.value = true
     avatarProgress.value = 0
-    const resp = await uploadImage(file, t, (p) => { avatarProgress.value = p })
-    const url = resp?.url || resp?.path || resp
+    const resp: UploadImageResponse = await uploadImage(file, t, (p) => { avatarProgress.value = p })
+    const url = resp?.url || resp?.path || ''
     // 更新本地并保存到后端资料
     profile.value.avatarUrl = url
     avatarPreviewUrl.value = normalizeImageUrl(url)
     await saveProfile()
-  } catch (e) {
+  } catch (e: any) {
     alert(e?.response?.data?.message || e?.message || '头像上传失败')
   } finally {
     avatarUploading.value = false
     avatarProgress.value = 0
-    try { evt.target.value = '' } catch {}
+    try {
+      const target = evt.target as HTMLInputElement | null
+      if (target) target.value = ''
+    } catch {}
   }
 }
 
 // Settings (for future use)
-const settings = ref(null)
-async function loadSettings() {
-  try { settings.value = await getMySettings() } catch (e) {}
+const settings = ref<UserSettings | null>(null)
+async function loadSettings(): Promise<void> {
+  try { settings.value = await getMySettings() } catch (_) {}
 }
 
 // Notifications list and settings
-const notifQuery = ref({ type: '', unread: false, page: 1, size: 20 })
-const notifList = ref({ items: [], page: 1, size: 20, total: 0 })
+const notifQuery = ref<NotificationQuery>({ type: '', unread: false, page: 1, size: 20 })
+const notifList = ref<PageResult<NotificationItem>>({ items: [], page: 1, size: 20, total: 0 })
 const notifLoading = ref(false)
 const notifError = ref('')
-const notifSettings = ref({ inApp: { reply: true, mention: true, like: true, system: true }, email: { enabled: false, frequency: 'instant' } })
+const notifSettings = ref<NotificationSettings>({
+  inApp: { reply: true, mention: true, like: true, system: true },
+  email: { enabled: false, frequency: 'instant' },
+})
 
-async function loadNotifications() {
+async function loadNotifications(): Promise<void> {
   notifLoading.value = true
   notifError.value = ''
   try {
     const data = await listNotifications({ type: notifQuery.value.type || undefined, unread: notifQuery.value.unread, page: notifQuery.value.page, size: notifQuery.value.size })
-    notifList.value = data
-  } catch (e) {
+    notifList.value = Array.isArray(data)
+      ? { items: data, page: notifQuery.value.page, size: notifQuery.value.size, total: data.length }
+      : data
+  } catch (_) {
     notifError.value = '加载通知失败'
   } finally { notifLoading.value = false }
 }
-async function loadNotificationSettings() {
-  try { notifSettings.value = await getNotificationSettings() } catch (e) {}
+async function loadNotificationSettings(): Promise<void> {
+  try { notifSettings.value = await getNotificationSettings() } catch (_) {}
 }
-async function saveNotificationSettings() {
+async function saveNotificationSettings(): Promise<void> {
   try {
     const data = await updateNotificationSettings(notifSettings.value)
     notifSettings.value = data
-  } catch (e) {}
+  } catch (_) {}
 }
-async function setNotificationRead(id) {
+async function setNotificationRead(id: NotificationItem['id']): Promise<void> {
   try {
     await markNotificationRead(id)
     await loadNotifications()
-  } catch (e) {}
+  } catch (_) {}
 }
 
 // Connected accounts
-const connected = ref({ items: [] })
+const connected = ref<ConnectedAccountsState>({ items: [] })
 const connectedLoading = ref(false)
-async function loadConnected() {
+async function loadConnected(): Promise<void> {
   connectedLoading.value = true
   try {
     const data = await listConnectedAccounts()
     connected.value = data || { items: [] }
-  } catch (e) {
+  } catch (_) {
     connected.value = { items: [] }
   } finally { connectedLoading.value = false }
 }
-async function onConnect(provider) {
-  try { await connectAccount(provider); await loadConnected() } catch (e) {}
+async function onConnect(provider: string): Promise<void> {
+  try { await connectAccount(provider); await loadConnected() } catch (_) {}
 }
-async function onDisconnect(provider) {
-  try { await disconnectAccount(provider); await loadConnected() } catch (e) {}
+async function onDisconnect(provider: string): Promise<void> {
+  try { await disconnectAccount(provider); await loadConnected() } catch (_) {}
 }
 
 onMounted(async () => {
@@ -243,23 +227,6 @@ onMounted(async () => {
   await loadNotifications()
   await loadNotificationSettings()
   await loadConnected()
-  // 初始化与监听暗色状态
-  updateIsDark()
-  if (window.matchMedia) {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = () => updateIsDark()
-    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', handler)
-    else if (typeof mq.addListener === 'function') mq.addListener(handler)
-  }
-  themeObserver = new MutationObserver(updateIsDark)
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-})
-
-onUnmounted(() => {
-  if (themeObserver) {
-    try { themeObserver.disconnect() } catch (_) {}
-    themeObserver = null
-  }
 })
 </script>
 
@@ -302,17 +269,20 @@ onUnmounted(() => {
         </label>
         <div class="text-xs md:col-span-2">
           <div>个人简介</div>
-          <div class="mt-1 flex items-center justify-end">
+          <div class="mt-1 flex items-center justify-between gap-2">
+            <div class="text-[11px] text-gray-500 dark:text-gray-400">使用轻量 Markdown 编辑器，保留预览和图片插入能力</div>
             <span class="text-xs text-gray-500">字数：{{ String(profile.bio||'').length }}/{{ bioMax }}</span>
           </div>
-          <div class="relative mt-1">
-            <div class="prose max-w-none dark:prose-invert">
-              <MdEditor v-model="profile.bio" :onUploadImg="onUploadBioImg" :theme="isDark ? 'dark' : 'light'" :showWordCount="false" class="rounded-md border border-gray-300 dark:border-gray-700" />
-            </div>
-            <div v-if="bioUploading" class="absolute top-2 right-3 text-xs bg-white/80 px-2 py-1 rounded border border-gray-200 dark:bg-gray-800/80 dark:border-gray-700 dark:text-gray-200">
-              上传中 {{ bioUploadProgress }}%
-            </div>
-          </div>
+          <MarkdownTextareaEditor
+            v-model="profile.bio"
+            :rows="10"
+            :max-length="bioMax"
+            :uploading="bioUploading"
+            :upload-progress="bioUploadProgress"
+            :upload-image="uploadBioImage"
+            placeholder="介绍一下自己吧，支持 Markdown"
+            preview-label="简介预览"
+          />
         </div>
       </div>
       <div>
@@ -324,7 +294,7 @@ onUnmounted(() => {
       <div class="pt-2">
         <div class="text-sm">界面偏好</div>
         <label class="mt-1 inline-flex items-center gap-2 text-xs">
-          <input type="checkbox" :checked="dynamicBackgroundEnabled" @change="setDynamicBackgroundEnabled($event.target.checked)" />
+          <input type="checkbox" :checked="dynamicBackgroundEnabled" @change="onDynamicBackgroundChange" />
           启用动态背景效果（Day 下雪 / Night 星光闪烁）
         </label>
         <div class="text-[11px] text-gray-500 mt-1">尊重系统“减少动效”偏好；默认仅在 Day 下雪、Night 闪烁。</div>

@@ -73,7 +73,7 @@
                       </div>
                     </template>
                     <div class="truncate">
-                      <span class="font-medium" v-html="highlight(suggestProfiles[u.id]?.nickname || u.username, searchQuery)"></span>
+                      <span class="font-medium" v-html="renderHighlightedTextHtml(suggestProfiles[u.id]?.nickname || u.username, searchQuery)"></span>
                       <span v-if="suggestProfiles[u.id]?.nickname" class="ml-2 text-xs text-gray-500 dark:text-gray-400">{{ u.username }}</span>
                     </div>
                   </div>
@@ -89,8 +89,8 @@
         <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="toggleTheme" :title="themeLabel">
           <span v-if="isDark">🌙</span><span v-else>☀️</span>
         </button>
-        <!-- 发帖：圆圈加号图标 -->
-        <router-link to="/threads/new" class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" aria-label="发帖" title="发帖">
+        <!-- 发帖：未登录时直接拉起登录弹窗，已登录时进入发帖页 -->
+        <router-link to="/threads/new" class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" aria-label="发帖" title="发帖" @click="onCreateThreadClick">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
             <circle cx="12" cy="12" r="9" stroke-width="1.8" />
             <path d="M12 8.5v7M8.5 12h7" stroke-width="1.8" stroke-linecap="round" />
@@ -106,8 +106,20 @@
           <span class="sr-only">通知</span>
         </button>
         <template v-if="!isLoggedIn">
-          <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="showLogin = true">登录</button>
-          <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="showRegister = true">注册</button>
+          <button
+            class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center"
+            @click="showLogin = true"
+            aria-label="登录"
+            title="登录"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
+              <circle cx="12" cy="8" r="3.25" stroke-width="1.8" />
+              <path d="M5 19.25C5.9 16.55 8.43 15 12 15s6.1 1.55 7 4.25" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M19 8.75h3" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M20.5 7.25v3" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <span class="sr-only">登录</span>
+          </button>
         </template>
         <template v-else>
           <div class="flex items-center gap-2">
@@ -132,7 +144,6 @@
       </nav>
     </div>
   </header>
-  <RegisterModal v-if="showRegister" @close="showRegister = false" @success="onRegisterSuccess" />
   <LoginModal v-if="showLogin" @close="showLogin = false" @success="onLoginSuccess" />
 
   <!-- 登出确认弹窗 -->
@@ -152,19 +163,20 @@
   </div>
 </template>
 
-<script setup>
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
-import RegisterModal from './RegisterModal.vue'
 import LoginModal from './LoginModal.vue'
 import { getMyProfile } from '@/api/settings'
 import IconMagicalbum from '@/components/icons/IconMagicalbum.vue'
 import { suggestUsers, getUserProfile } from '@/api/users'
-import DOMPurify from 'dompurify'
+import { normalizeImageUrl } from '@/utils/image'
+import { highlightText } from '@/utils/text'
+import { clearPendingAuthRedirect, getPendingAuthRedirect, setPendingAuthRedirect } from '@/utils/authStorage'
+import type { Id, ProfileUpdatedDetail, User, UserProfile } from '@/types'
 
-const showRegister = ref(false)
 const showLogin = ref(false)
 const showLogoutConfirm = ref(false)
 const authStore = useAuthStore()
@@ -172,29 +184,32 @@ const { isLoggedIn, user } = storeToRefs(authStore)
 const { logout } = authStore
 const router = useRouter()
 const route = useRoute()
-const searchType = ref('threads')
+type SearchType = 'threads' | 'users'
+type SuggestProfile = Pick<UserProfile, 'avatarUrl' | 'nickname'>
+
+const searchType = ref<SearchType>('threads')
 const searchQuery = ref('')
 // 顶栏联想建议（仅用户搜索时启用）
 const suggestOpen = ref(false)
-const suggestions = ref([])
+const suggestions = ref<User[]>([])
 const suggestLoading = ref(false)
 const suggestError = ref('')
-let suggestTimer = null
-const suggestProfiles = ref({})
+let suggestTimer: ReturnType<typeof setTimeout> | null = null
+const suggestProfiles = ref<Record<string, SuggestProfile>>({})
 const activeIndex = ref(-1)
 const keyword = computed(() => String(searchQuery.value || '').trim().toLowerCase())
 
-function includesI(str, kw) {
+function includesI(str: string | number | null | undefined, kw: string): boolean {
   return String(str || '').toLowerCase().includes(String(kw || '').toLowerCase())
 }
 
 // 仅支持用户名或昵称匹配的可见建议列表
-const visibleSuggestions = computed(() => {
+const visibleSuggestions = computed<User[]>(() => {
   const kw = keyword.value
   if (!kw) return []
   return (Array.isArray(suggestions.value) ? suggestions.value : []).filter(u => {
     if (includesI(u?.username, kw)) return true
-    const p = suggestProfiles.value[u?.id]
+    const p = suggestProfiles.value[String(u?.id)]
     if (p && includesI(p.nickname, kw)) return true
     return false
   })
@@ -202,30 +217,46 @@ const visibleSuggestions = computed(() => {
 const avatarUrl = ref('')
 const displayName = ref('')
 
-function normalizeImageUrl(u) {
-  if (!u) return ''
-  const url = String(u).trim()
-  if (!url) return ''
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
-    return url
+function applyUserIdentity(): void {
+  const currentUser = user.value
+  avatarUrl.value = currentUser?.avatarUrl || ''
+  displayName.value =
+    (currentUser?.nickname && String(currentUser.nickname).trim()) ||
+    currentUser?.username ||
+    ''
+}
+
+async function refreshMyProfile(): Promise<void> {
+  if (!isLoggedIn.value) {
+    avatarUrl.value = ''
+    displayName.value = ''
+    return
   }
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
-  const backendBase = apiBase.replace(/\/api\/v1$/, '')
-  if (url.startsWith('/')) return backendBase + url
-  return backendBase + '/' + url
+
+  // 先用登录态里的用户信息兜底，避免界面短时间回退成默认头像。
+  applyUserIdentity()
+
+  try {
+    const p = await getMyProfile()
+    avatarUrl.value = p?.avatarUrl || avatarUrl.value || ''
+    displayName.value =
+      (p?.nickname && String(p.nickname).trim()) ||
+      displayName.value ||
+      (user.value?.username || '')
+  } catch (_) {}
 }
 
 // 主题切换（light/dark），持久化到 localStorage，并同步到 html.dark
 const isDark = ref(false)
 const themeLabel = computed(() => (isDark.value ? '切换为白天模式' : '切换为黑夜模式'))
 
-function applyThemeClass(dark) {
+function applyThemeClass(dark: boolean): void {
   const root = document.documentElement
   if (dark) root.classList.add('dark')
   else root.classList.remove('dark')
 }
 
-function initTheme() {
+function initTheme(): void {
   const saved = localStorage.getItem('theme')
   if (saved === 'dark') {
     isDark.value = true
@@ -239,58 +270,81 @@ function initTheme() {
   applyThemeClass(isDark.value)
 }
 
-function toggleTheme() {
+function toggleTheme(): void {
   isDark.value = !isDark.value
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
   applyThemeClass(isDark.value)
 }
 
 // 事件处理定义在 setup 顶层，便于在卸载时正确移除
-const onProfileUpdated = (evt) => {
-  const detail = evt?.detail || {}
+const onProfileUpdated = (evt: Event): void => {
+  const detail = (evt as CustomEvent<ProfileUpdatedDetail>).detail || {}
   const nextAvatar = detail?.avatarUrl
   const nextNickname = detail?.nickname
   if (typeof nextAvatar === 'string') avatarUrl.value = nextAvatar
   if (typeof nextNickname === 'string') displayName.value = nextNickname || (user.value?.username || '')
 }
 
-onMounted(() => {
+const onOpenLoginModal = (): void => {
+  showLogin.value = true
+}
+
+onMounted((): void => {
   initTheme()
-  // 避免在生命周期钩子中使用 await，改用 Promise
-  getMyProfile()
-    .then((p) => {
-      avatarUrl.value = p?.avatarUrl || ''
-      displayName.value = (p?.nickname && String(p.nickname).trim()) || (user.value?.username || '')
-    })
-    .catch(() => {})
+  refreshMyProfile().catch(() => {})
   window.addEventListener('profile-updated', onProfileUpdated)
+  window.addEventListener('open-login-modal', onOpenLoginModal)
+  if (!isLoggedIn.value && route.query.login === '1') {
+    showLogin.value = true
+    try {
+      router.replace({ name: 'discover', query: { ...route.query, login: undefined } })
+    } catch (_) {}
+  }
 })
 
 onUnmounted(() => {
   window.removeEventListener('profile-updated', onProfileUpdated)
+  window.removeEventListener('open-login-modal', onOpenLoginModal)
+  if (suggestTimer) {
+    clearTimeout(suggestTimer)
+    suggestTimer = null
+  }
 })
 
-function onLoginSuccess() {
-  // 登录成功后主动拉取我的资料，刷新昵称与头像
-  try {
-    getMyProfile()
-      .then((p) => {
-        avatarUrl.value = p?.avatarUrl || ''
-        displayName.value = (p?.nickname && String(p.nickname).trim()) || (user.value?.username || '')
-      })
-      .catch(() => {})
-  } catch (_) {}
+function onLoginSuccess(): void {
+  refreshMyProfile().catch(() => {})
+  const redirect = getPendingAuthRedirect()
+  if (redirect) {
+    clearPendingAuthRedirect()
+    try { router.push(redirect) } catch (_) {}
+  }
 }
 
-function onRegisterSuccess() {
-  // TODO: 注册成功后的处理（例如提示或刷新用户状态）
+watch(
+  () => [isLoggedIn.value, user.value?.id, user.value?.avatarUrl, user.value?.nickname, user.value?.username] as const,
+  ([loggedIn]) => {
+    if (!loggedIn) {
+      avatarUrl.value = ''
+      displayName.value = ''
+      return
+    }
+    refreshMyProfile().catch(() => {})
+  },
+  { immediate: true }
+)
+
+function onCreateThreadClick(event: MouseEvent): void {
+  if (isLoggedIn.value) return
+  event.preventDefault()
+  setPendingAuthRedirect('/threads/new')
+  showLogin.value = true
 }
 
-function onLogoutClick() {
+function onLogoutClick(): void {
   showLogoutConfirm.value = true
 }
 
-function confirmLogout() {
+function confirmLogout(): void {
   // 在设置、我的帖子、我的评论页面登出时，先重定向到发现页
   const currentName = String(route.name || '')
   const needRedirect = currentName === 'settings' || currentName === 'my-threads' || currentName === 'my-posts'
@@ -309,7 +363,7 @@ function confirmLogout() {
   displayName.value = ''
 }
 
-function doSearch() {
+function doSearch(): void {
   const q = String(searchQuery.value || '').trim()
   if (!q) {
     // 空关键字：跳到对应列表首页
@@ -328,7 +382,7 @@ function doSearch() {
 }
 
 // 输入防抖与联想建议拉取
-async function fetchSuggestions(keyword) {
+async function fetchSuggestions(keyword: string): Promise<void> {
   suggestLoading.value = true
   suggestError.value = ''
   try {
@@ -338,9 +392,9 @@ async function fetchSuggestions(keyword) {
     // 取消默认选中联想建议：仅在用户用方向键选择后才有选中项
     activeIndex.value = -1
     // 异步预取头像/昵称，提升建议项信息密度
-    const ids = suggestions.value.map(u => u.id).filter(Boolean)
+    const ids = suggestions.value.map((u) => u.id).filter(Boolean) as Id[]
     prefetchSuggestionProfiles(ids)
-  } catch (e) {
+  } catch (_) {
     suggestError.value = '加载建议失败'
     suggestions.value = []
     activeIndex.value = -1
@@ -349,7 +403,7 @@ async function fetchSuggestions(keyword) {
   }
 }
 
-function scheduleSuggest() {
+function scheduleSuggest(): void {
   if (suggestTimer) clearTimeout(suggestTimer)
   const q = String(searchQuery.value || '').trim()
   if (searchType.value !== 'users' || !q) {
@@ -365,18 +419,18 @@ function scheduleSuggest() {
 
 watch(searchQuery, () => scheduleSuggest())
 
-function onInputFocus() {
+function onInputFocus(): void {
   if (searchType.value === 'users' && String(searchQuery.value || '').trim()) {
     suggestOpen.value = true
   }
 }
 
-function onInputBlur() {
+function onInputBlur(): void {
   // 延迟关闭，允许点击建议项
   setTimeout(() => { suggestOpen.value = false }, 150)
 }
 
-function onInputKeydown(e) {
+function onInputKeydown(e: KeyboardEvent): void {
   const key = e.key
   const hasSuggest = suggestOpen.value && Array.isArray(visibleSuggestions.value) && visibleSuggestions.value.length > 0
   if (key === 'Enter') {
@@ -404,33 +458,19 @@ function onInputKeydown(e) {
   }
 }
 
-function escapeHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+function renderHighlightedTextHtml(text: string | null | undefined, keyword: string | null | undefined): string {
+  return highlightText(text, keyword)
 }
 
-function highlight(text, keyword) {
-  const t = escapeHtml(String(text || ''))
-  const k = String(keyword || '').trim()
-  if (!k) return t
-  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(`(${escaped})`, 'ig')
-  const replaced = t.replace(re, '<mark class="bg-yellow-100">$1</mark>')
-  return DOMPurify.sanitize(replaced)
-}
-
-async function prefetchSuggestionProfiles(ids) {
+async function prefetchSuggestionProfiles(ids: Id[]): Promise<void> {
   for (const id of ids) {
-    if (suggestProfiles.value[id]) continue
+    const key = String(id)
+    if (suggestProfiles.value[key]) continue
     try {
       const p = await getUserProfile(id)
-      suggestProfiles.value[id] = { avatarUrl: p?.avatarUrl || '', nickname: p?.nickname || '' }
+      suggestProfiles.value[key] = { avatarUrl: p?.avatarUrl || '', nickname: p?.nickname || '' }
     } catch (_) {
-      suggestProfiles.value[id] = { avatarUrl: '', nickname: '' }
+      suggestProfiles.value[key] = { avatarUrl: '', nickname: '' }
     }
   }
 }

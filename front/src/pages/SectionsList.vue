@@ -1,12 +1,18 @@
-<script setup>
-import { ref, onMounted } from 'vue'
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
 import { listSections } from '@/api/sections'
+import type { Section } from '@/types'
 
 const loading = ref(false)
 const error = ref('')
-const sections = ref([])
+const sections = ref<Section[]>([])
 
-const themeMap = {
+interface SectionTheme {
+  classes: string
+  icon: string
+}
+
+const themeMap: Record<string, SectionTheme> = {
   anime: {
     classes: 'from-fuchsia-50 to-fuchsia-100 border-fuchsia-200 text-fuchsia-900 group-hover:border-fuchsia-300 dark:from-fuchsia-900/20 dark:to-fuchsia-800/20 dark:border-fuchsia-700/50 dark:text-fuchsia-100',
     icon: '🌸'
@@ -49,18 +55,18 @@ const themeMap = {
   }
 }
 
-function getSectionTheme(slug) {
-  return themeMap[slug] || themeMap.default
+function getSectionTheme(slug: string | undefined): SectionTheme {
+  return (slug && themeMap[slug]) || themeMap.default
 }
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
     const data = await listSections({})
     const items = Array.isArray(data) ? data : (data.items || [])
     sections.value = items
-  } catch (e) {
+  } catch (_) {
     error.value = '加载分区失败'
   } finally {
     loading.value = false
@@ -86,7 +92,7 @@ onMounted(load)
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2">
                   <span class="text-2xl filter drop-shadow-sm">{{ getSectionTheme(s.slug).icon }}</span>
-                  <h2 class="text-xl font-bold tracking-tight">{{ s.name || s.title }}</h2>
+                  <h2 class="text-xl font-bold tracking-tight">{{ s.name }}</h2>
                 </div>
                 <span class="text-xs font-mono opacity-60 uppercase tracking-wider border border-current px-1.5 py-0.5 rounded-md">{{ s.slug }}</span>
               </div>

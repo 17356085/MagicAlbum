@@ -3,11 +3,11 @@ server:
 
 spring:
   config:
-    import: optional:classpath:application-secrets.yml
+    import: optional:classpath:application-secrets.yml,optional:file:.env.local[.properties],optional:file:end/.env.local[.properties]
   application:
     name: MagicAlbum
   profiles:
-    active: mysql # 可切换为 local 或 postgres
+    active: ${SPRING_PROFILES_ACTIVE:mysql} # 本地默认走 mysql；可通过环境变量切换为 local 或 postgres
   jackson:
     time-zone: UTC
   jpa:
@@ -32,12 +32,66 @@ logging:
     org.springframework.web: INFO
     org.hibernate.SQL: DEBUG
 
+management:
+  prometheus:
+    metrics:
+      export:
+        enabled: false
+
 app:
+  auth:
+    verify:
+      # off: 不校验；mock: 校验 mock 票据；turnstile: 调用 Cloudflare Turnstile siteverify
+      mode: ${APP_AUTH_VERIFY_MODE:off}
+      turnstile:
+        secret-key: ${TURNSTILE_SECRET_KEY:}
+        site-key: ${TURNSTILE_SITE_KEY:}
+        verify-url: ${TURNSTILE_VERIFY_URL:https://challenges.cloudflare.com/turnstile/v0/siteverify}
+        expected-hostname: ${TURNSTILE_EXPECTED_HOSTNAME:localhost}
+    qr:
+      ttl-seconds: ${APP_AUTH_QR_TTL_SECONDS:60}
+      url-prefix: ${APP_AUTH_QR_URL_PREFIX:magicalbum://auth/qr/}
+    oauth:
+      frontend-callback-url: ${APP_AUTH_OAUTH_FRONTEND_CALLBACK_URL:http://localhost:5173/auth/oauth/callback}
+      state-ttl-seconds: ${APP_AUTH_OAUTH_STATE_TTL_SECONDS:300}
+      github:
+        client-id: ${GITHUB_OAUTH_CLIENT_ID:}
+        client-secret: ${GITHUB_OAUTH_CLIENT_SECRET:}
+        redirect-uri: ${GITHUB_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth/callback/github}
+        scope: ${GITHUB_OAUTH_SCOPE:read:user user:email}
+      google:
+        client-id: ${GOOGLE_OAUTH_CLIENT_ID:}
+        client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET:}
+        redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth/callback/google}
+        scope: ${GOOGLE_OAUTH_SCOPE:openid email profile}
+      apple:
+        client-id: ${APPLE_OAUTH_CLIENT_ID:}
+        team-id: ${APPLE_OAUTH_TEAM_ID:}
+        key-id: ${APPLE_OAUTH_KEY_ID:}
+        private-key: ${APPLE_OAUTH_PRIVATE_KEY:}
+        redirect-uri: ${APPLE_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth/callback/apple}
+        scope: ${APPLE_OAUTH_SCOPE:name email}
+        client-secret-ttl-seconds: ${APPLE_OAUTH_CLIENT_SECRET_TTL_SECONDS:15768000}
+      wechat:
+        app-id: ${WECHAT_OAUTH_APP_ID:}
+        app-secret: ${WECHAT_OAUTH_APP_SECRET:}
+        redirect-uri: ${WECHAT_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/auth/oauth/callback/wechat}
+        scope: ${WECHAT_OAUTH_SCOPE:snsapi_login}
+    cognito:
+      region: ${COGNITO_REGION:ap-southeast-1}
+      user-pool-id: ${COGNITO_USER_POOL_ID:}
+      app-client-id: ${COGNITO_APP_CLIENT_ID:}
+      app-client-secret: ${COGNITO_APP_CLIENT_SECRET:}
+      email-otp-expire-seconds: ${COGNITO_EMAIL_OTP_EXPIRE_SECONDS:300}
+      phone-otp-expire-seconds: ${COGNITO_PHONE_OTP_EXPIRE_SECONDS:300}
+      send-cooldown-seconds: ${COGNITO_SEND_COOLDOWN_SECONDS:60}
+  rabbit:
+    enabled: true
   security:
     jwt:
       issuer: MagicAlbum
-      secret: ${JWT_SECRET:MagicAlbumDevSecretKey_ChangeMe_PleaseReplace_0123456789ABCDEF0123456789}
-      access-token-ttl-minutes: 43200
+      secret: ${JWT_SECRET:}
+      access-token-ttl-minutes: 120
   storage:
     s3:
       # 默认关闭：将这些值留空，避免误判为已配置，后端会自动回退到本地存储

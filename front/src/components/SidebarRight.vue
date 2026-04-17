@@ -42,8 +42,7 @@
   </aside>
 </template>
 
-<script setup>
-import { inject } from 'vue'
+<script setup lang="ts">
 
 // 假设 App.vue 或 Layout 中 provide 了打开聊天的方法
 // 或者这里触发全局事件。简单起见，这里假设我们通过 window 自定义事件或者状态管理来通信
@@ -54,7 +53,7 @@ import { inject } from 'vue'
 
 // 修正方案：将 AiChat 放在 App.vue，这里只负责触发打开。
 // 我们可以派发一个自定义事件 'open-ai-chat'
-function openChat() {
+function openChat(): void {
   window.dispatchEvent(new CustomEvent('open-ai-chat'))
 }
 </script>

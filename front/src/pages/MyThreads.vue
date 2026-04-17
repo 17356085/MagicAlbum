@@ -1,60 +1,94 @@
-<script setup>
-import { ref, onMounted, computed } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
 import { listMyThreads, updateThread, deleteThread } from '@/api/my'
 import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import type { Id, PageResult, Section, Thread } from '@/types'
 
-const query = ref({ q: '', sectionId: '', page: 1, size: 10, sort: 'updatedAt' })
+type ThreadSort = 'updatedAt' | 'createdAt'
+
+interface MyThreadsQuery {
+  q: string
+  sectionId: string
+  page: number
+  size: number
+  sort: ThreadSort
+}
+
+interface EditThreadForm {
+  title: string
+  content: string
+  sectionId: string
+}
+
+function createEmptyThreadList(): PageResult<Thread> {
+  return { items: [], page: 1, size: 10, total: 0 }
+}
+
+function normalizeThreadList(data: PageResult<Thread> | Thread[]): PageResult<Thread> {
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      page: query.value.page,
+      size: query.value.size,
+      total: data.length,
+    }
+  }
+  return data || createEmptyThreadList()
+}
+
+const query = ref<MyThreadsQuery>({ q: '', sectionId: '', page: 1, size: 10, sort: 'updatedAt' })
 const loading = ref(false)
 const error = ref('')
-const list = ref({ items: [], page: 1, size: 10, total: 0 })
-const sections = ref([])
+const list = ref<PageResult<Thread>>(createEmptyThreadList())
+const sections = ref<Section[]>([])
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
     const data = await listMyThreads({ q: query.value.q, sectionId: query.value.sectionId || undefined, page: query.value.page, size: query.value.size, sort: query.value.sort })
-    list.value = data
-  } catch (e) {
+    list.value = normalizeThreadList(data)
+  } catch (_) {
     error.value = '加载我的帖子失败'
   } finally { loading.value = false }
 }
 
-async function loadSections() {
+async function loadSections(): Promise<void> {
   try {
     const data = await listSections({ size: 200 })
     sections.value = Array.isArray(data) ? data : (data.items || [])
-  } catch (e) {
+  } catch (_) {
     // 保持空列表即可
   }
 }
 
-const editingId = ref(null)
-const editForm = ref({ title: '', content: '', sectionId: '' })
-function startEdit(item) {
+const editingId = ref<Id | null>(null)
+const editForm = ref<EditThreadForm>({ title: '', content: '', sectionId: '' })
+function startEdit(item: Thread): void {
   editingId.value = item.id
-  editForm.value = { title: item.title, content: item.content || '', sectionId: item.sectionId }
+  editForm.value = { title: item.title, content: item.content || '', sectionId: String(item.sectionId ?? '') }
 }
-async function saveEdit() {
+async function saveEdit(): Promise<void> {
+  if (editingId.value == null) return
   try {
     await updateThread(editingId.value, { title: editForm.value.title, content: editForm.value.content, sectionId: editForm.value.sectionId || undefined })
     editingId.value = null
     await load()
-  } catch (e) {}
+  } catch (_) {}
 }
 const showDeleteConfirm = ref(false)
 const deleting = ref(false)
-const pendingDeleteId = ref(null)
+const pendingDeleteId = ref<Id | null>(null)
 
-function askRemove(id) {
+function askRemove(id: Id): void {
   pendingDeleteId.value = id
   showDeleteConfirm.value = true
 }
 
-async function confirmDelete() {
-  if (!pendingDeleteId.value) {
+async function confirmDelete(): Promise<void> {
+  if (pendingDeleteId.value == null) {
     showDeleteConfirm.value = false
     return
   }
@@ -64,14 +98,14 @@ async function confirmDelete() {
     showDeleteConfirm.value = false
     pendingDeleteId.value = null
     await load()
-  } catch (e) {
+  } catch (_) {
     // 可根据需要在此处设置错误消息
   } finally {
     deleting.value = false
   }
 }
 
-function cancelDelete() {
+function cancelDelete(): void {
   showDeleteConfirm.value = false
   pendingDeleteId.value = null
 }
@@ -79,26 +113,26 @@ function cancelDelete() {
 onMounted(() => { load(); loadSections() })
 
 // 分页计算与翻页方法
-const totalPages = computed(() => {
+const totalPages = computed<number>(() => {
   const s = Number(list.value.size || query.value.size || 10)
   const t = Number(list.value.total || 0)
   const pages = Math.ceil(t / (s || 10))
   return Math.max(1, pages || 1)
 })
 
-function setPage(p) {
+function setPage(p: number): void {
   const target = Math.min(Math.max(1, p), totalPages.value)
   if (target === (query.value.page || 1)) return
   query.value.page = target
   load()
 }
 
-function prevPage() {
+function prevPage(): void {
   if (loading.value) return
   setPage((query.value.page || 1) - 1)
 }
 
-function nextPage() {
+function nextPage(): void {
   if (loading.value) return
   setPage((query.value.page || 1) + 1)
 }

@@ -1,151 +1,351 @@
-# BlueAlbum
+# BlueAlbum(项目施工中⚠️)
+
+> 一个面向二次开发的在线论坛模板，目标是沉淀成类似“若依”的社区产品脚手架。
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/yourusername/BlueAlbum)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.1-green)](https://spring.io/projects/spring-boot)
 [![Vue.js](https://img.shields.io/badge/Vue.js-3.5-4FC08D)](https://vuejs.org/)
 
-## 1. 项目概述
-BlueAlbum 是一个现代化的全栈在线论坛/社区平台，致力于提供流畅的交流体验。它结合了最新的 Spring Boot 4 (Experimental) 后端架构与 Vue 3 前端技术，支持富文本/Markdown 发帖、实时评论互动、用户个性化设置以及深色模式等特性。适用于构建技术社区、兴趣小组或内部知识库。
+BlueAlbum 希望解决的问题不是“再做一个论坛 Demo”，而是提供一个可复用、可裁剪、可持续扩展的论坛底座。你可以基于它快速搭一个技术社区、校园论坛、兴趣社区，或者继续往“带后台、带审核、带通知、带 AI”的社区产品方案演进。
 
-**核心技术栈：**
-- **后端**: Spring Boot 4.0.1 (Snapshot), Java 21, MyBatis-Plus / JPA, RabbitMQ, Redis, MySQL 8.0
-- **前端**: Vue 3, Vite 5, Tailwind CSS 3, Axios, Md-editor-v3
-- **基础设施**: Docker Compose (MySQL, Redis, RabbitMQ)
+## 架构图
 
-## 2. 功能特性
+```text
+                         BlueAlbum 在线论坛模板
 
-### ✅ 已实现功能
-- **内容创作**: 
-  - 支持 Markdown/富文本发帖与实时预览
-  - 图片上传（支持本地存储与 S3 云存储）
-  - 内容美化与格式化
-- **浏览体验**: 
-  - 分区浏览（发现页），支持网格/列表视图
-  - 帖子详情页，沉浸式阅读体验
-  - 无限滚动加载与分页支持
-- **互动交流**: 
-  - 评论系统（支持 Markdown、图片混排）
-  - 用户提及（@用户）
-  - 帖子/评论点赞与收藏（部分实现）
-- **用户系统**: 
-  - 注册/登录（基于 JWT 的认证鉴权）
-  - 个人资料管理（自定义头像、昵称、密码修改）
-  - 用户搜索与主页展示
-- **个性化与体验**: 
-  - 全站深色/浅色模式无缝切换
-  - 最近浏览历史记录
-  - 响应式设计，适配移动端与桌面端
+┌─────────────────────────────────────────────────────────────────┐
+│                           Client Layer                          │
+│  Web / H5 / 响应式页面                                           │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        Frontend Layer                           │
+│  Vue 3 + Vite + Tailwind CSS + Axios + Md-editor-v3            │
+│  页面展示 / 状态管理 / 内容编辑 / 用户交互                        │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         API Gateway Layer                       │
+│  REST API / JWT 鉴权 / 上传接口 / AI 接口                        │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        Backend Core Layer                       │
+│  Spring Boot + Spring Security + MyBatis-Plus / JPA            │
+│  用户体系 / 分区体系 / 帖子体系 / 评论体系 / 设置体系              │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+             ┌──────────────────┼──────────────────┐
+             ▼                  ▼                  ▼
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│   MySQL + Flyway │  │      Redis       │  │    RabbitMQ      │
+│   核心业务数据     │  │ 缓存 / 限流 / 会话 │  │ 异步任务 / 事件流   │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+             │                  │                  │
+             └──────────────┬───┴──────────────┬───┘
+                            ▼                  ▼
+                  ┌──────────────────┐  ┌──────────────────┐
+                  │ 文件存储扩展层     │  │ AI / OAuth 扩展层 │
+                  │ Local / S3 / OSS │  │ 摘要 / 对话 / 登录 │
+                  └──────────────────┘  └──────────────────┘
+```
 
-### ⚠️ 待开发功能
-- [ ] **账户安全**: 手机号/邮箱验证与绑定 🚧
-- [ ] **AI 增强**: 智能内容推荐与辅助创作 🚧
-- [ ] **多因素认证 (MFA)**: 提升账户安全性 🚧
-- [ ] **私信系统**: 用户间实时聊天 🚧
+这个架构的重点不是“复杂”，而是“能稳步扩”。基础论坛能力先跑通，增强能力再按模块往外长。
 
-## 3. 项目结构
+## 模板分层图
+
+```text
+L3 解决方案层
+   管理后台 / 内容审核 / 通知中心 / AI 助手 / 多站点 / 多租户
+   这一层决定它能否从“论坛模板”进化成“社区解决方案”
+
+L2 通用能力层
+   用户体系 / 分区体系 / 帖子体系 / 评论体系 / 上传体系 / 安全体系
+   这是模板复用价值的核心，也是二次开发最常复用的部分
+
+L1 基础运行层
+   Vue 3 前端 / Spring Boot 后端 / MySQL / Redis / RabbitMQ / Docker
+   这一层保证项目能开箱运行、能部署、能演示
+```
+
+也可以把它理解成三句话：
+
+- L1 负责“跑起来”
+- L2 负责“能复用”
+- L3 负责“能商业化扩展”
+
+## 为什么是它
+
+- 开箱能跑：拉起前后端和基础依赖后，就能完成注册、登录、发帖、评论、浏览
+- 适合二开：前后端分离、职责清晰，方便替换 UI、鉴权、存储、通知和 AI 能力
+- 不止代码壳子：已经具备用户体系、内容体系、评论体系和基础安全能力
+- 文档比较完整：设计、实施、测试、迁移、故障归档都已沉淀，适合继续模板化
+
+## 适用场景
+
+- 技术论坛
+- 校园论坛
+- 兴趣社区
+- 内部知识交流社区
+- 需要“内容发布 + 评论互动 + 用户体系”的轻社区产品
+
+## 在线论坛模板定位
+
+如果若依更偏“后台管理系统脚手架”，那么 BlueAlbum 更偏“社区 / 论坛系统脚手架”。
+
+你可以把它理解为：
+
+- 一个社区产品基础版母体
+- 一个可继续扩展管理后台的论坛内核
+- 一个适合作为课程项目、个人作品、创业原型起点的社区底座
+
+## 功能矩阵
+
+| 模块 | 当前状态 | 说明 |
+| --- | --- | --- |
+| 用户注册 / 登录 | 已支持 | 基于 JWT 的前后端鉴权 |
+| 用户资料管理 | 已支持 | 头像、昵称、基础资料、密码修改 |
+| 分区与帖子浏览 | 已支持 | 列表、详情、搜索、最近浏览 |
+| Markdown 发帖 | 已支持 | 支持内容创作与预览 |
+| 评论系统 | 已支持 | 支持评论与回复 |
+| 图片上传 | 已支持 | 本地存储已可用，可继续扩展 S3 |
+| 深色 / 浅色模式 | 已支持 | 适配不同使用环境 |
+| 用户搜索 / 主页 | 已支持 | 支持基础用户发现与展示 |
+| OAuth / 验证码登录骨架 | 部分完成 | 已有接入文档与联调记录 |
+| 点赞 / 收藏 / 关注 | 规划中 | 适合沉淀为通用互动模块 |
+| 通知中心 | 规划中 | 可作为模板增强能力 |
+| 内容审核 | 规划中 | 适合补后台管理能力 |
+| AI 摘要 / AI 助手 | 部分完成 | 已有接口与扩展文档 |
+| 多站点 / 多租户 | 规划中 | 后续模板高级能力 |
+
+## 页面预览
+
+### 首页与主题模式
+
+![Day 模式](./docs/示例图片/day模式.jpeg)
+![Night 模式](./docs/示例图片/night模式.jpeg)
+
+### 内容浏览与互动
+
+![帖子详情](./docs/示例图片/帖子详细.jpeg)
+![帖子详情及评论区](./docs/示例图片/帖子详细及评论区.jpeg)
+![发帖功能](./docs/示例图片/发帖功能.jpeg)
+
+### 用户与个人中心
+
+![资料设置](./docs/示例图片/资料设置.jpeg)
+![我的帖子](./docs/示例图片/我的帖子.jpeg)
+![我的评论](./docs/示例图片/我的评论.jpeg)
+
+### 搜索与历史记录
+
+![搜索用户](./docs/示例图片/搜索用户.png)
+![搜索帖子](./docs/示例图片/搜索贴子.jpeg)
+![历史记录](./docs/示例图片/历史记录.jpeg)
+
+更多截图可见：[docs/示例图片](./docs/示例图片/README.md)
+
+## 技术栈
+
+### 后端
+
+- Java 21
+- Spring Boot 4.0.1
+- Spring Security
+- MyBatis-Plus / JPA
+- MySQL 8
+- Flyway
+- Redis
+- RabbitMQ
+
+### 前端
+
+- Vue 3
+- Vite 5
+- Tailwind CSS 3
+- Axios
+- Md-editor-v3
+
+### 基础设施
+
+- Docker Compose
+
+## 项目结构
 
 ```text
 BlueAlbum/
-├── end/                 # 后端工程 (Spring Boot)
-│   ├── src/main/java    # Java 源代码
-│   ├── src/main/resources # 配置文件与数据库迁移脚本
-│   └── pom.xml          # Maven 依赖管理
-├── front/               # 前端工程 (Vue 3)
-│   ├── src/             # Vue 源代码 (组件, 页面, API)
-│   ├── public/          # 静态资源
-│   └── package.json     # NPM 依赖管理
-├── docs/                # 项目文档
-│   ├── API/             # API 接口文档
-│   ├── 需求与设计/       # 设计文档与 UI 规范
-│   └── 故障与报告/       # 问题追踪与修复记录
-├── docker-compose.yml   # Docker 基础设施编排
-└── README.md            # 项目说明文档
+├── end/                   # 后端工程
+├── front/                 # 前端工程
+├── docs/                  # 文档中心（设计、实施、测试、迁移、故障归档）
+├── perf/                  # 性能相关资料
+├── docker-compose.yml     # MySQL / Redis / RabbitMQ
+└── README.md
 ```
 
-## 4. 安装指南
-
-### 系统要求
-- **JDK**: 21 或更高版本
-- **Node.js**: 18.0.0 或更高版本
-- **Docker**: 推荐用于快速启动数据库和中间件
+## 快速开始
 
 ### 1. 启动基础设施
-在项目根目录下，使用 Docker Compose 启动 MySQL, Redis 和 RabbitMQ：
-```bash
-docker-compose up -d
-```
-*确保端口 3307 (MySQL), 6379 (Redis), 5672/15672 (RabbitMQ) 未被占用。*
 
-### 2. 后端安装 (end/)
+```bash
+docker compose up -d mysql redis rabbitmq
+```
+
+### 2. 启动后端
+
 ```bash
 cd end
-# 编译并安装依赖（跳过测试以加快速度）
 ./mvnw clean install -DskipTests
-
-# 启动服务 (默认端口 8080)
 ./mvnw spring-boot:run
 ```
-*注意：首次启动会自动执行 Flyway 数据库迁移脚本，初始化表结构和种子数据。*
 
-### 3. 前端安装 (front/)
+默认数据库配置：
+
+- Host：`localhost`
+- Port：`3306`
+- DB：`MagicAlbum`
+- User：`MagicAlbum`
+- Password：`MagicAlbum`
+
+### 3. 启动前端
+
 ```bash
 cd front
-# 安装 NPM 依赖
 npm install
-
-# 启动开发服务器 (默认端口 5173)
 npm run dev
 ```
 
-## 5. 使用说明
+启动后访问：`http://localhost:5173`
 
-### 基础用法
-1. **访问应用**: 打开浏览器访问 `http://localhost:5173`。
-2. **注册/登录**: 点击右上角头像或侧边栏进行注册。默认管理员账号（如已预置）通常为 `admin/password`（视种子数据而定）。
-3. **浏览帖子**: 在“发现”页面按分区或最新发布浏览。
-4. **发布内容**: 点击底部导航栏的 "+" 按钮进入发帖模式，支持 Markdown 语法。
+## 二次开发指南
 
-### 高级配置
-后端配置文件位于 `end/src/main/resources/application.yml`。
-- **数据库连接**: 修改 `spring.datasource` 部分以连接外部数据库。
-- **文件上传**: 默认使用本地存储 (`storage.local`)，可配置 AWS S3 (`storage.s3`)。
-- **MyBatis-Plus**: 通过 Maven Profile (`mp-boot3` 或 `mp-boot4`) 切换兼容性。
-- **安全配置**: 本地开发时，建议创建 `end/src/main/resources/application-secrets.yml` 存放 `ai.api-key` 等敏感信息（该文件已被 gitignore）。
+如果你要把它改造成自己的论坛产品，建议优先做这几类替换。
 
-## 6. 贡献指南
+### 1. 品牌替换
 
-我们非常欢迎社区贡献！请遵循以下步骤：
+- 项目名
+- Logo
+- 站点标题
+- 首页文案
+- 主题色和视觉风格
 
-1. **提交 Issue**: 如果发现 Bug 或有新功能建议，请先提交 Issue 讨论。
-2. **Fork 仓库**: 将项目 Fork 到您的 GitHub 账户。
-3. **创建分支**: `git checkout -b feature/MyFeature`。
-4. **提交代码**: 请确保代码风格统一，遵循 Google Java Style 和 Vue 官方风格指南。
-5. **提交 PR**: 将更改推送到您的仓库并提交 Pull Request。
+### 2. 业务模型调整
 
-### 开发环境设置
-- **IDE**: 推荐使用 IntelliJ IDEA (后端) 和 VS Code (前端)。
-- **插件**: VS Code 推荐安装 Volar, Tailwind CSS IntelliSense, ESLint。
+- 分区结构
+- 用户字段
+- 帖子字段
+- 评论规则
+- 审核规则
 
-## 7. 许可证信息
+### 3. 基础设施替换
 
-本项目采用 **MIT 许可证** 开源。
+- 文件上传从本地改为 S3 / OSS / COS
+- 登录方式扩展为 OAuth / 邮箱验证码 / 手机验证码
+- 缓存、消息队列和部署方式按项目需要裁剪
 
-```text
-MIT License
+### 4. 模板化增强
 
-Copyright (c) 2025 BlueAlbum Contributors
+- 补一个后台管理端
+- 抽统一配置中心
+- 抽初始化数据脚本
+- 抽品牌配置和站点配置
+- 抽互动模块和通知模块
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## 推荐模板分层
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
+### 基础版
+
+适合快速落地一个能用的论坛：
+
+- 注册 / 登录
+- 用户资料
+- 分区 / 帖子 / 评论
+- 文件上传
+- 基础安全能力
+
+### 增强版
+
+适合沉淀成真正的社区解决方案：
+
+- 管理后台
+- 内容审核
+- 通知中心
+- 点赞 / 收藏 / 关注
+- 第三方登录
+- AI 摘要 / AI 助手
+- 运营位 / 推荐位 / 热榜
+
+### 高级版
+
+适合继续往“通用模板平台”演进：
+
+- 多站点支持
+- 多租户
+- 插件化扩展机制
+- 主题 / 品牌快速切换
+- 标准初始化数据和演示站配置
+
+## 文档导航
+
+- 总索引：[docs/README.md](./docs/README.md)
+- API 文档：[docs/API/README.md](./docs/API/README.md)
+- 需求与设计：[docs/需求与设计/README.md](./docs/需求与设计/README.md)
+- 实施与配置：[docs/实施与配置/README.md](./docs/实施与配置/README.md)
+- 测试与质量：[docs/测试与质量/README.md](./docs/测试与质量/README.md)
+- 技术迁移：[docs/技术迁移/README.md](./docs/技术迁移/README.md)
+- 技术扩展：[docs/技术扩展/README.md](./docs/技术扩展/README.md)
+
+## 为什么适合继续模板化
+
+相对从零起一个社区项目，这个仓库已经具备几个关键条件：
+
+- 基础能力闭环已经形成
+- 前后端边界相对清晰
+- 文档沉淀足够支撑持续演进
+- 扩展点已经存在，不需要完全推倒重来
+
+这意味着它很适合继续朝“论坛模板”而不是“单项目代码仓库”去建设。
+
+## Roadmap
+
+### 近期
+
+- [ ] 抽离模板配置层
+- [ ] 统一品牌替换项
+- [ ] 补齐默认初始化数据
+- [ ] 整理一套演示账号和演示内容
+
+### 中期
+
+- [ ] 补后台管理能力
+- [ ] 完善点赞 / 收藏 / 通知等互动模块
+- [ ] 标准化内容审核流程
+- [ ] 补部署文档和生产化建议
+
+### 长期
+
+- [ ] 插件化扩展机制
+- [ ] 多站点 / 多租户能力
+- [ ] 模板市场化能力
+- [ ] 更完整的社区产品解决方案沉淀
+
+## 开源建议
+
+如果你准备把它作为开源模板持续维护，建议仓库后续再补这几项：
+
+- 演示站地址
+- 默认演示账号
+- Issue 模板和 PR 模板
+- 版本变更日志
+- 一页式部署文档
+
+## License
+
+本项目采用 [MIT License](https://opensource.org/licenses/MIT)。
 
 ---
-*文档更新日期: 2025-12-30*
+
+文档更新日期：2026-04-17

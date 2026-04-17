@@ -1,0 +1,168 @@
+import api from './client'
+import type {
+  ApiError,
+  Id,
+  PageResult,
+  RegisterUserPayload,
+  Thread,
+  User,
+  UserProfile,
+} from '@/types'
+
+const useMock = import.meta.env.VITE_USE_API_MOCK === 'true'
+
+interface ListUsersQuery {
+  q?: string
+  page?: number
+  size?: number
+  fields?: string
+}
+
+interface ListUserThreadsQuery {
+  q?: string
+  sectionId?: Id
+  sort?: string
+  page?: number
+  size?: number
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export async function checkUsernameAvailable(username: string): Promise<boolean> {
+  if (useMock) {
+    await delay(300)
+    const taken = username?.toLowerCase() === 'taken'
+    return !taken
+  }
+  const { data } = await api.get('/users/availability', { params: { username } })
+  const payload = ((data as Record<string, unknown>)?.data ?? data ?? {}) as Record<string, unknown>
+  return Boolean(payload.available ?? payload.valid ?? payload.ok)
+}
+
+export async function registerUser(payload: RegisterUserPayload): Promise<User> {
+  if (useMock) {
+    await delay(500)
+    if (payload?.username?.toLowerCase() === 'taken') {
+      const err = new Error('用户名不可重复') as ApiError
+      err.response = { status: 400, data: { message: '用户名不可重复' } }
+      throw err
+    }
+    return {
+      id: 1,
+      username: payload.username,
+      email: payload.email,
+      phone: payload.phone,
+    }
+  }
+  const { data } = await api.post('/users/register', payload)
+  const root = (data ?? {}) as Record<string, unknown>
+  const normalized = ((root.data ?? root.result ?? root) ?? {}) as Record<string, unknown>
+  const user = (normalized.user ?? normalized.profile ?? normalized.account ?? normalized) as User
+  return user
+}
+
+export async function listUsers({
+  q,
+  page = 1,
+  size = 20,
+  fields,
+}: ListUsersQuery = {}): Promise<PageResult<User>> {
+  if (useMock) {
+    await delay(300)
+    const items: User[] = [
+      { id: 1, username: 'alice', email: 'alice@example.com', phone: '13800000000' },
+      { id: 2, username: 'bob', email: 'bob@example.com', phone: '13900000000' },
+      { id: 3, username: 'charlie', email: 'charlie@example.com', phone: '13700000000' }
+    ].filter(u => !q || String(u.username).toLowerCase().includes(String(q).toLowerCase()))
+    return { items, page, size, total: items.length }
+  }
+  const params: Record<string, string | number> = {}
+  if (q && String(q).trim()) params.q = q
+  params.page = page
+  params.size = size
+  if (fields && String(fields).trim()) params.fields = String(fields).trim()
+  const { data } = await api.get('/users', { params })
+  // 统一返回结构为 { items, page, size, total }
+  if (Array.isArray(data)) {
+    return { items: data, page, size, total: data.length }
+  }
+  const items = Array.isArray(data?.items) ? data.items : []
+  const total = Number(data?.total ?? items.length)
+  const retPage = Number(data?.page ?? page)
+  const retSize = Number(data?.size ?? size)
+  return { items, page: retPage, size: retSize, total }
+}
+
+// 用户搜索联想：根据关键字返回前 N 条匹配的用户
+export async function suggestUsers(q: string, size = 5): Promise<User[]> {
+  const keyword = String(q || '').trim()
+  if (!keyword) return []
+  if (useMock) {
+    await delay(200)
+    const items: User[] = [
+      { id: 1, username: 'alice', email: 'alice@example.com' },
+      { id: 2, username: 'bob', email: 'bob@example.com' },
+      { id: 3, username: 'charlie', email: 'charlie@example.com' },
+      { id: 4, username: 'david', email: 'david@example.com' },
+      { id: 5, username: 'eve', email: 'eve@example.com' },
+    ].filter(u => String(u.username).toLowerCase().includes(keyword.toLowerCase())).slice(0, size)
+    return items
+  }
+  const params: Record<string, string | number> = { q: keyword, page: 1, size }
+  // 如果后端支持字段选择，可携带 fields 参数（忽略也不影响）
+  params.fields = 'username,nickname'
+  const { data } = await api.get('/users', { params })
+  const arr = Array.isArray(data) ? data : (data.items || [])
+  return arr
+}
+
+// 获取当前登录用户信息，兼容不同后端路径与返回结构
+export async function getCurrentUser(): Promise<User | null> {
+  if (useMock) {
+    await delay(200)
+    return {
+      id: 1,
+      username: 'mock_user',
+      email: 'mock@example.com',
+    }
+  }
+  const candidates = ['/users/me', '/auth/me', '/users/profile', '/users/current']
+  for (const path of candidates) {
+    try {
+      const { data } = await api.get(path)
+      const root = (data ?? null) as Record<string, unknown> | null
+      const payload = (root?.data ?? root?.result ?? root ?? null) as Record<string, unknown> | null
+      const user = (payload?.user ?? payload?.profile ?? payload?.userInfo ?? payload ?? null) as User | null
+      if (user && typeof user === 'object') return user
+    } catch (e) {
+      // 继续尝试下一个候选路径
+    }
+  }
+  return null
+}
+
+// 获取指定用户的公开资料（昵称、头像、主页、所在地、个人介绍、外链）
+export async function getUserProfile(id: Id): Promise<UserProfile & Partial<User>> {
+  const { data } = await api.get(`/users/${id}/profile`)
+  return data
+}
+
+// 列出指定用户的主题帖（公开接口），分页与默认每页10条
+export async function listUserThreads(
+  id: Id,
+  { q, sectionId, sort = 'updatedAt', page = 1, size = 10 }: ListUserThreadsQuery = {},
+): Promise<PageResult<Thread> | Thread[]> {
+  const params: Record<string, string | number> = {}
+  if (q && String(q).trim()) params.q = String(q).trim()
+  if (sectionId) params.sectionId = sectionId
+  if (sort) params.sort = sort
+  params.page = page
+  params.size = size
+  const { data } = await api.get(`/users/${id}/threads`, { params })
+  return data
+}
+
+// 按昵称搜索的前端回退：分页扫描用户并拉取 profile 后按“用户名/昵称”过滤
+// 已移除：前端昵称回退搜索。后端支持 fields=nickname,username 后，统一依赖后端精确搜索。

@@ -1,15 +1,13 @@
 package com.example.demo.threads.service;
 
 import com.example.demo.common.config.RabbitMQConfig;
-import com.example.demo.sections.entity.Section;
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
+import com.example.demo.threads.dto.ThreadQueryView;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.entity.User;
-import com.example.demo.user.repo.UserProfileRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.threads.service.mp.ThreadReadServiceMp;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -19,7 +17,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.Optional;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -34,43 +32,44 @@ class ThreadServiceTest {
 
     @Mock ThreadRepository threadRepository;
     @Mock SectionRepository sectionRepository;
-    @Mock UserRepository userRepository;
-    @Mock UserProfileRepository userProfileRepository;
     @Mock MarkdownRenderService markdownRenderService;
     @Mock RabbitTemplate rabbitTemplate;
 
     @Test
     void create_should_validate_and_persist_and_send_async_task() {
-        ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(rabbitTemplate);
 
         ThreadService service = new ThreadService(
                 threadRepository,
                 sectionRepository,
-                userRepository,
-                userProfileRepository,
                 markdownRenderService,
-                provider,
+                mpProvider,
                 false,
-                rabbitTemplate
+                rabbitProvider,
+                true
         );
 
         when(sectionRepository.existsById(7L)).thenReturn(true);
-        Section section = new Section();
-        section.setId(7L);
-        section.setName("Tech");
-        when(sectionRepository.findById(7L)).thenReturn(Optional.of(section));
-
-        User user = new User();
-        user.setId(1L);
-        user.setUsername("alice");
-        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-
         when(threadRepository.save(any(Thread.class))).thenAnswer(inv -> {
             Thread t = inv.getArgument(0);
             t.setId(123L);
             return t;
         });
+        ThreadQueryView createdView = view(
+                123L,
+                7L,
+                "Tech",
+                1L,
+                "alice",
+                "Alice",
+                "/uploads/avatar.png",
+                "Hello",
+                "World"
+        );
+        when(threadRepository.findViewsByIdIn(List.of(123L))).thenReturn(List.of(createdView));
 
         CreateThreadRequest req = new CreateThreadRequest();
         req.setSectionId(7L);
@@ -90,34 +89,47 @@ class ThreadServiceTest {
         assertThat(dto.getId()).isEqualTo(123L);
         assertThat(dto.getSectionName()).isEqualTo("Tech");
         assertThat(dto.getAuthorUsername()).isEqualTo("alice");
+        assertThat(dto.getAuthorNickname()).isEqualTo("Alice");
+        assertThat(dto.getAuthorAvatar()).isEqualTo("/uploads/avatar.png");
         assertThat(dto.getTitle()).isEqualTo("Hello");
         assertThat(dto.getContent()).isEqualTo("World");
     }
 
     @Test
     void create_should_not_fail_when_rabbitmq_send_throws() {
-        ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(rabbitTemplate);
 
         ThreadService service = new ThreadService(
                 threadRepository,
                 sectionRepository,
-                userRepository,
-                userProfileRepository,
                 markdownRenderService,
-                provider,
+                mpProvider,
                 false,
-                rabbitTemplate
+                rabbitProvider,
+                true
         );
 
         when(sectionRepository.existsById(7L)).thenReturn(true);
-        when(sectionRepository.findById(7L)).thenReturn(Optional.empty());
-        when(userRepository.findById(1L)).thenReturn(Optional.empty());
         when(threadRepository.save(any(Thread.class))).thenAnswer(inv -> {
             Thread t = inv.getArgument(0);
             t.setId(123L);
             return t;
         });
+        ThreadQueryView createdView = view(
+                123L,
+                7L,
+                null,
+                1L,
+                null,
+                null,
+                null,
+                "Hello",
+                "World"
+        );
+        when(threadRepository.findViewsByIdIn(List.of(123L))).thenReturn(List.of(createdView));
         doThrow(new RuntimeException("rabbit down"))
                 .when(rabbitTemplate).convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, 123L);
 
@@ -128,22 +140,24 @@ class ThreadServiceTest {
 
         ThreadDto dto = service.create(1L, req);
         assertThat(dto.getId()).isEqualTo(123L);
+        assertThat(dto.getTitle()).isEqualTo("Hello");
     }
 
     @Test
     void create_should_reject_missing_section() {
-        ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(rabbitTemplate);
 
         ThreadService service = new ThreadService(
                 threadRepository,
                 sectionRepository,
-                userRepository,
-                userProfileRepository,
                 markdownRenderService,
-                provider,
+                mpProvider,
                 false,
-                rabbitTemplate
+                rabbitProvider,
+                true
         );
 
         when(sectionRepository.existsById(7L)).thenReturn(false);
@@ -157,5 +171,29 @@ class ThreadServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("分区不存在");
     }
-}
 
+    private ThreadQueryView view(
+            Long id,
+            Long sectionId,
+            String sectionName,
+            Long authorId,
+            String authorUsername,
+            String authorNickname,
+            String authorAvatar,
+            String title,
+            String content
+    ) {
+        ThreadQueryView view = mock(ThreadQueryView.class);
+        when(view.getId()).thenReturn(id);
+        when(view.getSectionId()).thenReturn(sectionId);
+        when(view.getSectionName()).thenReturn(sectionName);
+        when(view.getAuthorId()).thenReturn(authorId);
+        when(view.getAuthorUsername()).thenReturn(authorUsername);
+        when(view.getAuthorNickname()).thenReturn(authorNickname);
+        when(view.getAuthorAvatar()).thenReturn(authorAvatar);
+        when(view.getTitle()).thenReturn(title);
+        when(view.getContent()).thenReturn(content);
+        when(view.getStatus()).thenReturn("NORMAL");
+        return view;
+    }
+}

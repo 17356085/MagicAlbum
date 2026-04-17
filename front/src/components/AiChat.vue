@@ -168,20 +168,21 @@
 }
 </style>
 
-<script setup>
-import { ref, nextTick, watch } from 'vue'
+<script setup lang="ts">
+import { nextTick, ref, watch } from 'vue'
 import { createChatStream } from '@/api/ai'
+import type { AiChatMessage } from '@/api/ai'
 
 const isOpen = ref(false)
 const inputMsg = ref('')
 const isTyping = ref(false)
-const msgListRef = ref(null)
+const msgListRef = ref<HTMLElement | null>(null)
 
-const history = ref([
+const history = ref<AiChatMessage[]>([
   { role: 'assistant', content: '……你是谁？如果是无关紧要的事，请不要打扰我。' }
 ])
 
-function scrollToBottom() {
+function scrollToBottom(): void {
   nextTick(() => {
     if (msgListRef.value) {
       msgListRef.value.scrollTop = msgListRef.value.scrollHeight
@@ -194,7 +195,7 @@ watch(isOpen, (val) => {
   if (val) scrollToBottom()
 })
 
-function send() {
+function send(): void {
   const content = inputMsg.value.trim()
   if (!content) return
 
@@ -248,17 +249,18 @@ function send() {
   createChatStream(
     contextMessages,
     (data) => {
+      const payload = (data ?? {}) as Partial<AiChatMessage>
       // 收到第一个 chunk 时，初始化 assistant 消息
       if (replyIndex === -1) {
         history.value.push({ role: 'assistant', content: '' })
         replyIndex = history.value.length - 1
         isTyping.value = false // 开始输出了，隐藏 typing 状态
       }
-      currentReply += (data.content || '')
+      currentReply += (payload.content || '')
       history.value[replyIndex].content = currentReply
       scrollToBottom()
     },
-    (err) => {
+    () => {
       isTyping.value = false
       history.value.push({ role: 'assistant', content: '呜呜，连接出错了，请稍后再试...' })
       scrollToBottom()

@@ -18,14 +18,17 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final AuthVerifyService authVerifyService;
 
-    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtTokenProvider jwtTokenProvider) {
+    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtTokenProvider jwtTokenProvider, AuthVerifyService authVerifyService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
+        this.authVerifyService = authVerifyService;
     }
 
     public LoginResponse login(LoginRequest req) {
+        authVerifyService.verify(req.getVerifyToken(), req.getVerifyProvider(), req.getVerifyScene(), "login");
         if ((req.getEmail() == null || req.getEmail().isBlank()) && (req.getPhone() == null || req.getPhone().isBlank())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "必须提供邮箱或手机号");
         }

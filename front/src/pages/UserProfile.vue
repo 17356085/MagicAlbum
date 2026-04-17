@@ -35,7 +35,7 @@
       <div>
         <div class="text-sm text-gray-500 mb-1">个人介绍</div>
         <template v-if="profile.bio && String(profile.bio).trim()">
-          <div class="prose max-w-none dark:prose-invert text-gray-800 dark:text-gray-200" v-html="renderBio(profile.bio)"></div>
+          <div class="prose max-w-none dark:prose-invert text-gray-800 dark:text-gray-200" v-html="renderBioMarkdownHtml(profile.bio)"></div>
         </template>
         <template v-else>
           <div class="text-gray-800 dark:text-gray-200">这个人很神秘，什么都没有写。</div>
@@ -49,7 +49,7 @@
         <div class="text-sm text-gray-500">相关链接</div>
         <ul class="list-disc pl-6">
           <li v-for="(l, idx) in profile.links" :key="idx">
-            <a :href="l.url || l" target="_blank" rel="noopener" class="text-brandDay-600 dark:text-brandNight-400">{{ l.title || l.url || l }}</a>
+            <a :href="getProfileLinkHref(l)" target="_blank" rel="noopener" class="text-brandDay-600 dark:text-brandNight-400">{{ getProfileLinkLabel(l) }}</a>
           </li>
         </ul>
       </div>
@@ -85,89 +85,73 @@
   </div>
 </template>
 
-<script setup>
-import { onMounted, ref, computed, watch } from 'vue'
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getUserProfile, listUserThreads } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
+import { createMarkdownRenderer, renderMarkdown } from '@/utils/markdown'
+import { safeBack as navigateBackSafely } from '@/utils/router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { formatRelativeTime } from '@/composables/time'
-import MarkdownIt from 'markdown-it'
-import DOMPurify from 'dompurify'
-import hljs from 'highlight.js/lib/common'
-import markdownItKatex from 'markdown-it-katex'
-import 'katex/dist/katex.min.css'
+import type { PageResult, Thread, User, UserProfile as UserProfileModel } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
-const userId = computed(() => route.params.id)
+type ProfileView = Partial<User> & Partial<UserProfileModel>
+
+function getRouteParamId(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '')
+}
+
+function createEmptyProfile(): ProfileView {
+  return {
+    username: '',
+    nickname: '',
+    bio: '',
+    homepageUrl: '',
+    location: '',
+    links: [],
+    avatarUrl: '',
+  }
+}
+
+function createEmptyThreads(page = 1, size = 10): PageResult<Thread> {
+  return { items: [], page, size, total: 0 }
+}
+
+const userId = computed(() => getRouteParamId(route.params.id as string | string[] | undefined))
 const loading = ref(true)
 const error = ref('')
-const profile = ref({})
+const profile = ref<ProfileView>(createEmptyProfile())
 const authStore = useAuthStore()
 const { user } = storeToRefs(authStore)
 const isMe = computed(() => String(user?.value?.id || '') === String(userId.value || ''))
 
-// 与帖子/评论一致的 Markdown 渲染配置：支持 HTML、代码高亮、数学公式、图片懒加载/响应式
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  breaks: true,
-  langPrefix: 'language-',
-  highlight: (str, lang) => {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        const out = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
-        return '<pre><code class="hljs language-' + lang + '">' + out + '</code></pre>'
-      } catch (_) {}
-    } else {
-      try {
-        const auto = hljs.highlightAuto(str)
-        const langGuess = auto.language ? (' language-' + auto.language) : ''
-        return '<pre><code class="hljs' + langGuess + '">' + auto.value + '</code></pre>'
-      } catch (_) {}
-    }
-    return '<pre><code class="hljs">' + md.utils.escapeHtml(str) + '</code></pre>'
-  }
-})
-md.use(markdownItKatex)
-// 启用 GFM 删除线支持：~~text~~
-try { md.enable(['strikethrough']) } catch (_) {}
-const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) { return self.renderToken(tokens, idx, options) }
-md.renderer.rules.image = function(tokens, idx, options, env, self) {
-  const token = tokens[idx]
-  const loadingIdx = token.attrIndex('loading')
-  if (loadingIdx < 0) token.attrPush(['loading', 'lazy'])
-  const clsIdx = token.attrIndex('class')
-  if (clsIdx < 0) token.attrPush(['class', 'max-w-full h-auto'])
-  else token.attrs[clsIdx][1] += ' max-w-full h-auto'
-  const srcIdx = token.attrIndex('src')
-  if (srcIdx >= 0) token.attrs[srcIdx][1] = normalizeImageUrl(token.attrs[srcIdx][1])
-  return defaultImageRule(tokens, idx, options, env, self)
+const md = createMarkdownRenderer({ katex: true, normalizeImages: true })
+
+function safeBack(): void {
+  navigateBackSafely(router)
 }
 
-// 安全返回：若直接通过地址栏进入或无站内来源，则跳转到发现页
-function safeBack() {
-  const ref = document.referrer || ''
-  const sameOrigin = ref && ref.startsWith(location.origin)
-  if (!sameOrigin || window.history.length <= 1) {
-    router.replace({ name: 'discover' })
-  } else {
-    router.back()
-  }
+function renderBioMarkdownHtml(raw: string | undefined) {
+  return renderMarkdown(md, raw)
 }
 
-function renderBio(raw) {
-  const s = String(raw || '')
-  const html = md.render(s)
-  return DOMPurify.sanitize(html)
+function getProfileLinkHref(link: ProfileView['links'][number]): string {
+  return typeof link === 'string' ? link : (link?.url || '')
+}
+
+function getProfileLinkLabel(link: ProfileView['links'][number]): string {
+  if (typeof link === 'string') return link
+  return link?.title || link?.url || ''
 }
 
 // 主题帖分页状态
 const threadsLoading = ref(false)
 const threadsError = ref('')
-const threads = ref({ items: [], page: 1, size: 10, total: 0 })
+const threads = ref<PageResult<Thread>>(createEmptyThreads())
 const page = ref(1)
 const size = ref(10)
 const totalPages = computed(() => {
@@ -176,31 +160,48 @@ const totalPages = computed(() => {
   return Math.max(1, Math.ceil(total / s))
 })
 
-function prevPage() { if (page.value > 1) { page.value -= 1; loadThreads() } }
-function nextPage() { if (page.value < totalPages.value) { page.value += 1; loadThreads() } }
+function prevPage() {
+  if (page.value > 1) {
+    page.value -= 1
+    loadThreads()
+  }
+}
 
-async function loadThreads() {
+function nextPage() {
+  if (page.value < totalPages.value) {
+    page.value += 1
+    loadThreads()
+  }
+}
+
+async function loadThreads(): Promise<void> {
   threadsLoading.value = true
   threadsError.value = ''
   try {
     const data = await listUserThreads(userId.value, { page: page.value, size: size.value })
-    threads.value = data || { items: [], page: page.value, size: size.value, total: 0 }
-  } catch (e) {
-    threadsError.value = e?.message || '加载帖子失败'
+    threads.value = Array.isArray(data)
+      ? { items: data, page: page.value, size: size.value, total: data.length }
+      : (data || createEmptyThreads(page.value, size.value))
+  } catch (e: unknown) {
+    threadsError.value = e instanceof Error ? e.message : '加载帖子失败'
   } finally {
     threadsLoading.value = false
   }
 }
 
-onMounted(async () => {
+async function loadProfile(): Promise<void> {
   try {
     const data = await getUserProfile(userId.value)
-    profile.value = data || {}
-  } catch (e) {
-    error.value = (e && e.message) || '获取用户资料失败'
+    profile.value = data || createEmptyProfile()
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : '获取用户资料失败'
   } finally {
     loading.value = false
   }
+}
+
+onMounted(async () => {
+  await loadProfile()
   // 加载主题帖列表（默认每页10条）
   await loadThreads()
 })
@@ -211,14 +212,7 @@ watch(userId, async (newId, oldId) => {
     // 刷新个人资料
     loading.value = true
     error.value = ''
-    try {
-      const data = await getUserProfile(userId.value)
-      profile.value = data || {}
-    } catch (e) {
-      error.value = (e && e.message) || '获取用户资料失败'
-    } finally {
-      loading.value = false
-    }
+    await loadProfile()
     // 重置分页并加载对应用户的帖子
     page.value = 1
     await loadThreads()

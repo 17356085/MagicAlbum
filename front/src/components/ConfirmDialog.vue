@@ -1,22 +1,32 @@
-<script setup>
-import { defineProps, defineEmits } from 'vue'
+<script setup lang="ts">
+interface ConfirmDialogProps {
+  title?: string
+  message?: string
+  confirmText?: string
+  cancelText?: string
+  danger?: boolean
+  loading?: boolean
+}
 
-const props = defineProps({
-  title: { type: String, default: '确认操作' },
-  message: { type: String, default: '' },
-  confirmText: { type: String, default: '确认' },
-  cancelText: { type: String, default: '取消' },
-  danger: { type: Boolean, default: false },
-  loading: { type: Boolean, default: false },
+const props = withDefaults(defineProps<ConfirmDialogProps>(), {
+  title: '确认操作',
+  message: '',
+  confirmText: '确认',
+  cancelText: '取消',
+  danger: false,
+  loading: false,
 })
 
-const emit = defineEmits(['confirm', 'cancel'])
+const emit = defineEmits<{
+  confirm: []
+  cancel: []
+}>()
 
-function onConfirm() {
+function onConfirm(): void {
   if (props.loading) return
   emit('confirm')
 }
-function onCancel() {
+function onCancel(): void {
   if (props.loading) return
   emit('cancel')
 }

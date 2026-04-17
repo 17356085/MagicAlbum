@@ -2,17 +2,26 @@ package com.example.demo.auth;
 
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
+import java.util.Set;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 public class JwtTokenProvider {
 
-    @Value("${app.security.jwt.secret:change-me}")
+    private static final Set<String> INSECURE_SECRETS = Set.of(
+            "",
+            "change-me",
+            "MagicAlbumDevSecretKey_ChangeMe_PleaseReplace_0123456789ABCDEF0123456789"
+    );
+
+    @Value("${app.security.jwt.secret:}")
     private String secret;
 
     @Value("${app.security.jwt.issuer:MagicAlbum}")
@@ -20,6 +29,19 @@ public class JwtTokenProvider {
 
     @Value("${app.security.jwt.access-token-ttl-minutes:60}")
     private long ttlMinutes;
+
+    @PostConstruct
+    public void validateConfiguration() {
+        if (!StringUtils.hasText(secret) || INSECURE_SECRETS.contains(secret.trim())) {
+            throw new IllegalStateException("JWT secret 未配置或仍为默认弱密钥，请通过 app.security.jwt.secret 或 JWT_SECRET 显式设置");
+        }
+        if (secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException("JWT secret 长度不足，至少需要 32 字节");
+        }
+        if (ttlMinutes <= 0 || ttlMinutes > 1440) {
+            throw new IllegalStateException("JWT access token 有效期不合理，建议设置在 1 到 1440 分钟之间");
+        }
+    }
 
     private SecretKey getKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));

@@ -66,18 +66,40 @@
   </div>
 </template>
 
-<script setup>
-import { reactive, ref, onMounted } from 'vue'
+<script setup lang="ts">
+import { onMounted, reactive, ref } from 'vue'
 import { getMyBasicInfo, updateMyBasicInfo, updateMyPassword } from '@/api/settings'
 import { isValidUsername, isValidPhone, isValidEmail, isStrongPassword, getPasswordError } from '@/utils/validators'
+import type { ApiError, BasicInfoPayload } from '@/types'
 
-const profile = reactive({ username: '', phone: '', email: '' })
-const origin = reactive({ username: '', phone: '', email: '' })
-const errors = reactive({ username: '', phone: '', email: '', currentPassword: '', newPassword: '', confirmPassword: '' })
+interface PasswordForm {
+  current: string
+  next: string
+  confirm: string
+}
+
+interface AccountErrors {
+  username: string
+  phone: string
+  email: string
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
+}
+
+const profile = reactive<BasicInfoPayload>({ username: '', phone: '', email: '' })
+const origin = reactive<BasicInfoPayload>({ username: '', phone: '', email: '' })
+const errors = reactive<AccountErrors>({ username: '', phone: '', email: '', currentPassword: '', newPassword: '', confirmPassword: '' })
 const savingProfile = ref(false)
 const savingPassword = ref(false)
+const pwd = reactive<PasswordForm>({ current: '', next: '', confirm: '' })
 
-async function reloadProfile() {
+function getApiErrorMessage(error: unknown): string {
+  const e = error as ApiError | null | undefined
+  return e?.response?.data?.message || e?.message || ''
+}
+
+async function reloadProfile(): Promise<void> {
   try {
     const p = await getMyBasicInfo()
     profile.username = p?.username || ''
@@ -90,7 +112,7 @@ async function reloadProfile() {
   } catch (_) {}
 }
 
-function clearErrors() {
+function clearErrors(): void {
   errors.username = ''
   errors.phone = ''
   errors.email = ''
@@ -99,7 +121,7 @@ function clearErrors() {
   errors.confirmPassword = ''
 }
 
-function validateProfile() {
+function validateProfile(): boolean {
   clearErrors()
   let ok = true
   if (!isValidUsername(profile.username)) { errors.username = '3-20 位字母、数字或下划线'; ok = false }
@@ -108,13 +130,13 @@ function validateProfile() {
   return ok
 }
 
-async function onSaveProfile() {
+async function onSaveProfile(): Promise<void> {
   if (!validateProfile()) return
   savingProfile.value = true
   try {
     await updateMyBasicInfo({ username: profile.username, phone: profile.phone, email: profile.email })
-  } catch (e) {
-    const msg = e?.response?.data?.message || e?.message || ''
+  } catch (e: unknown) {
+    const msg = getApiErrorMessage(e)
     if (/用户名/.test(msg)) errors.username = '该用户名已被使用'
     if (/邮箱/.test(msg)) errors.email = '该邮箱已被使用'
     if (/手机号/.test(msg)) errors.phone = '该手机号已被使用'
@@ -123,10 +145,9 @@ async function onSaveProfile() {
   }
 }
 
-function resetPwdForm() { pwd.current = ''; pwd.next = ''; pwd.confirm = ''; clearErrors() }
-const pwd = reactive({ current: '', next: '', confirm: '' })
+function resetPwdForm(): void { pwd.current = ''; pwd.next = ''; pwd.confirm = ''; clearErrors() }
 
-function validatePasswordForm() {
+function validatePasswordForm(): boolean {
   clearErrors()
   if (!pwd.current) { errors.currentPassword = '请输入当前密码'; return false }
   if (!isStrongPassword(pwd.next)) { errors.newPassword = getPasswordError(pwd.next) || '至少 8 位且包含大小写字母与数字'; return false }
@@ -134,14 +155,14 @@ function validatePasswordForm() {
   return true
 }
 
-async function onChangePassword() {
+async function onChangePassword(): Promise<void> {
   if (!validatePasswordForm()) return
   savingPassword.value = true
   try {
     await updateMyPassword({ currentPassword: pwd.current, newPassword: pwd.next })
     resetPwdForm()
-  } catch (e) {
-    const msg = e?.response?.data?.message || e?.message || ''
+  } catch (e: unknown) {
+    const msg = getApiErrorMessage(e)
     if (/当前密码/.test(msg) || /不正确/.test(msg)) { errors.currentPassword = '当前密码不正确' }
   } finally {
     savingPassword.value = false

@@ -1,5 +1,6 @@
 package com.example.demo.user.service;
 
+import com.example.demo.auth.service.AuthVerifyService;
 import com.example.demo.user.dto.RegisterRequest;
 import com.example.demo.user.dto.UserDto;
 import com.example.demo.user.dto.BasicInfoUpdateRequest;
@@ -17,10 +18,12 @@ import org.springframework.web.server.ResponseStatusException;
 public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuthVerifyService authVerifyService;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthVerifyService authVerifyService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.authVerifyService = authVerifyService;
     }
 
     public boolean isUsernameAvailable(String username) {
@@ -28,6 +31,7 @@ public class UserService {
     }
 
     public UserDto register(RegisterRequest req) {
+        authVerifyService.verify(req.getVerifyToken(), req.getVerifyProvider(), req.getVerifyScene(), "register");
         // 唯一性校验
         if (userRepository.existsByUsername(req.getUsername())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "用户名不可重复");
@@ -119,7 +123,10 @@ public class UserService {
         String next = (req.getNewPassword() == null) ? "" : req.getNewPassword();
         if (current.isBlank() || next.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "密码不能为空");
         if (!passwordEncoder.matches(current, u.getPasswordHash())) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前密码不正确");
-        if (next.length() < 6) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新密码长度至少6位");
+        if (next.length() < 8) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新密码长度至少8位");
+        if (!next.matches("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新密码需包含大小写字母和数字");
+        }
         u.setPasswordHash(passwordEncoder.encode(next));
         userRepository.save(u);
     }
