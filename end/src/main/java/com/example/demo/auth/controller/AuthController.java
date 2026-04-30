@@ -6,7 +6,7 @@ import com.example.demo.auth.dto.AuthCodeFinishRequest;
 import com.example.demo.auth.dto.AuthCodeStartRequest;
 import com.example.demo.auth.dto.AuthCodeStartResponse;
 import com.example.demo.auth.service.AuthService;
-import com.example.demo.auth.service.CognitoOtpAuthService;
+import com.example.demo.auth.service.otp.CognitoOtpAuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

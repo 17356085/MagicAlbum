@@ -3,6 +3,7 @@ package com.example.demo.auth.service;
 import com.example.demo.auth.JwtTokenProvider;
 import com.example.demo.auth.dto.LoginRequest;
 import com.example.demo.auth.dto.LoginResponse;
+import com.example.demo.auth.service.otp.AuthVerifyService;
 import com.example.demo.user.dto.UserDto;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;

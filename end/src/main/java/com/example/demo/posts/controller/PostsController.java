@@ -2,6 +2,7 @@ package com.example.demo.posts.controller;
 
 import com.example.demo.common.SimpleRateLimiter;
 import com.example.demo.posts.dto.CreatePostRequest;
+import com.example.demo.posts.dto.PostLikeResponse;
 import com.example.demo.posts.dto.PostDto;
 import com.example.demo.posts.dto.UpdatePostRequest;
 import com.example.demo.posts.service.PostService;
@@ -31,16 +32,35 @@ public class PostsController {
     @GetMapping("/threads/{threadId}/posts")
     public ResponseEntity<Map<String, Object>> listByThread(
             @PathVariable("threadId") Long threadId,
+            @RequestParam(value = "sort", defaultValue = "time") String sort,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
-        Page<PostDto> p = postService.listByThread(threadId, page, size);
+        Page<PostDto> p = postService.listByThread(threadId, getOptionalUserId(), sort, page, size);
         Map<String, Object> body = new HashMap<>();
         body.put("items", p.getContent());
         body.put("page", page);
         body.put("size", size);
         body.put("total", p.getTotalElements());
         return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/posts/{id}/like")
+    public ResponseEntity<PostLikeResponse> likeStatus(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(postService.likeStatus(userId, id));
+    }
+
+    @PostMapping("/posts/{id}/like")
+    public ResponseEntity<PostLikeResponse> like(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(postService.like(userId, id));
+    }
+
+    @DeleteMapping("/posts/{id}/like")
+    public ResponseEntity<PostLikeResponse> unlike(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(postService.unlike(userId, id));
     }
 
     @PostMapping("/threads/{threadId}/posts")
@@ -78,10 +98,18 @@ public class PostsController {
     }
 
     private Long getUserId() {
+        Long userId = getOptionalUserId();
+        if (userId != null) {
+            return userId;
+        }
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
+    }
+
+    private Long getOptionalUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof Long) {
             return (Long) auth.getPrincipal();
         }
-        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
+        return null;
     }
 }

@@ -1,6 +1,7 @@
 package com.example.demo.ai.controller;
 
 import com.example.demo.ai.service.AiService;
+import com.example.demo.ai.service.AiSummaryCacheService;
 import com.example.demo.common.config.RabbitMQConfig;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
@@ -21,15 +22,18 @@ import java.util.Map;
 public class AiController {
 
     private final AiService aiService;
+    private final AiSummaryCacheService aiSummaryCacheService;
     private final ThreadRepository threadRepository;
     private final RabbitTemplate rabbitTemplate;
     private final boolean rabbitEnabled;
 
     public AiController(AiService aiService,
+                        AiSummaryCacheService aiSummaryCacheService,
                         ThreadRepository threadRepository,
                         ObjectProvider<RabbitTemplate> rabbitTemplateProvider,
                         @Value("${app.rabbit.enabled:true}") boolean rabbitEnabled) {
         this.aiService = aiService;
+        this.aiSummaryCacheService = aiSummaryCacheService;
         this.threadRepository = threadRepository;
         this.rabbitTemplate = rabbitTemplateProvider.getIfAvailable();
         this.rabbitEnabled = rabbitEnabled;
@@ -48,6 +52,7 @@ public class AiController {
         // RabbitMQ 未启用时，保留接口可用性，避免本地启动因缺少消息队列 bean 失败。
         thread.setSummaryStatus("PENDING");
         threadRepository.save(thread);
+        aiSummaryCacheService.put(threadId, thread.getSummary(), "PENDING");
         if (!rabbitEnabled || rabbitTemplate == null) {
             return Map.of("status", "PENDING", "message", "RabbitMQ 未启用，摘要任务暂未入队");
         }
@@ -58,12 +63,22 @@ public class AiController {
 
     @GetMapping("/summary/{threadId}")
     public Map<String, Object> getSummary(@PathVariable Long threadId) {
+        AiSummaryCacheService.CachedAiSummary cached = aiSummaryCacheService.get(threadId);
+        if (cached != null) {
+            return Map.of(
+                    "summary", cached.summary() == null ? "" : cached.summary(),
+                    "status", cached.status() == null ? "PENDING" : cached.status()
+            );
+        }
         Thread thread = threadRepository.findById(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
 
+        String summary = thread.getSummary() == null ? "" : thread.getSummary();
+        String status = thread.getSummaryStatus() == null ? "PENDING" : thread.getSummaryStatus();
+        aiSummaryCacheService.put(threadId, summary, status);
         return Map.of(
-                "summary", thread.getSummary() == null ? "" : thread.getSummary(),
-                "status", thread.getSummaryStatus() == null ? "PENDING" : thread.getSummaryStatus()
+                "summary", summary,
+                "status", status
         );
     }
 

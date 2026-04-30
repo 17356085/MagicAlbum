@@ -39,7 +39,7 @@ export function createChatStream(
   onComplete?: ChatStreamCompleteHandler,
 ): void {
   const token = getStoredAccessToken()
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'
+  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9000/api/v1'
   
   fetch(`${apiBase}/ai/chat/stream`, {
     method: 'POST',

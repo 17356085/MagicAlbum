@@ -33,11 +33,16 @@ public class SecurityConfig {
                         "/api/v1/users",
                         "/api/v1/users/*/profile",
                         "/api/v1/users/*/threads",
+                        "/api/v1/users/*/followers",
+                        "/api/v1/users/*/following",
                         "/api/v1/sections",
+                        "/api/v1/tags",
+                        "/api/v1/tags/popular",
                         "/api/v1/threads",
                         "/api/v1/threads/*",
                         "/api/v1/threads/*/posts",
-                        "/api/v1/ai/summary/*"
+                        "/api/v1/ai/summary/*",
+                        "/api/v1/system/config-demo"
                 ).permitAll()
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/uploads/**").permitAll()

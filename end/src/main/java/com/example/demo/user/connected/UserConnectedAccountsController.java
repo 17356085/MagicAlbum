@@ -1,6 +1,7 @@
 package com.example.demo.user.connected;
 
 import com.example.demo.user.connected.dto.ConnectedAccountDto;
+import com.example.demo.user.connected.service.ConnectedAccountsService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -13,9 +14,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/users/me/connected-accounts")
 public class UserConnectedAccountsController {
-    private final UserConnectedAccountsService service;
+    private final ConnectedAccountsService service;
 
-    public UserConnectedAccountsController(UserConnectedAccountsService service) {
+    public UserConnectedAccountsController(ConnectedAccountsService service) {
         this.service = service;
     }
 

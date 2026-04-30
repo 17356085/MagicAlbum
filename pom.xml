@@ -22,14 +22,37 @@
     <properties>
         <java.version>21</java.version>
         <jjwt.version>0.12.5</jjwt.version>
+        <spring-cloud.version>2025.1.0</spring-cloud.version>
+        <spring-cloud-alibaba.version>2025.1.0.0</spring-cloud-alibaba.version>
         <!-- 全局禁用 AOT 与测试 AOT，避免 Windows 环境下触发删除目录异常 -->
         <spring.aot.enabled>false</spring.aot.enabled>
         <spring.test.aot.enabled>false</spring.test.aot.enabled>
     </properties>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <!-- 聚合模块 -->
     <modules>
         <module>end</module>
+        <module>gateway</module>
+        <module>notification-service</module>
     </modules>
 
     <!-- 统一插件版本与执行配置，定义在父 POM 的 pluginManagement 中 -->

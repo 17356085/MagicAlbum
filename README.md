@@ -214,11 +214,17 @@ cd end
 
 ```bash
 cd front
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 启动后访问：`http://localhost:5173`
+
+### 4. 协作约定
+
+- 前端包管理器统一使用 `pnpm`
+- 后端构建与运行统一使用 Maven Wrapper：`./mvnw`
+- 根目录不是前端 workspace 入口，前端命令请在 `front/` 下执行
 
 ## 二次开发指南
 

@@ -11,24 +11,53 @@
           </svg>
         </button>
       </div>
-      <div class="flex items-center gap-4">
+      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div class="flex items-center gap-4">
         
-        <template v-if="profile.avatarUrl">
-          <img :src="normalizeImageUrl(profile.avatarUrl)" alt="头像" class="w-20 h-20 rounded-full object-cover" />
-        </template>
-        <template v-else>
-          <div class="w-20 h-20 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-2xl text-gray-600 dark:text-gray-300">
-            {{ String(profile.nickname || profile.username || 'U').slice(0,1).toUpperCase() }}
+          <template v-if="profile.avatarUrl">
+            <img :src="normalizeImageUrl(profile.avatarUrl)" alt="头像" class="w-20 h-20 rounded-full object-cover" />
+          </template>
+          <template v-else>
+            <div class="w-20 h-20 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-2xl text-gray-600 dark:text-gray-300">
+              {{ String(profile.nickname || profile.username || 'U').slice(0,1).toUpperCase() }}
+            </div>
+          </template>
+          <div>
+            <div class="text-xl font-semibold">{{ profile.nickname || profile.username || '未命名用户' }}</div>
+            <div v-if="profile.username" class="text-sm text-gray-600 dark:text-gray-300 mt-0.5">{{ profile.username }}</div>
+            <div class="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <router-link
+                :to="{ name: 'user-followers', params: { id: userId } }"
+                class="rounded px-2 py-1 transition-colors hover:bg-gray-100 hover:text-brandDay-600 dark:hover:bg-gray-700 dark:hover:text-brandNight-300"
+              >
+                粉丝 {{ Number(profile.followerCount || 0) }}
+              </router-link>
+              <router-link
+                :to="{ name: 'user-following', params: { id: userId } }"
+                class="rounded px-2 py-1 transition-colors hover:bg-gray-100 hover:text-brandDay-600 dark:hover:bg-gray-700 dark:hover:text-brandNight-300"
+              >
+                关注 {{ Number(profile.followingCount || 0) }}
+              </router-link>
+              <span v-if="!isMe && profile.followingMe" class="rounded bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-200">关注了你</span>
+            </div>
+  <div v-if="profile.homepageUrl" class="text-sm text-brandDay-600 dark:text-brandNight-400 mt-1">
+              <span class="mr-1 text-gray-600 dark:text-gray-300">主页链接：</span>
+              <a :href="profile.homepageUrl" target="_blank" rel="noopener">{{ profile.homepageUrl }}</a>
+            </div>
+            <div v-if="profile.location" class="text-sm text-gray-600 dark:text-gray-300 mt-1">所在地：{{ profile.location }}</div>
           </div>
-        </template>
-        <div>
-          <div class="text-xl font-semibold">{{ profile.nickname || profile.username || '未命名用户' }}</div>
-          <div v-if="profile.username" class="text-sm text-gray-600 dark:text-gray-300 mt-0.5">{{ profile.username }}</div>
-<div v-if="profile.homepageUrl" class="text-sm text-brandDay-600 dark:text-brandNight-400 mt-1">
-            <span class="mr-1 text-gray-600 dark:text-gray-300">主页链接：</span>
-            <a :href="profile.homepageUrl" target="_blank" rel="noopener">{{ profile.homepageUrl }}</a>
-          </div>
-          <div v-if="profile.location" class="text-sm text-gray-600 dark:text-gray-300 mt-1">所在地：{{ profile.location }}</div>
+        </div>
+        <div class="flex items-center gap-2 self-start md:self-center">
+          <router-link v-if="isMe" to="/settings" class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-xs text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500">编辑资料</router-link>
+          <button
+            v-else
+            class="rounded px-4 py-2 text-xs font-medium shadow-sm motion-safe:transition-shadow motion-safe:duration-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 disabled:opacity-60 dark:focus:ring-accentCyan-500"
+            :class="profile.followedByMe ? 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700' : 'bg-brandDay-600 text-white hover:bg-brandDay-700 dark:bg-brandNight-600 dark:hover:bg-brandNight-700'"
+            :disabled="followSaving"
+            @click="toggleFollow"
+          >
+            {{ followSaving ? '处理中...' : (profile.followedByMe ? '已关注' : '关注') }}
+          </button>
         </div>
       </div>
 
@@ -40,9 +69,7 @@
         <template v-else>
           <div class="text-gray-800 dark:text-gray-200">这个人很神秘，什么都没有写。</div>
         </template>
-        <div v-if="isMe" class="mt-3">
-<router-link to="/settings" class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-1 text-xs text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500">编辑资料</router-link>
-        </div>
+        <div v-if="followError" class="mt-3 text-xs text-red-600">{{ followError }}</div>
       </div>
 
       <div v-if="profile.links && profile.links.length" class="space-y-2">
@@ -74,10 +101,21 @@
             </ul>
           </template>
           <div v-else class="text-gray-600 dark:text-gray-300">暂无帖子</div>
-          <div class="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
-            <button class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200" :disabled="page<=1" @click="prevPage">上一页</button>
-            <div>第 {{ page }} 页 / 共 {{ totalPages }} 页</div>
-            <button class="rounded px-2 py-1 border dark:border-gray-700 dark:text-gray-200" :disabled="page>=totalPages" @click="nextPage">下一页</button>
+          <div class="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 dark:border-gray-700">
+            <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ threads.total || 0 }} 条 · 每页 {{ size }} 条</div>
+            <div class="flex items-center gap-2">
+              <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page<=1" @click="prevPage">上一页</button>
+              <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
+              <input
+                v-model="inputPage"
+                class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
+                inputmode="numeric"
+                @keyup.enter="goToInputPage"
+                @blur="goToInputPage"
+              />
+              <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
+              <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page>=totalPages" @click="nextPage">下一页</button>
+            </div>
           </div>
         </template>
       </div>
@@ -88,7 +126,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getUserProfile, listUserThreads } from '@/api/users'
+import { followUser, getUserProfile, listUserThreads, unfollowUser } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
 import { createMarkdownRenderer, renderMarkdown } from '@/utils/markdown'
 import { safeBack as navigateBackSafely } from '@/utils/router'
@@ -126,8 +164,10 @@ const loading = ref(true)
 const error = ref('')
 const profile = ref<ProfileView>(createEmptyProfile())
 const authStore = useAuthStore()
-const { user } = storeToRefs(authStore)
+const { isLoggedIn, user } = storeToRefs(authStore)
 const isMe = computed(() => String(user?.value?.id || '') === String(userId.value || ''))
+const followSaving = ref(false)
+const followError = ref('')
 
 const md = createMarkdownRenderer({ katex: true, normalizeImages: true })
 
@@ -154,6 +194,7 @@ const threadsError = ref('')
 const threads = ref<PageResult<Thread>>(createEmptyThreads())
 const page = ref(1)
 const size = ref(10)
+const inputPage = ref('1')
 const totalPages = computed(() => {
   const s = Math.max(1, Number(size.value || 10))
   const total = Number(threads.value.total || 0)
@@ -173,6 +214,25 @@ function nextPage() {
     loadThreads()
   }
 }
+
+function goToInputPage(): void {
+  const raw = String(inputPage.value || '').trim()
+  if (!raw || !/^\d+$/.test(raw)) {
+    inputPage.value = String(page.value || 1)
+    return
+  }
+  const target = Math.min(Math.max(1, Number(raw)), totalPages.value)
+  if (target === page.value) {
+    inputPage.value = String(page.value || 1)
+    return
+  }
+  page.value = target
+  loadThreads()
+}
+
+watch(page, (val) => {
+  inputPage.value = String(val || 1)
+}, { immediate: true })
 
 async function loadThreads(): Promise<void> {
   threadsLoading.value = true
@@ -197,6 +257,40 @@ async function loadProfile(): Promise<void> {
     error.value = e instanceof Error ? e.message : '获取用户资料失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function toggleFollow(): Promise<void> {
+  if (!isLoggedIn.value) {
+    followError.value = '请先登录后再关注'
+    return
+  }
+  followSaving.value = true
+  followError.value = ''
+  try {
+    const state = profile.value.followedByMe
+      ? await unfollowUser(userId.value)
+      : await followUser(userId.value)
+    profile.value = {
+      ...profile.value,
+      followedByMe: Boolean(state.followedByMe ?? state.following),
+      followingMe: Boolean(state.followingMe),
+      followerCount: Number(state.followerCount || 0),
+      followingCount: Number(state.followingCount || 0),
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('follow-state-updated', {
+        detail: {
+          userId: userId.value,
+          following: Boolean(state.followedByMe ?? state.following),
+        },
+      }))
+    } catch (_) {}
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } } | null
+    followError.value = err?.response?.data?.message || '关注操作失败'
+  } finally {
+    followSaving.value = false
   }
 }
 

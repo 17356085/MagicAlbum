@@ -34,6 +34,11 @@ interface StarParticle {
 // UI 设置（动态背景开关）
 const uiStore = useUIStore()
 const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
+const authRenderKey = ref(0)
+
+function onAuthStateChanged(): void {
+  authRenderKey.value += 1
+}
 
 // 监听暗色模式（检测 html.dark 与系统偏好）
 const isDark = ref(false)
@@ -258,8 +263,15 @@ watch([dynamicBackgroundEnabled, isDark], () => {
 
 // 复用 resize 钩子
 function onResizeStars(): void { if (starsCtx) refreshStars() }
-onMounted(() => { window.addEventListener('resize', onResizeStars) })
-onUnmounted(() => { window.removeEventListener('resize', onResizeStars); stopStars() })
+onMounted(() => {
+  window.addEventListener('resize', onResizeStars)
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', onResizeStars)
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
+  stopStars()
+})
 
 </script>
 <template>
@@ -284,7 +296,7 @@ onUnmounted(() => { window.removeEventListener('resize', onResizeStars); stopSta
       </div>
       <div class="lg:col-span-9">
         <div class="space-y-4">
-          <router-view />
+          <router-view :key="`${$route.fullPath}:${authRenderKey}`" />
         </div>
       </div>
     </main>

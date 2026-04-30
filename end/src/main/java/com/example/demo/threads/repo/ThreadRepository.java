@@ -1,6 +1,7 @@
 package com.example.demo.threads.repo;
 
 import com.example.demo.threads.dto.ThreadQueryView;
+import com.example.demo.threads.dto.ThreadRankingView;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -31,6 +32,14 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = t.authorId
             WHERE (:q IS NULL OR LOWER(t.title) LIKE LOWER(CONCAT('%', :q, '%')) OR LOWER(t.contentMd) LIKE LOWER(CONCAT('%', :q, '%')))
+              AND (:tag IS NULL OR EXISTS (
+                  SELECT tt.threadId
+                  FROM com.example.demo.tags.entity.ThreadTag tt
+                  JOIN com.example.demo.tags.entity.Tag tg ON tg.id = tt.tagId
+                  WHERE tt.threadId = t.id
+                    AND tg.type = 'thread'
+                    AND LOWER(tg.name) = LOWER(:tag)
+              ))
               AND (:sectionId IS NULL OR t.sectionId = :sectionId)
               AND t.status = 'NORMAL'
             ORDER BY t.createdAt DESC
@@ -39,10 +48,64 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             SELECT COUNT(t)
             FROM Thread t
             WHERE (:q IS NULL OR LOWER(t.title) LIKE LOWER(CONCAT('%', :q, '%')) OR LOWER(t.contentMd) LIKE LOWER(CONCAT('%', :q, '%')))
+              AND (:tag IS NULL OR EXISTS (
+                  SELECT tt.threadId
+                  FROM com.example.demo.tags.entity.ThreadTag tt
+                  JOIN com.example.demo.tags.entity.Tag tg ON tg.id = tt.tagId
+                  WHERE tt.threadId = t.id
+                    AND tg.type = 'thread'
+                    AND LOWER(tg.name) = LOWER(:tag)
+              ))
               AND (:sectionId IS NULL OR t.sectionId = :sectionId)
               AND t.status = 'NORMAL'
             """)
-    Page<ThreadQueryView> searchNewestView(String q, Long sectionId, Pageable pageable);
+    Page<ThreadQueryView> searchNewestView(String q, String tag, Long sectionId, Pageable pageable);
+
+    default Page<ThreadQueryView> searchNewestView(String q, Long sectionId, Pageable pageable) {
+        return searchNewestView(q, null, sectionId, pageable);
+    }
+
+    @Query(value = """
+            SELECT
+                t.id AS id,
+                t.sectionId AS sectionId,
+                s.name AS sectionName,
+                t.authorId AS authorId,
+                u.username AS authorUsername,
+                up.nickname AS authorNickname,
+                up.avatarUrl AS authorAvatar,
+                t.title AS title,
+                t.contentMd AS content,
+                t.status AS status,
+                t.createdAt AS createdAt,
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount,
+                (SELECT COUNT(tl.id) FROM ThreadLike tl WHERE tl.threadId = t.id) AS likeCount,
+                (
+                    (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') * 2
+                    + (SELECT COUNT(tl.id) FROM ThreadLike tl WHERE tl.threadId = t.id) * 3
+                ) AS hotScore
+            FROM Thread t
+            LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
+            LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
+            LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = t.authorId
+            WHERE (:sectionId IS NULL OR t.sectionId = :sectionId)
+              AND t.status = 'NORMAL'
+            ORDER BY
+                (
+                    (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') * 2
+                    + (SELECT COUNT(tl.id) FROM ThreadLike tl WHERE tl.threadId = t.id) * 3
+                ) DESC,
+                t.createdAt DESC,
+                t.id DESC
+            """,
+            countQuery = """
+            SELECT COUNT(t)
+            FROM Thread t
+            WHERE (:sectionId IS NULL OR t.sectionId = :sectionId)
+              AND t.status = 'NORMAL'
+            """)
+    Page<ThreadRankingView> rankingView(Long sectionId, Pageable pageable);
 
     @Query(value = """
             SELECT

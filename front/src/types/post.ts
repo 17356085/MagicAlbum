@@ -16,6 +16,8 @@ export interface Post {
   parentAuthorNickname?: string
   createdAt?: string
   updatedAt?: string
+  likeCount?: number
+  liked?: boolean
 }
 
 export interface CreatePostPayload {
@@ -25,4 +27,10 @@ export interface CreatePostPayload {
 
 export interface UpdatePostPayload {
   contentMd?: string
+}
+
+export interface PostLikeState {
+  postId: Id
+  liked: boolean
+  likeCount: number
 }

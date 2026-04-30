@@ -65,6 +65,35 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
             LEFT JOIN Post parent ON parent.id = p.replyToPostId
             LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
+            WHERE p.threadId = :threadId AND p.status = 'NORMAL'
+            ORDER BY (SELECT COUNT(pl) FROM com.example.demo.posts.entity.PostLike pl WHERE pl.postId = p.id) DESC, p.createdAt ASC
+            """,
+            countQuery = "SELECT COUNT(p) FROM Post p WHERE p.threadId = :threadId AND p.status = 'NORMAL'")
+    Page<PostQueryView> findByThreadLikeCountDescView(Long threadId, Pageable pageable);
+
+    @Query(value = """
+            SELECT
+                p.id AS id,
+                p.threadId AS threadId,
+                th.title AS threadTitle,
+                p.authorId AS authorId,
+                u.username AS authorUsername,
+                up.nickname AS authorNickname,
+                up.avatarUrl AS authorAvatarUrl,
+                p.contentMd AS content,
+                p.replyToPostId AS replyToPostId,
+                parent.authorId AS parentAuthorId,
+                pu.username AS parentAuthorUsername,
+                pup.nickname AS parentAuthorNickname,
+                p.createdAt AS createdAt,
+                p.updatedAt AS updatedAt
+            FROM Post p
+            LEFT JOIN com.example.demo.threads.entity.Thread th ON th.id = p.threadId
+            LEFT JOIN com.example.demo.user.entity.User u ON u.id = p.authorId
+            LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = p.authorId
+            LEFT JOIN Post parent ON parent.id = p.replyToPostId
+            LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
+            LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
             WHERE p.authorId = :authorId
               AND p.status = 'NORMAL'
               AND p.threadId = th.id

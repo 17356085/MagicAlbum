@@ -1,7 +1,7 @@
 package com.example.demo.auth.controller;
 
 import com.example.demo.auth.dto.OAuthProvider;
-import com.example.demo.auth.service.AuthOAuthService;
+import com.example.demo.auth.service.oauth.common.OAuthLoginCoordinator;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,15 +16,15 @@ import java.net.URI;
 @RestController
 @RequestMapping("/api/v1/auth/oauth")
 public class AuthOAuthController {
-    private final AuthOAuthService authOAuthService;
+    private final OAuthLoginCoordinator oauthLoginCoordinator;
 
-    public AuthOAuthController(AuthOAuthService authOAuthService) {
-        this.authOAuthService = authOAuthService;
+    public AuthOAuthController(OAuthLoginCoordinator oauthLoginCoordinator) {
+        this.oauthLoginCoordinator = oauthLoginCoordinator;
     }
 
     @GetMapping("/authorize")
     public ResponseEntity<Void> authorize(@RequestParam("provider") OAuthProvider provider) {
-        String location = authOAuthService.buildAuthorizeRedirect(provider);
+        String location = oauthLoginCoordinator.buildAuthorizeRedirect(provider);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .header(HttpHeaders.LOCATION, location)
                 .build();
@@ -37,18 +37,7 @@ public class AuthOAuthController {
             @RequestParam(value = "state", required = false) String state,
             @RequestParam(value = "error", required = false) String error
     ) {
-        String location;
-        if (provider == OAuthProvider.github) {
-            location = authOAuthService.buildGithubCallbackRedirect(code, state, error);
-        } else if (provider == OAuthProvider.google) {
-            location = authOAuthService.buildGoogleCallbackRedirect(code, state, error);
-        } else if (provider == OAuthProvider.apple) {
-            location = authOAuthService.buildAppleCallbackRedirect(code, state, error);
-        } else if (provider == OAuthProvider.wechat) {
-            location = authOAuthService.buildWechatCallbackRedirect(code, state, error);
-        } else {
-            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "当前 Provider 尚未接入 OAuth 回调骨架");
-        }
+        String location = oauthLoginCoordinator.handleCallback(provider, code, state, error);
 
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(location))

@@ -17,6 +17,8 @@ public class PostDto {
     private String parentAuthorNickname;
     private Instant createdAt;
     private Instant updatedAt;
+    private long likeCount;
+    private boolean liked;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -46,4 +48,8 @@ public class PostDto {
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public long getLikeCount() { return likeCount; }
+    public void setLikeCount(long likeCount) { this.likeCount = likeCount; }
+    public boolean isLiked() { return liked; }
+    public void setLiked(boolean liked) { this.liked = liked; }
 }

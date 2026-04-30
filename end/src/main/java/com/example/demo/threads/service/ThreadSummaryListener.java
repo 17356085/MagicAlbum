@@ -1,6 +1,7 @@
 package com.example.demo.threads.service;
 
 import com.example.demo.ai.service.AiService;
+import com.example.demo.ai.service.AiSummaryCacheService;
 import com.example.demo.common.config.RabbitMQConfig;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
@@ -20,10 +21,12 @@ public class ThreadSummaryListener {
 
     private final ThreadRepository threadRepository;
     private final AiService aiService;
+    private final AiSummaryCacheService aiSummaryCacheService;
 
-    public ThreadSummaryListener(ThreadRepository threadRepository, AiService aiService) {
+    public ThreadSummaryListener(ThreadRepository threadRepository, AiService aiService, AiSummaryCacheService aiSummaryCacheService) {
         this.threadRepository = threadRepository;
         this.aiService = aiService;
+        this.aiSummaryCacheService = aiSummaryCacheService;
     }
 
     @RabbitListener(queues = RabbitMQConfig.QUEUE_THREAD_SUMMARY)
@@ -45,17 +48,20 @@ public class ThreadSummaryListener {
             // Update status to processing
             thread.setSummaryStatus("PROCESSING");
             threadRepository.save(thread);
+            aiSummaryCacheService.put(threadId, thread.getSummary(), "PROCESSING");
 
             String summary = aiService.generateSummary(thread.getContentMd());
             
             thread.setSummary(summary);
             thread.setSummaryStatus("COMPLETED");
             threadRepository.save(thread);
+            aiSummaryCacheService.put(threadId, summary, "COMPLETED");
             log.info("Summary generated for thread: {}", threadId);
         } catch (Exception e) {
             log.error("Failed to generate summary for thread: " + threadId, e);
             thread.setSummaryStatus("FAILED");
             threadRepository.save(thread);
+            aiSummaryCacheService.put(threadId, thread.getSummary(), "FAILED");
         }
     }
 }

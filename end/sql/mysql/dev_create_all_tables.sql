@@ -135,6 +135,49 @@ CREATE TABLE IF NOT EXISTS attachments (
     KEY idx_attachments_target (target_type, target_id)
 );
 
+-- thread_likes：帖子点赞
+CREATE TABLE IF NOT EXISTS thread_likes (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    thread_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_thread_likes_thread_user (thread_id, user_id),
+    KEY idx_thread_likes_thread (thread_id),
+    KEY idx_thread_likes_user (user_id),
+    CONSTRAINT fk_thread_likes_thread FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+    CONSTRAINT fk_thread_likes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- post_likes：评论点赞
+CREATE TABLE IF NOT EXISTS post_likes (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    post_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_post_likes_post_user (post_id, user_id),
+    KEY idx_post_likes_post (post_id),
+    KEY idx_post_likes_user (user_id),
+    CONSTRAINT fk_post_likes_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_post_likes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- user_follows：用户关注关系
+CREATE TABLE IF NOT EXISTS user_follows (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    follower_id BIGINT NOT NULL,
+    following_id BIGINT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_user_follows_follower_following (follower_id, following_id),
+    KEY idx_user_follows_follower (follower_id),
+    KEY idx_user_follows_following (following_id),
+    CONSTRAINT fk_user_follows_follower FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_follows_following FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT chk_user_follows_not_self CHECK (follower_id <> following_id)
+);
+
 -- user_profiles：用户资料（头像、昵称、个性信息）
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id BIGINT NOT NULL,

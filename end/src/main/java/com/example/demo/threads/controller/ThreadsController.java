@@ -1,6 +1,7 @@
 package com.example.demo.threads.controller;
 
 import com.example.demo.threads.dto.CreateThreadRequest;
+import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.service.ThreadService;
@@ -34,11 +35,27 @@ public class ThreadsController {
     @GetMapping
     public ResponseEntity<java.util.Map<String, Object>> list(
             @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "tag", required = false) String tag,
             @RequestParam(value = "sectionId", required = false) Long sectionId,
             @RequestParam(value = "page", defaultValue = "1") int page,
-            @RequestParam(value = "size", defaultValue = "10") int size
+            @RequestParam(value = "size", defaultValue = "20") int size
     ) {
-        Page<ThreadDto> p = threadService.list(q, sectionId, page, size);
+        Page<ThreadDto> p = threadService.list(q, tag, sectionId, page, size);
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("items", p.getContent());
+        body.put("page", page);
+        body.put("size", size);
+        body.put("total", p.getTotalElements());
+        return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/ranking")
+    public ResponseEntity<java.util.Map<String, Object>> ranking(
+            @RequestParam(value = "sectionId", required = false) Long sectionId,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size
+    ) {
+        Page<ThreadDto> p = threadService.ranking(sectionId, page, size);
         java.util.Map<String, Object> body = new java.util.HashMap<>();
         body.put("items", p.getContent());
         body.put("page", page);
@@ -51,6 +68,24 @@ public class ThreadsController {
     public ResponseEntity<ThreadDto> getById(@PathVariable("id") Long id) {
         ThreadDto dto = threadService.getById(id);
         return ResponseEntity.ok(dto);
+    }
+
+    @PostMapping("/{id}/like")
+    public ResponseEntity<ThreadLikeResponse> like(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(threadService.like(userId, id));
+    }
+
+    @GetMapping("/{id}/like")
+    public ResponseEntity<ThreadLikeResponse> likeStatus(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(threadService.likeStatus(userId, id));
+    }
+
+    @DeleteMapping("/{id}/like")
+    public ResponseEntity<ThreadLikeResponse> unlike(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(threadService.unlike(userId, id));
     }
 
     @PatchMapping("/{id}")

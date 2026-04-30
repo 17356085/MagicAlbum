@@ -118,6 +118,25 @@ export const useAuthStore = defineStore('auth', () => {
     clearAuthState({ clearDraft: true })
   }
 
+  function updateCurrentUser(patch: Partial<User>): void {
+    if (!user.value) {
+      return
+    }
+    const nextUser = {
+      ...user.value,
+      ...patch,
+    }
+    const changed = Object.keys(patch).some((key) => {
+      const typedKey = key as keyof User
+      return user.value?.[typedKey] !== nextUser[typedKey]
+    })
+    if (!changed) {
+      return
+    }
+    user.value = nextUser
+    persistAuthState({ accessToken: token.value, user: user.value })
+  }
+
   function handleUnauthorized(): void {
     clearAuthState()
   }
@@ -135,5 +154,6 @@ export const useAuthStore = defineStore('auth', () => {
     loginWithEmailCode,
     loginWithAuthResponse,
     logout,
+    updateCurrentUser,
   }
 })

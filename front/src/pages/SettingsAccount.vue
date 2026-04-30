@@ -1,11 +1,8 @@
 <template>
-  <div class="max-w-2xl mx-auto space-y-6">
-    <h2 class="text-lg font-semibold">账户与安全</h2>
-
-    <!-- 账户信息 -->
-    <section class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
-      <header class="border-b px-4 py-3 text-sm font-medium dark:border-gray-700">账户信息</header>
-      <div class="p-4 space-y-3 text-sm">
+  <div class="space-y-5">
+    <section>
+      <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-50">账户信息</h2>
+      <div class="mt-3 space-y-3 text-sm">
         <div>
           <label class="block mb-1">账户名</label>
           <input v-model.trim="profile.username" type="text" placeholder="3-20 位字母、数字或下划线"
@@ -26,17 +23,17 @@
         </div>
 
         <div class="pt-2 flex items-center justify-end gap-2">
-          <button class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="reloadProfile">重置</button>
-          <button class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+          <span v-if="profileMessage" :class="['mr-auto text-xs', profileMessageError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ profileMessage }}</span>
+          <button class="rounded-md px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="reloadProfile">重置</button>
+          <button class="rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
                   :disabled="savingProfile" @click="onSaveProfile">{{ savingProfile ? '保存中…' : '保存修改' }}</button>
         </div>
       </div>
     </section>
 
-    <!-- 修改密码 -->
-    <section class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
-      <header class="border-b px-4 py-3 text-sm font-medium dark:border-gray-700">修改密码</header>
-      <div class="p-4 space-y-3 text-sm">
+    <section>
+      <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-50">修改密码</h2>
+      <div class="mt-3 space-y-3 text-sm">
         <div>
           <label class="block mb-1">当前密码</label>
           <input v-model="pwd.current" type="password" autocomplete="current-password" placeholder="请输入当前密码"
@@ -57,8 +54,9 @@
         </div>
 
         <div class="pt-2 flex items-center justify-end gap-2">
-          <button class="rounded px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="resetPwdForm">清空</button>
-          <button class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+          <span v-if="passwordMessage" :class="['mr-auto text-xs', passwordMessageError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ passwordMessage }}</span>
+          <button class="rounded-md px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="resetPwdForm">清空</button>
+          <button class="rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
                   :disabled="savingPassword" @click="onChangePassword">{{ savingPassword ? '修改中…' : '修改密码' }}</button>
         </div>
       </div>
@@ -92,6 +90,10 @@ const origin = reactive<BasicInfoPayload>({ username: '', phone: '', email: '' }
 const errors = reactive<AccountErrors>({ username: '', phone: '', email: '', currentPassword: '', newPassword: '', confirmPassword: '' })
 const savingProfile = ref(false)
 const savingPassword = ref(false)
+const profileMessage = ref('')
+const profileMessageError = ref(false)
+const passwordMessage = ref('')
+const passwordMessageError = ref(false)
 const pwd = reactive<PasswordForm>({ current: '', next: '', confirm: '' })
 
 function getApiErrorMessage(error: unknown): string {
@@ -121,6 +123,24 @@ function clearErrors(): void {
   errors.confirmPassword = ''
 }
 
+function setProfileMessage(message: string, isError = false): void {
+  profileMessage.value = message
+  profileMessageError.value = isError
+  setTimeout(() => {
+    profileMessage.value = ''
+    profileMessageError.value = false
+  }, isError ? 4000 : 3000)
+}
+
+function setPasswordMessage(message: string, isError = false): void {
+  passwordMessage.value = message
+  passwordMessageError.value = isError
+  setTimeout(() => {
+    passwordMessage.value = ''
+    passwordMessageError.value = false
+  }, isError ? 4000 : 3000)
+}
+
 function validateProfile(): boolean {
   clearErrors()
   let ok = true
@@ -135,11 +155,16 @@ async function onSaveProfile(): Promise<void> {
   savingProfile.value = true
   try {
     await updateMyBasicInfo({ username: profile.username, phone: profile.phone, email: profile.email })
+    origin.username = profile.username
+    origin.phone = profile.phone
+    origin.email = profile.email
+    setProfileMessage('保存成功')
   } catch (e: unknown) {
     const msg = getApiErrorMessage(e)
     if (/用户名/.test(msg)) errors.username = '该用户名已被使用'
     if (/邮箱/.test(msg)) errors.email = '该邮箱已被使用'
     if (/手机号/.test(msg)) errors.phone = '该手机号已被使用'
+    setProfileMessage(msg || '保存失败', true)
   } finally {
     savingProfile.value = false
   }
@@ -161,9 +186,11 @@ async function onChangePassword(): Promise<void> {
   try {
     await updateMyPassword({ currentPassword: pwd.current, newPassword: pwd.next })
     resetPwdForm()
+    setPasswordMessage('密码已修改')
   } catch (e: unknown) {
     const msg = getApiErrorMessage(e)
     if (/当前密码/.test(msg) || /不正确/.test(msg)) { errors.currentPassword = '当前密码不正确' }
+    setPasswordMessage(msg || '修改失败', true)
   } finally {
     savingPassword.value = false
   }

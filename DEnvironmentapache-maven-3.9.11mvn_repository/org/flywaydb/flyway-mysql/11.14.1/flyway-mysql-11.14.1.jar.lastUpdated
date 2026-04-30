@@ -1,0 +1,4 @@
+#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.
+#Thu Apr 30 22:01:20 HKT 2026
+@default-central-https\://repo1.maven.org/maven2/.lastUpdated=1777557680825
+https\://repo1.maven.org/maven2/.error=Could not transfer artifact org.flywaydb\:flyway-mysql\:jar\:11.14.1 from/to central (https\://repo1.maven.org/maven2)\: Connect to repo1.maven.org\:443 [repo1.maven.org/198.18.1.16] failed\: Connect timed out

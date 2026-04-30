@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { listSections } from '@/api/sections'
 import { createThread } from '@/api/threads'
 import { uploadImage } from '@/api/uploads'
@@ -21,12 +21,14 @@ interface ThreadCreateForm {
   sectionId: string
   title: string
   content: string
+  tags: string
 }
 
 const form = ref<ThreadCreateForm>({
   sectionId: '',
   title: '',
   content: '',
+  tags: '',
 })
 
 const isUploading = ref(false)
@@ -43,6 +45,7 @@ const { draftHasData, saveDraft, restoreDraft, clearDraft, startAutoSave, stopAu
     sectionId: val?.sectionId || '',
     title: val?.title || '',
     content: val?.content || '',
+    tags: val?.tags || '',
     savedAt: Date.now(),
   }),
   deserialize: (raw) => JSON.parse(raw),
@@ -103,23 +106,41 @@ async function submit(): Promise<void> {
   }
   submitting.value = true
   try {
+    const sectionId = form.value.sectionId
+    const tags = parsedTags.value
     const payload = {
-      sectionId: form.value.sectionId,
+      sectionId,
       title: form.value.title,
-      content: form.value.content
+      content: form.value.content,
+      tags,
     }
-    await createThread(payload)
+    const created = await createThread(payload)
+    try {
+      window.dispatchEvent(new CustomEvent('threads-updated', { detail: { reason: 'created', threadId: created?.id, sectionId, tags } }))
+      window.dispatchEvent(new CustomEvent('thread-tags-updated', { detail: { reason: 'created', threadId: created?.id, sectionId, tags } }))
+    } catch (_) {}
     success.value = '发布成功'
     // 发布成功后清除草稿
     clearDraft()
     // 成功后重置所有输入：分区、标题、内容
-    form.value = { sectionId: '', title: '', content: '' }
+    form.value = { sectionId: '', title: '', content: '', tags: '' }
   } catch (e: any) {
     const msg = e?.response?.data?.message || e?.message || '发布失败，请稍后重试'
     error.value = msg
   } finally {
     submitting.value = false
   }
+}
+
+const parsedTags = computed(() => parseTags(form.value.tags))
+
+function parseTags(raw: string): string[] {
+  return String(raw || '')
+    .split(/[,，、\s]+/)
+    .map((tag) => tag.trim().replace(/^#+/, ''))
+    .filter(Boolean)
+    .filter((tag, index, arr) => arr.findIndex((item) => item.toLowerCase() === tag.toLowerCase()) === index)
+    .slice(0, 5)
 }
 
 // 手动按钮：在页面上给予提示，但逻辑已由 composable 处理
@@ -187,6 +208,21 @@ onUnmounted(() => {
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">标题</label>
           <input v-model="form.title" type="text" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="请输入标题" />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">标签</label>
+          <input
+            v-model="form.tags"
+            type="text"
+            class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            placeholder="用空格或逗号分隔，最多 5 个"
+          />
+          <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
+            <span v-for="tag in parsedTags" :key="tag" class="rounded-md bg-brandDay-50 px-2.5 py-1 text-xs font-medium text-brandDay-600 dark:bg-brandNight-900/30 dark:text-brandNight-300">
+              #{{ tag }}
+            </span>
+          </div>
         </div>
 
         <div>

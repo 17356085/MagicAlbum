@@ -1,90 +1,25 @@
 <template>
   <header class="fixed top-0 left-0 right-0 z-50 border-b border-gray-200 bg-white/90 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90 text-gray-800 dark:text-gray-200 motion-safe:transition-colors motion-safe:transition-opacity motion-safe:duration-300 motion-reduce:transition-none">
     <div class="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <router-link to="/discover" class="inline-flex items-center hover:opacity-90" aria-label="返回发现">
-          <IconMagicalbum aria-label="Magicalbum Logo" />
-        </router-link>
-        <router-link to="/discover" class="text-lg font-semibold tracking-wide hover:opacity-90 text-gray-800 dark:text-gray-100">MagicAlbum</router-link>
-        <span class="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-600">beta</span>
-      </div>
-      <div class="hidden md:flex md:flex-1 md:mx-6 items-center gap-3">
-        <div class="inline-flex rounded-md border border-gray-300 bg-white p-0.5 text-xs dark:bg-gray-800 dark:border-gray-700">
-          <button
-            class="rounded px-4 py-1 whitespace-nowrap"
-            :class="searchType === 'threads' ? 'bg-brand-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
-            @click="searchType = 'threads'"
-          >搜帖子</button>
-          <button
-            class="rounded px-4 py-1 whitespace-nowrap"
-            :class="searchType === 'users' ? 'bg-brand-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
-            @click="searchType = 'users'"
-          >搜用户</button>
-        </div>
-        <div class="relative flex-1">
-          <input
-            v-model="searchQuery"
-            type="text"
-            :placeholder="searchType === 'users' ? '搜索用户名/昵称' : '搜索帖子标题或内容'"
-            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 pr-10 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
-            @keydown="onInputKeydown"
-            @focus="onInputFocus"
-            @blur="onInputBlur"
-          />
-          <!-- 搜索图标按钮：与输入框一体化，右侧绝对定位 -->
-          <button
-            class="absolute right-1 top-1/2 -translate-y-1/2 rounded bg-brandDay-600 dark:bg-brandNight-600 p-2 text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-colors motion-safe:transition-transform motion-safe:duration-150 active:scale-95 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
-            @click="doSearch"
-            aria-label="搜索"
-            title="搜索"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
-              <path fill-rule="evenodd" d="M12.9 14.32a8 8 0 111.41-1.41l4.39 4.39a1 1 0 01-1.42 1.42l-4.38-4.4zM14 8a6 6 0 11-12 0 6 6 0 0112 0z" clip-rule="evenodd"/>
-            </svg>
-            <span class="sr-only">搜索</span>
-          </button>
-          <div
-            v-if="searchType === 'users' && suggestOpen && (searchQuery || '').trim()"
-            class="absolute z-50 mt-2 w-full rounded-md border border-gray-200 bg-white shadow dark:bg-gray-800 dark:border-gray-700"
-          >
-            <div class="border-b px-3 py-2 text-xs font-medium dark:border-gray-700">匹配的用户</div>
-            <div v-if="suggestLoading" class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">加载中...</div>
-            <div v-else-if="suggestError" class="px-3 py-2 text-xs text-red-600">{{ suggestError }}</div>
-            <ul v-else class="p-1 text-sm max-h-64 overflow-auto">
-              <li v-if="!suggestions.length" class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">无匹配</li>
-              <li
-                v-for="(u, idx) in visibleSuggestions.slice(0, 5)"
-                :key="u.id"
-                @mousemove="activeIndex = idx"
-              >
-                <router-link
-                  :to="'/users/' + u.id"
-                  class="flex items-center justify-between rounded px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-700"
-                  :class="activeIndex === idx ? 'bg-brand-50 dark:bg-brand-900/30' : ''"
-                  @click="suggestOpen = false"
-                >
-                  <div class="flex items-center gap-2 min-w-0">
-                    <template v-if="suggestProfiles[u.id]?.avatarUrl">
-                      <img :src="normalizeImageUrl(suggestProfiles[u.id].avatarUrl)" alt="avatar" class="w-6 h-6 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                    </template>
-                    <template v-else>
-                      <div class="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[10px] font-medium">
-                        {{ String((suggestProfiles[u.id]?.nickname || u.username || 'U')).slice(0,1).toUpperCase() }}
-                      </div>
-                    </template>
-                    <div class="truncate">
-                      <span class="font-medium" v-html="renderHighlightedTextHtml(suggestProfiles[u.id]?.nickname || u.username, searchQuery)"></span>
-                      <span v-if="suggestProfiles[u.id]?.nickname" class="ml-2 text-xs text-gray-500 dark:text-gray-400">{{ u.username }}</span>
-                    </div>
-                  </div>
-                  <span class="text-xs text-gray-400">#{{ u.id }}</span>
-                </router-link>
-              </li>
-            </ul>
-          </div>
-        </div>
-        
-      </div>
+      <BrandBar />
+      <SearchBox
+        :search-type="searchType"
+        :search-query="searchQuery"
+        :suggest-open="suggestOpen"
+        :suggest-loading="suggestLoading"
+        :suggest-error="suggestError"
+        :visible-suggestions="visibleSuggestions"
+        :suggest-profiles="suggestProfiles"
+        :active-index="activeIndex"
+        @update:search-type="searchType = $event"
+        @update:search-query="searchQuery = $event"
+        @update:active-index="activeIndex = $event"
+        @search="doSearch"
+        @input-keydown="onInputKeydown"
+        @input-focus="onInputFocus"
+        @input-blur="onInputBlur"
+        @close-suggest="suggestOpen = false"
+      />
       <nav class="flex items-center gap-2 text-sm">
         <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" @click="toggleTheme" :title="themeLabel">
           <span v-if="isDark">🌙</span><span v-else>☀️</span>
@@ -97,54 +32,55 @@
           </svg>
           <span class="sr-only">发帖</span>
         </router-link>
-        <!-- 通知：铃铛图标（占位按钮，后续接入通知功能） -->
-        <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" aria-label="通知" title="通知">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
-            <path d="M12 3a6 6 0 00-6 6v3.5l-1.5 2.5h15L18 12.5V9a6 6 0 00-6-6z" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M10 19a2 2 0 004 0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span class="sr-only">通知</span>
-        </button>
-        <template v-if="!isLoggedIn">
-          <button
-            class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center"
-            @click="showLogin = true"
-            aria-label="登录"
-            title="登录"
-          >
+        <div class="relative">
+          <button class="relative inline-flex items-center rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700" aria-label="通知" title="通知" @click="toggleNotifications">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
-              <circle cx="12" cy="8" r="3.25" stroke-width="1.8" />
-              <path d="M5 19.25C5.9 16.55 8.43 15 12 15s6.1 1.55 7 4.25" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M19 8.75h3" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M20.5 7.25v3" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M12 3a6 6 0 00-6 6v3.5l-1.5 2.5h15L18 12.5V9a6 6 0 00-6-6z" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M10 19a2 2 0 004 0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-            <span class="sr-only">登录</span>
+            <span v-if="unreadNotificationCount" class="absolute right-1 top-0 min-w-4 rounded-full bg-red-500 px-1 text-[10px] leading-4 text-white">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</span>
+            <span class="sr-only">通知</span>
           </button>
-        </template>
-        <template v-else>
-          <div class="flex items-center gap-2">
-            <router-link :to="user?.id ? ('/users/' + user.id) : '/settings'" class="flex items-center gap-2 hover:opacity-90">
-              <img 
-                :src="avatarUrl ? normalizeImageUrl(avatarUrl) : `https://api.dicebear.com/7.x/initials/svg?seed=${displayName || 'U'}`" 
-                alt="avatar" 
-                class="w-8 h-8 rounded-full object-cover border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700" 
-              />
-              <span class="text-gray-700 dark:text-gray-200">{{ displayName || user?.username }}</span>
-            </router-link>
-            <!-- 登出：电源图标按钮 -->
-            <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" @click="onLogoutClick" aria-label="登出" title="登出">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
-                <path d="M12 4v7.5" stroke-width="1.8" stroke-linecap="round" />
-                <path d="M7.5 6.5a7 7 0 1 0 9 0" fill="none" stroke-width="1.8" stroke-linecap="round" />
-              </svg>
-              <span class="sr-only">登出</span>
-            </button>
+          <div v-if="notificationOpen" class="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-md border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-center justify-between px-3 py-2">
+              <span class="text-sm font-semibold text-gray-900 dark:text-gray-50">通知</span>
+              <router-link class="text-xs text-brandDay-600 hover:underline dark:text-brandNight-300" :to="{ name: 'settings', query: { tab: 'notifications' } }" @click="notificationOpen = false">查看全部</router-link>
+            </div>
+            <div v-if="notificationLoading" class="px-3 py-4 text-xs text-gray-500">正在加载...</div>
+            <div v-else-if="notificationError" class="px-3 py-4 text-xs text-red-600">{{ notificationError }}</div>
+            <ul v-else class="max-h-96 overflow-auto">
+              <li
+                v-for="item in headerNotifications"
+                :key="item.id"
+                class="border-t border-gray-100 px-3 py-2 text-xs dark:border-gray-700"
+                :class="notificationCanNavigate(item) ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/60' : ''"
+                @click="openNotification(item)"
+              >
+                <div class="flex items-start gap-2">
+                  <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="item.read ? 'bg-gray-300 dark:bg-gray-600' : 'bg-brandDay-600 dark:bg-brandNight-400'"></span>
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate font-medium text-gray-900 dark:text-gray-50">{{ item.title || notificationTypeLabel(item.type) }}</div>
+                    <div class="mt-1 max-h-8 overflow-hidden text-gray-600 dark:text-gray-300">{{ item.content }}</div>
+                    <div class="mt-1 text-[11px] text-gray-400">{{ item.createdAt ? formatRelativeTime(item.createdAt) : '' }}</div>
+                  </div>
+                  <div class="flex shrink-0 flex-col gap-1">
+                    <button v-if="notificationCanNavigate(item)" class="rounded border border-brandDay-200 px-2 py-1 text-[11px] text-brandDay-700 hover:bg-brandDay-50 dark:border-brandNight-700 dark:text-brandNight-200 dark:hover:bg-brandNight-900/30" @click.stop="openNotification(item)">查看</button>
+                    <button v-if="!item.read" class="rounded border border-gray-200 px-2 py-1 text-[11px] hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700" @click.stop="setHeaderNotificationRead(item.id)">已读</button>
+                  </div>
+                </div>
+              </li>
+              <li v-if="!headerNotifications.length" class="border-t border-gray-100 px-3 py-5 text-center text-xs text-gray-500 dark:border-gray-700">暂无通知</li>
+            </ul>
           </div>
+        </div>
+        <AuthEntry v-if="!isLoggedIn" @open-login="showLogin = true" />
+        <template v-else>
+          <UserMenu :user="user" :avatar-url="avatarUrl" :display-name="displayName" @logout="onLogoutClick" />
         </template>
       </nav>
     </div>
   </header>
-  <LoginModal v-if="showLogin" @close="showLogin = false" @success="onLoginSuccess" />
+  <AuthModal v-if="showLogin" @close="showLogin = false" @success="onLoginSuccess" />
 
   <!-- 登出确认弹窗 -->
   <div v-if="showLogoutConfirm" class="fixed inset-0 z-50 flex items-center justify-center">
@@ -168,20 +104,23 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
-import LoginModal from './LoginModal.vue'
+import AuthModal from '@/components/auth/AuthModal.vue'
+import AuthEntry from '@/components/header/AuthEntry.vue'
+import BrandBar from '@/components/header/BrandBar.vue'
+import SearchBox from '@/components/header/SearchBox.vue'
+import UserMenu from '@/components/header/UserMenu.vue'
+import { listNotifications, markNotificationRead } from '@/api/notifications'
 import { getMyProfile } from '@/api/settings'
-import IconMagicalbum from '@/components/icons/IconMagicalbum.vue'
 import { suggestUsers, getUserProfile } from '@/api/users'
-import { normalizeImageUrl } from '@/utils/image'
-import { highlightText } from '@/utils/text'
+import { formatRelativeTime } from '@/composables/time'
 import { clearPendingAuthRedirect, getPendingAuthRedirect, setPendingAuthRedirect } from '@/utils/authStorage'
-import type { Id, ProfileUpdatedDetail, User, UserProfile } from '@/types'
+import type { Id, NotificationItem, PageResult, ProfileUpdatedDetail, User, UserProfile } from '@/types'
 
 const showLogin = ref(false)
 const showLogoutConfirm = ref(false)
 const authStore = useAuthStore()
 const { isLoggedIn, user } = storeToRefs(authStore)
-const { logout } = authStore
+const { logout, updateCurrentUser } = authStore
 const router = useRouter()
 const route = useRoute()
 type SearchType = 'threads' | 'users'
@@ -214,8 +153,123 @@ const visibleSuggestions = computed<User[]>(() => {
     return false
   })
 })
+const notificationOpen = ref(false)
+const notificationLoading = ref(false)
+const notificationError = ref('')
+const headerNotifications = ref<NotificationItem[]>([])
+const unreadNotificationCount = ref(0)
+
+function getNotificationItems(data: PageResult<NotificationItem> | NotificationItem[]): NotificationItem[] {
+  return Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : [])
+}
+
+function getNotificationTotal(data: PageResult<NotificationItem> | NotificationItem[]): number {
+  return Array.isArray(data) ? data.length : Number(data?.total || 0)
+}
+
+function notificationTypeLabel(type: string | undefined): string {
+  if (type === 'reply') return '回复通知'
+  if (type === 'mention') return '提及通知'
+  if (type === 'like') return '点赞通知'
+  if (type === 'follow') return '关注通知'
+  if (type === 'system') return '系统通知'
+  return '通知'
+}
+
+async function refreshNotificationBadge(): Promise<void> {
+  if (!isLoggedIn.value) {
+    unreadNotificationCount.value = 0
+    headerNotifications.value = []
+    return
+  }
+  try {
+    const data = await listNotifications({ unread: true, page: 1, size: 1 })
+    unreadNotificationCount.value = getNotificationTotal(data)
+  } catch (_) {}
+}
+
+async function loadHeaderNotifications(): Promise<void> {
+  if (!isLoggedIn.value) {
+    headerNotifications.value = []
+    unreadNotificationCount.value = 0
+    return
+  }
+  notificationLoading.value = true
+  notificationError.value = ''
+  try {
+    const [recent, unread] = await Promise.all([
+      listNotifications({ page: 1, size: 8 }),
+      listNotifications({ unread: true, page: 1, size: 1 }),
+    ])
+    headerNotifications.value = getNotificationItems(recent)
+    unreadNotificationCount.value = getNotificationTotal(unread)
+  } catch (_) {
+    notificationError.value = '通知加载失败'
+  } finally {
+    notificationLoading.value = false
+  }
+}
+
+function toggleNotifications(): void {
+  if (!isLoggedIn.value) {
+    showLogin.value = true
+    return
+  }
+  notificationOpen.value = !notificationOpen.value
+  if (notificationOpen.value) {
+    loadHeaderNotifications().catch(() => {})
+  }
+}
+
+async function setHeaderNotificationRead(id: Id): Promise<void> {
+  try {
+    const updated = await markNotificationRead(id)
+    headerNotifications.value = headerNotifications.value.map(item => (
+      item.id === id ? { ...item, read: true, ...(updated as NotificationItem) } : item
+    ))
+    await refreshNotificationBadge()
+  } catch (_) {
+    notificationError.value = '标记已读失败'
+  }
+}
+
+function notificationCanNavigate(item: NotificationItem): boolean {
+  return Boolean(notificationLink(item))
+}
+
+async function openNotification(item: NotificationItem): Promise<void> {
+  const link = notificationLink(item)
+  if (!link) {
+    return
+  }
+  notificationOpen.value = false
+  if (!item.read) {
+    try {
+      await markNotificationRead(item.id)
+      headerNotifications.value = headerNotifications.value.map((next) => (
+        next.id === item.id ? { ...next, read: true } : next
+      ))
+      refreshNotificationBadge().catch(() => {})
+    } catch (_) {}
+  }
+  await router.push(link)
+}
+
+function notificationLink(item: NotificationItem): string {
+  const directLink = String(item?.link || '').trim()
+  if (directLink) {
+    return directLink
+  }
+  const threadId = item?.threadId || (item?.targetType === 'thread' ? item?.targetId : null)
+  if (!threadId) {
+    return ''
+  }
+  const targetId = item?.targetType === 'post' ? item?.targetId : null
+  return `/threads/${threadId}${targetId ? `#post-${targetId}` : ''}`
+}
 const avatarUrl = ref('')
 const displayName = ref('')
+const profileHydrated = ref(false)
 
 function applyUserIdentity(): void {
   const currentUser = user.value
@@ -226,15 +280,31 @@ function applyUserIdentity(): void {
     ''
 }
 
+function needsProfileHydration(): boolean {
+  if (!isLoggedIn.value) {
+    return false
+  }
+  if (!user.value?.id && !user.value?.userId) return true
+  const currentAvatar = String(user.value.avatarUrl || '').trim()
+  const currentNickname = String(user.value.nickname || '').trim()
+  return !currentAvatar || !currentNickname
+}
+
 async function refreshMyProfile(): Promise<void> {
   if (!isLoggedIn.value) {
     avatarUrl.value = ''
     displayName.value = ''
+    profileHydrated.value = false
     return
   }
 
   // 先用登录态里的用户信息兜底，避免界面短时间回退成默认头像。
   applyUserIdentity()
+
+  if (!needsProfileHydration()) {
+    profileHydrated.value = true
+    return
+  }
 
   try {
     const p = await getMyProfile()
@@ -243,6 +313,16 @@ async function refreshMyProfile(): Promise<void> {
       (p?.nickname && String(p.nickname).trim()) ||
       displayName.value ||
       (user.value?.username || '')
+    if (p?.id || p?.userId || p?.username || p?.avatarUrl || p?.nickname) {
+      updateCurrentUser({
+        id: p?.id || p?.userId || user.value?.id,
+        userId: p?.userId || p?.id || user.value?.userId,
+        username: p?.username || user.value?.username || '',
+        avatarUrl: p?.avatarUrl || user.value?.avatarUrl || '',
+        nickname: p?.nickname || user.value?.nickname || '',
+      })
+    }
+    profileHydrated.value = true
   } catch (_) {}
 }
 
@@ -283,6 +363,12 @@ const onProfileUpdated = (evt: Event): void => {
   const nextNickname = detail?.nickname
   if (typeof nextAvatar === 'string') avatarUrl.value = nextAvatar
   if (typeof nextNickname === 'string') displayName.value = nextNickname || (user.value?.username || '')
+  if (typeof nextAvatar === 'string' || typeof nextNickname === 'string') {
+    updateCurrentUser({
+      avatarUrl: typeof nextAvatar === 'string' ? nextAvatar : (user.value?.avatarUrl || ''),
+      nickname: typeof nextNickname === 'string' ? nextNickname : (user.value?.nickname || ''),
+    })
+  }
 }
 
 const onOpenLoginModal = (): void => {
@@ -291,9 +377,15 @@ const onOpenLoginModal = (): void => {
 
 onMounted((): void => {
   initTheme()
-  refreshMyProfile().catch(() => {})
+  applyUserIdentity()
+  if (needsProfileHydration()) {
+    refreshMyProfile().catch(() => {})
+  } else {
+    profileHydrated.value = true
+  }
   window.addEventListener('profile-updated', onProfileUpdated)
   window.addEventListener('open-login-modal', onOpenLoginModal)
+  refreshNotificationBadge().catch(() => {})
   if (!isLoggedIn.value && route.query.login === '1') {
     showLogin.value = true
     try {
@@ -312,7 +404,11 @@ onUnmounted(() => {
 })
 
 function onLoginSuccess(): void {
-  refreshMyProfile().catch(() => {})
+  applyUserIdentity()
+  profileHydrated.value = false
+  if (needsProfileHydration()) {
+    refreshMyProfile().catch(() => {})
+  }
   const redirect = getPendingAuthRedirect()
   if (redirect) {
     clearPendingAuthRedirect()
@@ -321,16 +417,37 @@ function onLoginSuccess(): void {
 }
 
 watch(
-  () => [isLoggedIn.value, user.value?.id, user.value?.avatarUrl, user.value?.nickname, user.value?.username] as const,
-  ([loggedIn]) => {
+  () => [isLoggedIn.value, user.value?.id] as const,
+  ([loggedIn, userId], previousValue) => {
+    const previousUserId = previousValue?.[1]
+    if (userId !== previousUserId) {
+      profileHydrated.value = false
+    }
     if (!loggedIn) {
       avatarUrl.value = ''
       displayName.value = ''
+      profileHydrated.value = false
+      notificationOpen.value = false
+      headerNotifications.value = []
+      unreadNotificationCount.value = 0
       return
     }
-    refreshMyProfile().catch(() => {})
+    applyUserIdentity()
+    if (!profileHydrated.value && needsProfileHydration()) {
+      refreshMyProfile().catch(() => {})
+      return
+    }
+    profileHydrated.value = true
+    refreshNotificationBadge().catch(() => {})
   },
   { immediate: true }
+)
+
+watch(
+  () => route.fullPath,
+  () => {
+    notificationOpen.value = false
+  },
 )
 
 function onCreateThreadClick(event: MouseEvent): void {
@@ -361,6 +478,7 @@ function confirmLogout(): void {
   // 清理本地显示名与头像，避免残留
   avatarUrl.value = ''
   displayName.value = ''
+  profileHydrated.value = false
 }
 
 function doSearch(): void {
@@ -456,10 +574,6 @@ function onInputKeydown(e: KeyboardEvent): void {
   } else if (key === 'Escape') {
     suggestOpen.value = false
   }
-}
-
-function renderHighlightedTextHtml(text: string | null | undefined, keyword: string | null | undefined): string {
-  return highlightText(text, keyword)
 }
 
 async function prefetchSuggestionProfiles(ids: Id[]): Promise<void> {

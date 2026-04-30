@@ -1,5 +1,5 @@
 import api from './client'
-import type { Id, NotificationItem, NotificationSettings, PageResult } from '@/types'
+import type { Id, NotificationItem, PageResult } from '@/types'
 
 interface ListNotificationsQuery {
   type?: string
@@ -25,15 +25,5 @@ export async function listNotifications({
 
 export async function markNotificationRead(id: Id): Promise<NotificationItem | { success?: boolean; id?: Id }> {
   const { data } = await api.patch(`/notifications/${id}/read`)
-  return data
-}
-
-export async function getNotificationSettings(): Promise<NotificationSettings> {
-  const { data } = await api.get('/notifications/settings')
-  return data
-}
-
-export async function updateNotificationSettings(payload: NotificationSettings): Promise<NotificationSettings> {
-  const { data } = await api.patch('/notifications/settings', payload)
   return data
 }

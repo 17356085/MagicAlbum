@@ -6,6 +6,7 @@ import type {
   RegisterUserPayload,
   Thread,
   User,
+  UserFollowStatus,
   UserProfile,
 } from '@/types'
 
@@ -22,6 +23,11 @@ interface ListUserThreadsQuery {
   q?: string
   sectionId?: Id
   sort?: string
+  page?: number
+  size?: number
+}
+
+interface ListUserRelationsQuery {
   page?: number
   size?: number
 }
@@ -128,15 +134,19 @@ export async function getCurrentUser(): Promise<User | null> {
       email: 'mock@example.com',
     }
   }
-  const candidates = ['/users/me', '/auth/me', '/users/profile', '/users/current']
+  const candidates = ['/users/me', '/users/me/basic']
   for (const path of candidates) {
     try {
       const { data } = await api.get(path)
       const root = (data ?? null) as Record<string, unknown> | null
       const payload = (root?.data ?? root?.result ?? root ?? null) as Record<string, unknown> | null
       const user = (payload?.user ?? payload?.profile ?? payload?.userInfo ?? payload ?? null) as User | null
-      if (user && typeof user === 'object') return user
-    } catch (e) {
+      if (user && typeof user === 'object' && (user.id || user.userId)) return user
+    } catch (e: any) {
+      const status = Number(e?.response?.status || 0)
+      if (status === 401 || status === 403) {
+        return null
+      }
       // 继续尝试下一个候选路径
     }
   }
@@ -147,6 +157,55 @@ export async function getCurrentUser(): Promise<User | null> {
 export async function getUserProfile(id: Id): Promise<UserProfile & Partial<User>> {
   const { data } = await api.get(`/users/${id}/profile`)
   return data
+}
+
+export async function followUser(id: Id): Promise<UserFollowStatus> {
+  const { data } = await api.post(`/users/${id}/follow`)
+  return data
+}
+
+export async function unfollowUser(id: Id): Promise<UserFollowStatus> {
+  const { data } = await api.delete(`/users/${id}/follow`)
+  return data
+}
+
+export async function getUserFollowStatus(id: Id): Promise<UserFollowStatus> {
+  const { data } = await api.get(`/users/${id}/follow-status`)
+  return data
+}
+
+export async function listUserFollowing(
+  id: Id,
+  { page = 1, size = 10 }: ListUserRelationsQuery = {},
+): Promise<PageResult<User>> {
+  const { data } = await api.get(`/users/${id}/following`, { params: { page, size } })
+  if (Array.isArray(data)) {
+    return { items: data, page, size, total: data.length }
+  }
+  const items = Array.isArray(data?.items) ? data.items : []
+  return {
+    items,
+    page: Number(data?.page ?? page),
+    size: Number(data?.size ?? size),
+    total: Number(data?.total ?? items.length),
+  }
+}
+
+export async function listUserFollowers(
+  id: Id,
+  { page = 1, size = 10 }: ListUserRelationsQuery = {},
+): Promise<PageResult<User>> {
+  const { data } = await api.get(`/users/${id}/followers`, { params: { page, size } })
+  if (Array.isArray(data)) {
+    return { items: data, page, size, total: data.length }
+  }
+  const items = Array.isArray(data?.items) ? data.items : []
+  return {
+    items,
+    page: Number(data?.page ?? page),
+    size: Number(data?.size ?? size),
+    total: Number(data?.total ?? items.length),
+  }
 }
 
 // 列出指定用户的主题帖（公开接口），分页与默认每页10条

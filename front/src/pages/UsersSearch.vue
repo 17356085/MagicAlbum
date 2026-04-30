@@ -15,6 +15,8 @@ const page = ref(1)
 const size = ref(20)
 const total = ref(0)
 const q = ref('')
+const inputPage = ref('1')
+const totalPages = computed(() => Math.max(1, Math.ceil((Number(total.value) || 0) / (Number(size.value) || 20))))
 
 async function load() {
   loading.value = true
@@ -48,8 +50,7 @@ const filteredItems = computed(() => {
 })
 
 function setPage(p: number) {
-  const totalPages = Math.max(1, Math.ceil((Number(total.value) || 0) / (Number(size.value) || 20)))
-  const next = Math.min(Math.max(1, p), totalPages)
+  const next = Math.min(Math.max(1, p), totalPages.value)
   page.value = next
   router.push({ name: 'users', query: { ...route.query, page: next } })
 }
@@ -62,12 +63,24 @@ function nextPage() {
   setPage(Number(page.value) + 1)
 }
 
+function goToInputPage(): void {
+  const raw = String(inputPage.value || '').trim()
+  if (!raw || !/^\d+$/.test(raw)) {
+    inputPage.value = String(page.value || 1)
+    return
+  }
+  setPage(Math.min(Math.max(1, Number(raw)), totalPages.value))
+}
+
 onMounted(load)
 watch(() => route.query.page, load)
 watch(() => route.query.q, () => {
   page.value = 1
   load()
 })
+watch(page, (val) => {
+  inputPage.value = String(val || 1)
+}, { immediate: true })
 </script>
 
 <template>
@@ -135,28 +148,33 @@ watch(() => route.query.q, () => {
       </div>
       
       <!-- Pagination -->
-      <div v-if="filteredItems.length > 0" class="mt-8 flex items-center justify-center gap-4">
+      <div v-if="filteredItems.length > 0" class="mt-8 flex items-center justify-between">
+        <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ total }} 条 · 每页 {{ size }} 条</div>
+        <div class="flex items-center gap-2">
         <button 
-          class="flex items-center gap-1 px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700" 
+          class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
           :disabled="page<=1" 
           @click="prevPage"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-          </svg>
           上一页
         </button>
-        <span class="text-sm text-gray-600 dark:text-gray-400">第 {{ page }} 页</span>
+        <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
+        <input
+          v-model="inputPage"
+          class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
+          inputmode="numeric"
+          @keyup.enter="goToInputPage"
+          @blur="goToInputPage"
+        />
+        <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
         <button 
-          class="flex items-center gap-1 px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700" 
-          :disabled="(page*size)>=total" 
+          class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
+          :disabled="page >= totalPages"
           @click="nextPage"
         >
           下一页
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-          </svg>
         </button>
+        </div>
       </div>
     </div>
   </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { listMyPosts, deletePost } from '@/api/my'
 import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
@@ -46,6 +46,7 @@ const sections = ref<Section[]>([])
 const showDeleteConfirm = ref(false)
 const deleting = ref(false)
 const pendingDeleteId = ref<Id | null>(null)
+const inputPage = ref('1')
 
 async function load(): Promise<void> {
   loading.value = true
@@ -121,6 +122,36 @@ function nextPage(): void {
   if (loading.value) return
   setPage((query.value.page || 1) + 1)
 }
+
+function goToInputPage(): void {
+  const raw = String(inputPage.value || '').trim()
+  if (!raw || !/^\d+$/.test(raw)) {
+    inputPage.value = String(query.value.page || 1)
+    return
+  }
+  setPage(Math.min(Math.max(1, Number(raw)), totalPages.value))
+}
+
+watch(() => query.value.page, (val) => {
+  inputPage.value = String(val || 1)
+}, { immediate: true })
+
+function excerpt(item: MyPostItem): string {
+  const text = String(item.content || item.contentMd || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[#>*_`~\-\[\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return '暂无评论内容'
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text
+}
+
+function contextLink(item: MyPostItem): string {
+  return `/threads/${item.threadId}#post-${item.id}`
+}
 </script>
 
 <template>
@@ -155,25 +186,47 @@ function nextPage(): void {
 
     <div v-if="loading" class="py-8 text-center text-sm text-gray-500">正在加载...</div>
     <div v-else-if="error" class="py-8 text-center text-sm text-red-500">{{ error }}</div>
+    <div v-else-if="(list.items || []).length === 0" class="rounded-lg border border-dashed border-gray-200 py-10 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+      暂无评论
+    </div>
     <ul v-else class="space-y-3">
-      <li v-for="item in (list.items||[])" :key="item.id" class="group rounded-lg border border-gray-100 bg-white p-4 transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700">
-        <div class="flex items-start justify-between gap-4">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-2">
-               <router-link :to="'/threads/' + item.threadId + '#post-' + item.id" class="text-sm font-medium text-gray-800 group-hover:text-brandDay-600 dark:text-gray-200 dark:group-hover:text-brandNight-400 transition-colors line-clamp-1">
-                 RE: {{ item.threadTitle || ('#' + item.threadId) }}
-               </router-link>
-            </div>
-            
-            <div class="text-sm text-gray-600 dark:text-gray-300 leading-relaxed break-words whitespace-pre-wrap line-clamp-3 mb-2">{{ item.content }}</div>
-
-            <div class="flex items-center gap-3 text-xs text-gray-400">
-               <span>{{ formatRelativeTime(item.createdAt) }}</span>
-               <span v-if="item.updatedAt && item.updatedAt !== item.createdAt">编辑于 {{ formatRelativeTime(item.updatedAt) }}</span>
-            </div>
+      <li v-for="item in (list.items||[])" :key="item.id" class="group overflow-hidden rounded-lg border border-gray-100 bg-white transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700">
+        <div class="p-4">
+          <div class="mb-2 flex flex-wrap items-center gap-2">
+            <span v-if="item.sectionName || item.sectionId" class="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+              {{ item.sectionName || ('#' + item.sectionId) }}
+            </span>
+            <span class="text-xs text-gray-400">发布 {{ formatRelativeTime(item.createdAt) }}</span>
+            <span v-if="item.updatedAt && item.updatedAt !== item.createdAt" class="text-xs text-gray-400">编辑 {{ formatRelativeTime(item.updatedAt) }}</span>
           </div>
-          <div class="flex flex-col gap-2 shrink-0">
-            <button class="rounded px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 transition-colors" @click="askRemove(item.id)">删除</button>
+
+          <router-link :to="contextLink(item)" class="block">
+            <h3 class="line-clamp-1 text-sm font-semibold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400">
+              RE: {{ item.threadTitle || ('#' + item.threadId) }}
+            </h3>
+          </router-link>
+
+          <p class="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-gray-600 dark:text-gray-300">
+            {{ excerpt(item) }}
+          </p>
+
+          <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+            <span v-if="item.replyToPostId">回复 #{{ item.replyToPostId }}</span>
+            <span v-if="item.parentAuthorNickname || item.parentAuthorUsername">回复 @{{ item.parentAuthorNickname || item.parentAuthorUsername }}</span>
+            <span>点赞 {{ Number(item.likeCount || 0) }}</span>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/70 px-4 py-2 dark:border-gray-700 dark:bg-gray-900/20">
+          <div class="text-xs text-gray-400">ID: {{ item.id }}</div>
+          <div class="flex items-center gap-2">
+            <router-link :to="contextLink(item)" class="rounded-md px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-white hover:text-brandDay-700 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-brandNight-300">
+              查看上下文
+            </router-link>
+            <router-link :to="'/threads/' + item.threadId" class="rounded-md px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-white hover:text-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100">
+              查看帖子
+            </router-link>
+            <button class="rounded-md px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 transition-colors" @click="askRemove(item.id)">删除</button>
           </div>
         </div>
       </li>
@@ -181,16 +234,24 @@ function nextPage(): void {
 
     <!-- 分页控件 -->
     <div class="mt-6 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-gray-700">
-      <div class="text-xs text-gray-500">共 {{ list.total || 0 }} 条</div>
+      <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ list.total || 0 }} 条 · 每页 {{ query.size }} 条</div>
       <div class="flex items-center gap-2">
         <button
-          class="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50 disabled:hover:bg-white dark:border-gray-600 dark:hover:bg-gray-700"
+          class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
           :disabled="loading || (query.page || 1) <= 1"
           @click="prevPage"
         >上一页</button>
-        <span class="text-xs text-gray-600 dark:text-gray-300">{{ query.page || 1 }} / {{ totalPages }}</span>
+        <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
+        <input
+          v-model="inputPage"
+          class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
+          inputmode="numeric"
+          @keyup.enter="goToInputPage"
+          @blur="goToInputPage"
+        />
+        <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
         <button
-          class="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50 disabled:hover:bg-white dark:border-gray-600 dark:hover:bg-gray-700"
+          class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
           :disabled="loading || (query.page || 1) >= totalPages"
           @click="nextPage"
         >下一页</button>

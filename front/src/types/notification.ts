@@ -9,8 +9,10 @@ export interface NotificationItem {
   createdAt?: string
   actorName?: string
   actorId?: Id
+  threadId?: Id
   targetId?: Id
   targetType?: string
+  link?: string
 }
 
 export interface NotificationInAppSettings {

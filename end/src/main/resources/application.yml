@@ -6,6 +6,12 @@ spring:
     import: optional:classpath:application-secrets.yml,optional:file:.env.local[.properties],optional:file:end/.env.local[.properties]
   application:
     name: MagicAlbum
+  cloud:
+    nacos:
+      config:
+        enabled: false
+      discovery:
+        enabled: false
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:mysql} # 本地默认走 mysql；可通过环境变量切换为 local 或 postgres
   jackson:
@@ -22,6 +28,12 @@ spring:
     url: jdbc:postgresql://localhost:5432/MagicAlbum
     username: MagicAlbum
     password: MagicAlbum
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT_MS:2000ms}
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -87,6 +99,10 @@ app:
       send-cooldown-seconds: ${COGNITO_SEND_COOLDOWN_SECONDS:60}
   rabbit:
     enabled: true
+  notifications:
+    client:
+      enabled: ${APP_NOTIFICATIONS_CLIENT_ENABLED:true}
+      base-url: ${NOTIFICATION_SERVICE_BASE_URL:http://localhost:8081}
   security:
     jwt:
       issuer: MagicAlbum

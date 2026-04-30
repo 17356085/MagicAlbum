@@ -60,7 +60,7 @@ class ThreadsControllerWebMvcTest {
         dto.setTitle("T1");
         dto.setCreatedAt(Instant.parse("2025-01-01T00:00:01Z"));
 
-        when(threadService.list(eq(null), eq(null), eq(1), eq(10)))
+        when(threadService.list(eq(null), eq(null), eq(null), eq(1), eq(10)))
                 .thenReturn(new PageImpl<>(List.of(dto), PageRequest.of(0, 10), 1));
 
         mockMvc.perform(get("/api/v1/threads").param("page", "1").param("size", "10"))

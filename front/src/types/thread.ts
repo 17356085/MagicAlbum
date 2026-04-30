@@ -18,16 +18,27 @@ export interface Thread {
   replyCount?: number
   viewCount?: number
   likeCount?: number
+  hotScore?: number
+  liked?: boolean
+  tags?: string[]
 }
 
 export interface CreateThreadPayload {
   sectionId: Id
   title: string
   content: string
+  tags?: string[]
 }
 
 export interface UpdateThreadPayload {
   title?: string
   content?: string
   sectionId?: Id
+  tags?: string[]
+}
+
+export interface ThreadLikeState {
+  threadId: Id
+  liked: boolean
+  likeCount: number
 }

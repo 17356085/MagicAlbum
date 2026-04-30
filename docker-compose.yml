@@ -63,6 +63,28 @@ services:
       timeout: 5s
       retries: 5
 
+  nacos:
+    image: nacos/nacos-server:v3.1.1
+    container_name: MagicAlbum-nacos
+    environment:
+      MODE: standalone
+      NACOS_AUTH_TOKEN: "Qmx1ZUFsYnVtTG9jYWxEZXZPbmx5TmFjb3NUb2tlbl9DaGFuZ2VJblByb2R1Y3Rpb24="
+      NACOS_AUTH_IDENTITY_KEY: "bluealbum-nacos-identity"
+      NACOS_AUTH_IDENTITY_VALUE: "bluealbum-local-dev"
+      JVM_XMS: 512m
+      JVM_XMX: 512m
+      JVM_XMN: 256m
+    ports:
+      - "18080:8080"
+      - "8848:8848"
+      - "9848:9848"
+      - "9849:9849"
+    volumes:
+      - nacosdata:/home/nacos/data
+      - nacoslogs:/home/nacos/logs
+
 volumes:
   pgdata:
   mysqldata:
+  nacosdata:
+  nacoslogs:

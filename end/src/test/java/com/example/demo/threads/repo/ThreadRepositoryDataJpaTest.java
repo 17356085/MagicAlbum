@@ -2,8 +2,11 @@ package com.example.demo.threads.repo;
 
 import com.example.demo.sections.entity.Section;
 import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.posts.entity.Post;
 import com.example.demo.threads.dto.ThreadQueryView;
+import com.example.demo.threads.dto.ThreadRankingView;
 import com.example.demo.threads.entity.Thread;
+import com.example.demo.threads.entity.ThreadLike;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserRepository;
@@ -42,6 +45,8 @@ class ThreadRepositoryDataJpaTest {
 
     @BeforeEach
     void cleanup() {
+        entityManager.createQuery("DELETE FROM ThreadLike").executeUpdate();
+        entityManager.createQuery("DELETE FROM Post").executeUpdate();
         threadRepository.deleteAll();
         entityManager.createQuery("DELETE FROM UserProfile").executeUpdate();
         userRepository.deleteAll();
@@ -112,6 +117,48 @@ class ThreadRepositoryDataJpaTest {
         assertThat(page.getContent().get(0).getTitle()).isEqualTo("Hello Java");
     }
 
+    @Test
+    void rankingView_should_order_by_reply_and_like_weight() {
+        Section section = new Section();
+        section.setName("Tech Ranking");
+        section.setSlug("tech-ranking");
+        section = sectionRepository.save(section);
+
+        User user = new User();
+        user.setUsername("carol");
+        user.setEmail("carol@example.com");
+        user.setPhone("13000000002");
+        user.setPasswordHash("hash");
+        user = userRepository.save(user);
+
+        User liker = new User();
+        liker.setUsername("dan");
+        liker.setEmail("dan@example.com");
+        liker.setPhone("13000000003");
+        liker.setPasswordHash("hash");
+        liker = userRepository.save(liker);
+
+        Thread replyHeavy = thread(section.getId(), user.getId(), "Reply heavy", "a", "NORMAL", "2025-01-01T00:00:00Z");
+        replyHeavy = threadRepository.save(replyHeavy);
+        Thread likeHeavy = thread(section.getId(), user.getId(), "Like heavy", "b", "NORMAL", "2025-01-02T00:00:00Z");
+        likeHeavy = threadRepository.save(likeHeavy);
+
+        entityManager.persist(post(replyHeavy.getId(), user.getId(), "reply 1"));
+        entityManager.persist(post(replyHeavy.getId(), user.getId(), "reply 2"));
+        entityManager.persist(like(likeHeavy.getId(), liker.getId()));
+        entityManager.flush();
+
+        Page<ThreadRankingView> page = threadRepository.rankingView(section.getId(), PageRequest.of(0, 10));
+
+        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getContent().get(0).getTitle()).isEqualTo("Reply heavy");
+        assertThat(page.getContent().get(0).getReplyCount()).isEqualTo(2);
+        assertThat(page.getContent().get(0).getLikeCount()).isEqualTo(0);
+        assertThat(page.getContent().get(0).getHotScore()).isEqualTo(4);
+        assertThat(page.getContent().get(1).getTitle()).isEqualTo("Like heavy");
+        assertThat(page.getContent().get(1).getHotScore()).isEqualTo(3);
+    }
+
     private Thread thread(Long sectionId, Long authorId, String title, String content, String status, String createdAt) {
         Thread thread = new Thread();
         thread.setSectionId(sectionId);
@@ -122,5 +169,21 @@ class ThreadRepositoryDataJpaTest {
         thread.setCreatedAt(Instant.parse(createdAt));
         thread.setUpdatedAt(Instant.parse(createdAt));
         return thread;
+    }
+
+    private Post post(Long threadId, Long authorId, String content) {
+        Post post = new Post();
+        post.setThreadId(threadId);
+        post.setAuthorId(authorId);
+        post.setContentMd(content);
+        post.setStatus("NORMAL");
+        return post;
+    }
+
+    private ThreadLike like(Long threadId, Long userId) {
+        ThreadLike like = new ThreadLike();
+        like.setThreadId(threadId);
+        like.setUserId(userId);
+        return like;
     }
 }

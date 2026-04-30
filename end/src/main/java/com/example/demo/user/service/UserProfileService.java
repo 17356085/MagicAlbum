@@ -5,6 +5,7 @@ import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserRepository;
 import com.example.demo.user.repo.UserProfileRepository;
+import com.example.demo.user.repo.UserFollowRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -19,18 +20,27 @@ import java.util.Map;
 public class UserProfileService {
     private final UserRepository userRepository;
     private final UserProfileRepository profileRepository;
+    private final UserFollowRepository followRepository;
 
-    public UserProfileService(UserRepository userRepository, UserProfileRepository profileRepository) {
+    public UserProfileService(UserRepository userRepository, UserProfileRepository profileRepository,
+                              UserFollowRepository followRepository) {
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
+        this.followRepository = followRepository;
     }
 
     public ProfileDto getProfile(Long userId) {
+        return getProfile(userId, null);
+    }
+
+    public ProfileDto getProfile(Long userId, Long viewerId) {
         User u = userRepository.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
         UserProfile up = profileRepository.findById(userId).orElse(null);
+        ProfileDto dto;
         if (up != null) {
-            ProfileDto dto = new ProfileDto();
+            dto = new ProfileDto();
+            dto.setId(u.getId());
             dto.setNickname(nullToEmpty(up.getNickname()));
             dto.setAvatarUrl(nullToEmpty(up.getAvatarUrl()));
             dto.setBio(nullToEmpty(up.getBio()));
@@ -38,17 +48,19 @@ public class UserProfileService {
             dto.setLocation(nullToEmpty(up.getLocation()));
             dto.setLinks(sanitizeLinks(up.getLinks()));
             dto.setUsername(nullToEmpty(u.getUsername()));
-            return dto;
+        } else {
+            dto = new ProfileDto();
+            dto.setId(u.getId());
+            dto.setUsername(nullToEmpty(u.getUsername()));
+            dto.setNickname(nullToEmpty(u.getUsername()));
+            dto.setAvatarUrl("");
+            dto.setBio("");
+            dto.setHomepageUrl("");
+            dto.setLocation("");
+            dto.setLinks(List.of());
         }
-        ProfileDto p = new ProfileDto();
-        p.setUsername(nullToEmpty(u.getUsername()));
-        p.setNickname(nullToEmpty(u.getUsername()));
-        p.setAvatarUrl("");
-        p.setBio("");
-        p.setHomepageUrl("");
-        p.setLocation("");
-        p.setLinks(List.of());
-        return p;
+        enrichFollowState(dto, userId, viewerId);
+        return dto;
     }
 
     public Map<Long, ProfileDto> getProfiles(Collection<Long> userIds) {
@@ -71,6 +83,7 @@ public class UserProfileService {
             if (user == null) continue;
             UserProfile profile = profileMap.get(userId);
             ProfileDto dto = new ProfileDto();
+            dto.setId(user.getId());
             dto.setUsername(nullToEmpty(user.getUsername()));
             if (profile != null) {
                 dto.setNickname(nullToEmpty(profile.getNickname()));
@@ -87,6 +100,7 @@ public class UserProfileService {
                 dto.setLocation("");
                 dto.setLinks(List.of());
             }
+            enrichFollowState(dto, userId, null);
             result.put(userId, dto);
         }
         return result;
@@ -106,6 +120,18 @@ public class UserProfileService {
         up.setLinks(sanitizeLinks(p.getLinks()));
         profileRepository.save(up);
         return getProfile(userId);
+    }
+
+    private void enrichFollowState(ProfileDto dto, Long userId, Long viewerId) {
+        dto.setFollowerCount(followRepository.countByFollowingId(userId));
+        dto.setFollowingCount(followRepository.countByFollowerId(userId));
+        if (viewerId == null || viewerId.equals(userId)) {
+            dto.setFollowedByMe(false);
+            dto.setFollowingMe(false);
+            return;
+        }
+        dto.setFollowedByMe(followRepository.existsByFollowerIdAndFollowingId(viewerId, userId));
+        dto.setFollowingMe(followRepository.existsByFollowerIdAndFollowingId(userId, viewerId));
     }
 
     private String nullToEmpty(String s) { return s == null ? "" : s; }

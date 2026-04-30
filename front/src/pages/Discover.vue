@@ -19,6 +19,7 @@ const router = useRouter()
 const sectionId = ref<Id | null>(null)
 const currentSectionName = ref('')
 const q = ref('')
+const tag = ref('')
 // 手动页码输入与校验
 const inputPage = ref('')
 interface DiscoverProfileCache {
@@ -97,11 +98,13 @@ async function load() {
     const sid = sidRaw ? Number(sidRaw) : undefined
     const rp = route.query.page ? Number(getSingleQueryValue(route.query.page)) : 1
     const rq = route.query.q ? getSingleQueryValue(route.query.q) : ''
+    const rt = route.query.tag ? getSingleQueryValue(route.query.tag) : ''
     page.value = isNaN(rp) ? 1 : rp
     inputPage.value = String(page.value || '')
     sectionId.value = sid || null
     q.value = rq
-    const data = await listThreads({ q: rq, page: page.value, size: size.value, sectionId: sid })
+    tag.value = rt
+    const data = await listThreads({ q: rq, tag: rt, page: page.value, size: size.value, sectionId: sid })
     const normalized = normalizeThreadsResult(data)
     const arr = Array.isArray(data) ? data : (normalized.items || [])
     items.value = sortThreadsByCreatedAt(arr)
@@ -143,6 +146,10 @@ watch(() => route.query.page, () => {
   load()
 })
 watch(() => route.query.q, () => {
+  page.value = 1
+  load()
+})
+watch(() => route.query.tag, () => {
   page.value = 1
   load()
 })
@@ -213,8 +220,11 @@ function getAuthorAvatarUrl(thread: Thread): string {
 
 <template>
   <div>
-    <div v-if="sectionId" class="mb-4 text-sm text-gray-600 dark:text-gray-300">当前分区：{{ currentSectionName || ('#' + sectionId) }}</div>
-    <div v-if="q" class="mb-2 text-xs text-gray-600 dark:text-gray-300">搜索关键字：{{ q }}</div>
+    <div v-if="q || tag" class="mb-2 text-xs text-gray-600 dark:text-gray-300">
+      <span v-if="q">搜索关键字：{{ q }}</span>
+      <span v-if="q && tag" class="mx-2 text-gray-400">·</span>
+      <span v-if="tag">标签：#{{ tag }}</span>
+    </div>
     <div v-if="loading" class="text-gray-600 dark:text-gray-300">正在加载...</div>
     <div v-else>
       <div v-if="error" class="text-red-600 mb-3">{{ error }}</div>
@@ -237,6 +247,17 @@ function getAuthorAvatarUrl(thread: Thread): string {
                 <div class="flex-1 min-w-0 w-full">
                   <h2 class="text-lg font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400 line-clamp-2 mb-2.5" v-html="renderTitleMarkdownHtml(t.title)"></h2>
                   <div class="text-sm text-gray-600 line-clamp-3 dark:text-gray-300" v-html="renderPreviewMarkdownHtml(t.content)"></div>
+                  <div v-if="t.tags?.length" class="mt-3 flex flex-wrap gap-2">
+                    <router-link
+                      v-for="tag in t.tags"
+                      :key="tag"
+                      :to="{ name: 'discover', query: { tag, page: 1, sectionId: t.sectionId } }"
+                      class="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 transition-colors hover:bg-brandDay-50 hover:text-brandDay-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-brandNight-900/30 dark:hover:text-brandNight-300"
+                      @click.stop
+                    >
+                      #{{ tag }}
+                    </router-link>
+                  </div>
                   
                   <div class="mt-3 flex items-center gap-3 text-xs text-gray-400">
                     <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="flex items-center gap-1.5 hover:text-gray-600 dark:hover:text-gray-200">

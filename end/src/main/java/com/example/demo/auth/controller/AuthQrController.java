@@ -5,7 +5,7 @@ import com.example.demo.auth.dto.QrLoginConfirmRequest;
 import com.example.demo.auth.dto.QrLoginCreateResponse;
 import com.example.demo.auth.dto.QrLoginScanRequest;
 import com.example.demo.auth.dto.QrLoginStatusResponse;
-import com.example.demo.auth.service.AuthQrService;
+import com.example.demo.auth.service.qr.AuthQrService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

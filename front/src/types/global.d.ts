@@ -26,6 +26,8 @@ declare global {
 
   interface WindowEventMap {
     'auth-state-changed': CustomEvent<{ loggedIn: boolean }>
+    'threads-updated': CustomEvent<{ reason?: 'created' | 'updated' | 'deleted' | string; threadId?: import('./index').Id; sectionId?: import('./index').Id; tags?: string[] }>
+    'thread-tags-updated': CustomEvent<{ reason?: 'created' | 'updated' | string; threadId?: import('./index').Id; sectionId?: import('./index').Id; tags?: string[] }>
     'recent-visits-updated': CustomEvent<void>
     'open-ai-chat': CustomEvent<void>
     'open-login-modal': CustomEvent<{ source?: string }>

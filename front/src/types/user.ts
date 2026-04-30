@@ -33,12 +33,28 @@ export interface User {
 }
 
 export interface UserProfile {
+  id?: Id
+  userId?: Id
+  username?: string
   nickname: string
   bio: string
   homepageUrl: string
   location: string
   links: Array<UserLink | string>
   avatarUrl: string
+  followerCount?: number
+  followingCount?: number
+  followingMe?: boolean
+  followedByMe?: boolean
+}
+
+export interface UserFollowStatus {
+  userId: Id
+  following: boolean
+  followedByMe?: boolean
+  followingMe?: boolean
+  followerCount: number
+  followingCount: number
 }
 
 export interface UserSettings {

@@ -63,6 +63,7 @@ public class SchemaFixer implements CommandLineRunner {
             } else {
                 log.info("Table 'user_connected_accounts' already exists. No action needed.");
             }
+
         } catch (Exception e) {
             log.error("Failed to check or fix schema: " + e.getMessage());
             // Don't fail startup, just log error

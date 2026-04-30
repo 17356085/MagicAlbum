@@ -1,0 +1,5 @@
+#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.
+#Sat Apr 25 15:56:19 HKT 2026
+@default-central-https\://repo1.maven.org/maven2/.lastUpdated=1777103608529
+https\://repo.maven.apache.org/maven2/.lastUpdated=1777103779029
+https\://repo1.maven.org/maven2/.error=Could not transfer artifact org.springframework.boot\:spring-boot-starter-logging\:jar\:4.0.0 from/to central (https\://repo1.maven.org/maven2)\: Connect to repo1.maven.org\:443 [repo1.maven.org/198.18.1.166] failed\: Connect timed out

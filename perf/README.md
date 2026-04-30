@@ -43,6 +43,8 @@ docker compose -f perf/docker-compose.perf.yml up -d --scale api=5
 
 默认脚本：[core.js](file:///d:/Desktop/BlueAlbum/perf/k6/core.js)
 
+并发测试方案：[CONCURRENCY.md](file:///d:/Desktop/BlueAlbum/perf/CONCURRENCY.md)
+
 1× / 2× / 5× 日常流量的推荐做法：
 - 固定业务比例（读多写少），逐级上调 VU 目标或 stage target
 - 每级持续 15min，记录拐点（首次 SLA 超限时刻、资源饱和度）

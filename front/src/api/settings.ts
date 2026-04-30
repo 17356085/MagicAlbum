@@ -1,6 +1,7 @@
 import api from './client'
 import type {
   BasicInfoPayload,
+  NotificationSettings,
   PasswordUpdatePayload,
   User,
   UserProfile,
@@ -23,6 +24,16 @@ export async function getMySettings(): Promise<UserSettings | null> {
 }
 
 export async function updateMySettings(payload: UserSettings): Promise<UserSettings> {
+  const { data } = await api.patch('/users/me/settings', payload)
+  return data
+}
+
+export async function getMyNotificationSettings(): Promise<NotificationSettings> {
+  const { data } = await api.get('/users/me/settings')
+  return data
+}
+
+export async function updateMyNotificationSettings(payload: NotificationSettings): Promise<NotificationSettings> {
   const { data } = await api.patch('/users/me/settings', payload)
   return data
 }

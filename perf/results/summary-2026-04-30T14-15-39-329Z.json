@@ -1,0 +1,472 @@
+{
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [
+      {
+        "checks": [
+          {
+            "passes": 1,
+            "fails": 0,
+            "name": "sections 200",
+            "path": "::setup::sections 200",
+            "id": "74436c8708abdd8dc491cd83b490828f"
+          }
+        ],
+        "name": "setup",
+        "path": "::setup",
+        "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+        "groups": []
+      }
+    ],
+    "checks": [
+      {
+        "name": "login 200",
+        "path": "::login 200",
+        "id": "48b06dc5cde7f6ebb606ad7da726a2a5",
+        "passes": 10,
+        "fails": 0
+      },
+      {
+        "passes": 1518,
+        "fails": 0,
+        "name": "threads 200",
+        "path": "::threads 200",
+        "id": "a5be88852a82f5d65034c6fa1bf4bb1f"
+      },
+      {
+        "name": "thread 200",
+        "path": "::thread 200",
+        "id": "0f473a535c67d1584b1928413ec44297",
+        "passes": 1518,
+        "fails": 0
+      },
+      {
+        "name": "posts 200",
+        "path": "::posts 200",
+        "id": "88ef28a00769ece9a2333a99cc10e5e0",
+        "passes": 1932,
+        "fails": 0
+      },
+      {
+        "name": "thread created",
+        "path": "::thread created",
+        "id": "6b173697d899a564034f51a7dd6a879d",
+        "passes": 414,
+        "fails": 0
+      },
+      {
+        "name": "post created",
+        "path": "::post created",
+        "id": "7d9cba876fa676fab10ef8104406fc4c",
+        "passes": 414,
+        "fails": 0
+      }
+    ]
+  },
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "min",
+      "med",
+      "max",
+      "p(90)",
+      "p(95)"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 86654.512675
+  },
+  "metrics": {
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "min": 0.006622,
+        "med": 0.037457,
+        "max": 1.112762,
+        "p(90)": 0.07459820000000018,
+        "p(95)": 0.0961902,
+        "avg": 0.04332518982353939
+      }
+    },
+    "http_req_waiting": {
+      "contains": "time",
+      "values": {
+        "avg": 21.368464517731724,
+        "min": 0,
+        "med": 9.9806,
+        "max": 2943.436825,
+        "p(90)": 46.68614200000002,
+        "p(95)": 52.7607096
+      },
+      "type": "trend"
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1932,
+        "rate": 22.295434367578938
+      }
+    },
+    "http_reqs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 5837,
+        "rate": 67.35944637865335
+      }
+    },
+    "vus": {
+      "contains": "default",
+      "values": {
+        "value": 2,
+        "min": 0,
+        "max": 10
+      },
+      "type": "gauge"
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 0,
+        "avg": 0,
+        "min": 0,
+        "med": 0,
+        "max": 0,
+        "p(90)": 0
+      }
+    },
+    "http_req_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 0.048378771971903385,
+        "min": 0,
+        "med": 0,
+        "max": 26.003677,
+        "p(90)": 0,
+        "p(95)": 0
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "max": 10,
+        "value": 10,
+        "min": 10
+      }
+    },
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "passes": 5807,
+        "fails": 0,
+        "rate": 1
+      }
+    },
+    "http_req_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 21.89628889018336,
+        "min": 0.899553,
+        "med": 10.510691,
+        "max": 2947.71309,
+        "p(90)": 47.2008824,
+        "p(95)": 53.47938819999999
+      },
+      "thresholds": {
+        "p(99)<=500": {
+          "ok": true
+        },
+        "p(95)<=300": {
+          "ok": true
+        }
+      }
+    },
+    "iteration_duration": {
+      "values": {
+        "avg": 367.73774487946116,
+        "min": 314.811968,
+        "med": 361.622313,
+        "max": 8935.278122,
+        "p(90)": 383.82983740000003,
+        "p(95)": 397.33851899999996
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "values": {
+        "rate": 0.005139626520472846,
+        "passes": 30,
+        "fails": 5807
+      },
+      "thresholds": {
+        "rate<=0.001": {
+          "ok": false
+        }
+      }
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "med": 0.251127,
+        "max": 31.412389,
+        "p(90)": 0.8968170000000008,
+        "p(95)": 1.4646589999999997,
+        "avg": 0.4844991826280602,
+        "min": 0.037249
+      }
+    },
+    "http_req_duration{expected_response:true}": {
+      "contains": "time",
+      "values": {
+        "avg": 21.968471539693528,
+        "min": 0.899553,
+        "med": 10.595769,
+        "max": 2947.71309,
+        "p(90)": 47.22777440000001,
+        "p(95)": 53.547556799999995
+      },
+      "type": "trend"
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 1052191,
+        "rate": 12142.36821048512
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 15267475,
+        "rate": 176187.88137740802
+      }
+    },
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(90)": 0.0083108,
+        "p(95)": 0.010104999999999998,
+        "avg": 0.057666112386499935,
+        "min": 0.001426,
+        "med": 0.005086,
+        "max": 26.245122
+      }
+    }
+  },
+  "setup_data": {
+    "runId": 1777558452666,
+    "sections": [
+      9,
+      5,
+      6,
+      7,
+      8,
+      1,
+      2,
+      3,
+      4
+    ],
+    "users": [
+      {
+        "email": "perf_1777558452666_0@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452666",
+        "username": "perf_1777558452666_0"
+      },
+      {
+        "username": "perf_1777558452666_1",
+        "email": "perf_1777558452666_1@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452667"
+      },
+      {
+        "email": "perf_1777558452666_2@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452668",
+        "username": "perf_1777558452666_2"
+      },
+      {
+        "email": "perf_1777558452666_3@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452669",
+        "username": "perf_1777558452666_3"
+      },
+      {
+        "email": "perf_1777558452666_4@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452670",
+        "username": "perf_1777558452666_4"
+      },
+      {
+        "email": "perf_1777558452666_5@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452671",
+        "username": "perf_1777558452666_5"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452672",
+        "username": "perf_1777558452666_6",
+        "email": "perf_1777558452666_6@example.com"
+      },
+      {
+        "email": "perf_1777558452666_7@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452673",
+        "username": "perf_1777558452666_7"
+      },
+      {
+        "email": "perf_1777558452666_8@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452674",
+        "username": "perf_1777558452666_8"
+      },
+      {
+        "email": "perf_1777558452666_9@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452675",
+        "username": "perf_1777558452666_9"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452676",
+        "username": "perf_1777558452666_10",
+        "email": "perf_1777558452666_10@example.com"
+      },
+      {
+        "email": "perf_1777558452666_11@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452677",
+        "username": "perf_1777558452666_11"
+      },
+      {
+        "email": "perf_1777558452666_12@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452678",
+        "username": "perf_1777558452666_12"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452679",
+        "username": "perf_1777558452666_13",
+        "email": "perf_1777558452666_13@example.com"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452680",
+        "username": "perf_1777558452666_14",
+        "email": "perf_1777558452666_14@example.com"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452681",
+        "username": "perf_1777558452666_15",
+        "email": "perf_1777558452666_15@example.com"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452682",
+        "username": "perf_1777558452666_16",
+        "email": "perf_1777558452666_16@example.com"
+      },
+      {
+        "email": "perf_1777558452666_17@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452683",
+        "username": "perf_1777558452666_17"
+      },
+      {
+        "email": "perf_1777558452666_18@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452684",
+        "username": "perf_1777558452666_18"
+      },
+      {
+        "username": "perf_1777558452666_19",
+        "email": "perf_1777558452666_19@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452685"
+      },
+      {
+        "phone": "15558452686",
+        "username": "perf_1777558452666_20",
+        "email": "perf_1777558452666_20@example.com",
+        "password": "PerfPassw0rd!"
+      },
+      {
+        "password": "PerfPassw0rd!",
+        "phone": "15558452687",
+        "username": "perf_1777558452666_21",
+        "email": "perf_1777558452666_21@example.com"
+      },
+      {
+        "email": "perf_1777558452666_22@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452688",
+        "username": "perf_1777558452666_22"
+      },
+      {
+        "email": "perf_1777558452666_23@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452689",
+        "username": "perf_1777558452666_23"
+      },
+      {
+        "email": "perf_1777558452666_24@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452690",
+        "username": "perf_1777558452666_24"
+      },
+      {
+        "username": "perf_1777558452666_25",
+        "email": "perf_1777558452666_25@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452691"
+      },
+      {
+        "email": "perf_1777558452666_26@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452692",
+        "username": "perf_1777558452666_26"
+      },
+      {
+        "email": "perf_1777558452666_27@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452693",
+        "username": "perf_1777558452666_27"
+      },
+      {
+        "phone": "15558452694",
+        "username": "perf_1777558452666_28",
+        "email": "perf_1777558452666_28@example.com",
+        "password": "PerfPassw0rd!"
+      },
+      {
+        "email": "perf_1777558452666_29@example.com",
+        "password": "PerfPassw0rd!",
+        "phone": "15558452695",
+        "username": "perf_1777558452666_29"
+      }
+    ]
+  }
+}

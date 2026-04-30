@@ -1,11 +1,14 @@
 package com.example.demo.user.service;
 
-import com.example.demo.auth.service.AuthVerifyService;
+import com.example.demo.auth.service.otp.AuthVerifyService;
 import com.example.demo.user.dto.RegisterRequest;
 import com.example.demo.user.dto.UserDto;
+import com.example.demo.user.dto.UserSummaryDto;
 import com.example.demo.user.dto.BasicInfoUpdateRequest;
 import com.example.demo.user.dto.ChangePasswordRequest;
 import com.example.demo.user.entity.User;
+import com.example.demo.user.entity.UserProfile;
+import com.example.demo.user.repo.UserProfileRepository;
 import com.example.demo.user.repo.UserRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -17,11 +20,18 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class UserService {
     private final UserRepository userRepository;
+    private final UserProfileRepository userProfileRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthVerifyService authVerifyService;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthVerifyService authVerifyService) {
+    public UserService(
+            UserRepository userRepository,
+            UserProfileRepository userProfileRepository,
+            PasswordEncoder passwordEncoder,
+            AuthVerifyService authVerifyService
+    ) {
         this.userRepository = userRepository;
+        this.userProfileRepository = userProfileRepository;
         this.passwordEncoder = passwordEncoder;
         this.authVerifyService = authVerifyService;
     }
@@ -64,13 +74,13 @@ public class UserService {
         return dto;
     }
 
-    public Page<UserDto> list(String q, int page, int size, String fields) {
+    public Page<UserSummaryDto> list(String q, int page, int size, String fields) {
         PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 20));
         String keyword = (q == null || q.isBlank()) ? null : q.trim();
         boolean includeNickname = fields != null && fields.toLowerCase().contains("nickname");
         Page<User> p = includeNickname ? userRepository.searchWithNickname(keyword, pr)
                                        : userRepository.search(keyword, pr);
-        return p.map(this::toDto);
+        return p.map(this::toSummaryDto);
     }
 
     private UserDto toDto(User u) {
@@ -80,6 +90,20 @@ public class UserService {
         dto.setEmail(u.getEmail());
         dto.setPhone(u.getPhone());
         dto.setCreatedAt(u.getCreatedAt());
+        return dto;
+    }
+
+    private UserSummaryDto toSummaryDto(User user) {
+        UserSummaryDto dto = new UserSummaryDto();
+        dto.setId(user.getId());
+        dto.setUsername(user.getUsername());
+        dto.setCreatedAt(user.getCreatedAt());
+
+        UserProfile profile = userProfileRepository.findById(user.getId()).orElse(null);
+        if (profile != null) {
+            dto.setNickname(profile.getNickname());
+            dto.setAvatarUrl(profile.getAvatarUrl());
+        }
         return dto;
     }
 

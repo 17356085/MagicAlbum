@@ -1,0 +1,20 @@
+server:
+  port: ${GATEWAY_PORT:9000}
+
+spring:
+  application:
+    name: bluealbum-gateway
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  cloud:
+    nacos:
+      config:
+        enabled: false
+      discovery:
+        enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,refresh

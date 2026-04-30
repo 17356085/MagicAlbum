@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public class ProfileDto {
+    private Long id;
     private String username;
 
     @Size(max = 64, message = "昵称长度不能超过 64")
@@ -30,6 +31,13 @@ public class ProfileDto {
     @Size(max = 255, message = "所在地长度不能超过 255")
     private String location;
     private List<String> links;
+    private long followerCount;
+    private long followingCount;
+    private boolean followingMe;
+    private boolean followedByMe;
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
 
     public String getUsername() { return username; }
     public void setUsername(String username) { this.username = username; }
@@ -51,4 +59,16 @@ public class ProfileDto {
 
     public List<String> getLinks() { return links; }
     public void setLinks(List<String> links) { this.links = links; }
+
+    public long getFollowerCount() { return followerCount; }
+    public void setFollowerCount(long followerCount) { this.followerCount = followerCount; }
+
+    public long getFollowingCount() { return followingCount; }
+    public void setFollowingCount(long followingCount) { this.followingCount = followingCount; }
+
+    public boolean isFollowingMe() { return followingMe; }
+    public void setFollowingMe(boolean followingMe) { this.followingMe = followingMe; }
+
+    public boolean isFollowedByMe() { return followedByMe; }
+    public void setFollowedByMe(boolean followedByMe) { this.followedByMe = followedByMe; }
 }

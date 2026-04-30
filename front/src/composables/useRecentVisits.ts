@@ -1,6 +1,6 @@
 // 最近浏览：基于路由 afterEach 记录本地 localStorage，并提供读取 API
 // 存储结构：[{ path, name, title, id, sectionId, sectionName, ts }]
-// 保留最近 10 条，时间窗口默认 7 天；去重按 path
+// 保留最近 10 条，时间窗口默认 90 天；去重按 path
 // 按账号隔离：本地存储键包含用户ID或用户名；未登录使用 guest
 
 import type { Id, RecentVisit, User } from '@/types'
@@ -21,7 +21,7 @@ function storageKey(): string {
   return `${STORAGE_KEY_BASE}:guest`
 }
 const MAX_ITEMS = 10
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7 天
+const MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000 // 90 天
 // 仅记录“文章/帖子详情”路由
 const ALLOWED_ROUTE_NAMES = new Set(['thread-detail'])
 
@@ -95,6 +95,18 @@ export function getAllRecentVisits(): RecentVisit[] {
 export function clearAllRecentVisits(): void {
   try { localStorage.removeItem(storageKey()) } catch (_) {}
   writeRaw([])
+}
+
+export function removeRecentVisit(target: RecentVisit): void {
+  const targetPath = normalizePath(target.path)
+  const targetId = target.id == null ? '' : String(target.id)
+  const list = readRaw().filter((it) => {
+    if (!it) return false
+    const sameId = targetId && String(it.id || '') === targetId
+    const samePath = normalizePath(it.path) === targetPath
+    return !(sameId || samePath)
+  })
+  writeRaw(list)
 }
 
 export function pruneExpired(): void {

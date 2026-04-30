@@ -15,6 +15,9 @@ public class CreateThreadRequest {
     @NotBlank
     private String content;
 
+    @Size(max = 5)
+    private java.util.List<@Size(min = 1, max = 32) String> tags;
+
     public Long getSectionId() { return sectionId; }
     public void setSectionId(Long sectionId) { this.sectionId = sectionId; }
 
@@ -23,4 +26,7 @@ public class CreateThreadRequest {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+
+    public java.util.List<String> getTags() { return tags; }
+    public void setTags(java.util.List<String> tags) { this.tags = tags; }
 }
