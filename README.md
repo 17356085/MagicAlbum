@@ -9,7 +9,7 @@ BlueAlbum 是一个 Vue 3 + Spring Boot 的论坛项目，可在本机体验注�
 ### 准备环境
 
 - Windows、PowerShell 7、Git、运行中的 Docker Desktop。
-- JDK 21 或更新版本（需要 `javac`）、Maven、Node.js、pnpm。前端声明的包管理器版本见 [`frontend/package.json`](./frontend/package.json)；运行前可用 `java -version`、`mvn -version`、`node --version`、`pnpm --version` 检查。
+- JDK 21 或更新版本（需要 `javac`）、Maven、Node.js 22.13 或更新版本（建议 24）、pnpm 11.5.0。版本要求见 [`frontend/package.json`](./frontend/package.json)；运行前可用 `java -version`、`mvn -version`、`node --version`、`pnpm --version` 检查。
 - 空闲的本机端口：`5173`（前端）、`9000`（网关）、`8080`（后端）、`8081`（通知服务）、`13306`（MySQL）、`16379`（Redis）、`15673`/`25673`（RabbitMQ）。启动脚本遇到应用端口冲突会停止，不会终止别人的进程。
 
 在 PowerShell 中运行：

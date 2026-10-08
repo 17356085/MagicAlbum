@@ -6,7 +6,7 @@ production readiness, or a production performance target.
 
 ## Prerequisites
 
-- Node.js compatible with pnpm 11.5.0 (the package declares `>=18`; the local verification used Node.js 24)
+- Node.js 22.13 or newer (Node.js 24 is used by CI and the frontend Docker build)
 - pnpm 11.5.0 (the version declared by `package.json`)
 - A running BlueAlbum gateway when using the local API proxy
 
