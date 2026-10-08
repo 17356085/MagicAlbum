@@ -14,7 +14,10 @@ spring:
         enabled: false
 
 management:
+  endpoint:
+    health:
+      show-details: never
   endpoints:
     web:
       exposure:
-        include: health,info,gateway,refresh
+        include: health

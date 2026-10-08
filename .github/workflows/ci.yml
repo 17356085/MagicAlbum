@@ -8,45 +8,69 @@ on:
     branches: [ main, master, dev ]
 
 jobs:
-  # 任务1：前端构建检查
-  frontend-build:
+  frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: front # 进入 front 目录执行
+        working-directory: frontend
     steps:
-      - uses: actions/checkout@v4 # 拉取代码
-      
-      - uses: pnpm/action-setup@v2 # 安装 pnpm
-        with:
-          version: 9
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4 # 安装 Node.js
+      - uses: pnpm/action-setup@v4
         with:
-          node-version: '18'
+          version: 11.5.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
           cache: 'pnpm'
-          cache-dependency-path: front/pnpm-lock.yaml
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
-      - name: Install Dependencies
-        run: pnpm install # 安装依赖
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm type-check
+
+      - name: Unit tests
+        run: pnpm test
 
       - name: Build
-        run: pnpm build # 尝试打包 (检查是否有 TS 类型错误或构建错误)
+        run: pnpm build
 
-  # 任务2：后端构建检查
-  backend-build:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # 拉取代码
 
-      - uses: actions/setup-java@v4 # 安装 Java 环境
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21' # 你项目使用的是 Java 21
+          java-version: '21'
           cache: 'maven'
 
-      - name: Build with Maven
-        # 运行打包命令，但跳过测试 (-DskipTests)
-        # 现阶段跳过测试是因为 CI 环境没有连接 Redis/MySQL，运行集成测试会失败。
-        # 等未来配置好测试容器后，可以去掉这个参数。
-        run: mvn package -DskipTests
+      - name: Run backend and service tests
+        run: mvn -B test
+
+  python-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile test sources
+        run: python -m compileall -q .
+
+      - name: Collect tests
+        run: pytest --collect-only -q

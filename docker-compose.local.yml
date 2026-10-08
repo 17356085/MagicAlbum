@@ -1,0 +1,57 @@
+name: bluealbum-local
+
+# Isolated dependencies for scripts/Start-Local.ps1. Existing host services stay usable.
+services:
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "127.0.0.1:${DB_PORT:-13306}:3306"
+    environment:
+      MYSQL_DATABASE: bluealbum_local
+      MYSQL_USER: bluealbum
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Run scripts/Start-Local.ps1 first}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Run scripts/Start-Local.ps1 first}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - local_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysql -h 127.0.0.1 -u root -Nse 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Run scripts/Start-Local.ps1 first}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - local_redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:management
+    ports:
+      - "127.0.0.1:${SPRING_RABBITMQ_PORT:-15673}:5672"
+      - "127.0.0.1:25673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: bluealbum
+      RABBITMQ_DEFAULT_PASS: ${SPRING_RABBITMQ_PASSWORD:?Run scripts/Start-Local.ps1 first}
+    volumes:
+      - local_rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  local_mysql:
+  local_redis:
+  local_rabbitmq:

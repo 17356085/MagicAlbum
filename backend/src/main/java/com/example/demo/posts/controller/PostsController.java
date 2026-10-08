@@ -1,0 +1,114 @@
+package com.example.demo.posts.controller;
+
+import com.example.demo.common.DistributedRateLimiter;
+import com.example.demo.posts.dto.CreatePostRequest;
+import com.example.demo.posts.dto.PostLikeResponse;
+import com.example.demo.posts.dto.PostDto;
+import com.example.demo.posts.dto.UpdatePostRequest;
+import com.example.demo.posts.service.PostService;
+import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+import jakarta.servlet.http.HttpServletRequest;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/v1")
+public class PostsController {
+    private final PostService postService;
+    private final DistributedRateLimiter rateLimiter;
+
+    public PostsController(PostService postService, DistributedRateLimiter rateLimiter) {
+        this.postService = postService;
+        this.rateLimiter = rateLimiter;
+    }
+
+    @GetMapping("/threads/{threadId}/posts")
+    public ResponseEntity<Map<String, Object>> listByThread(
+            @PathVariable("threadId") Long threadId,
+            @RequestParam(value = "sort", defaultValue = "time") String sort,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size
+    ) {
+        Page<PostDto> p = postService.listByThread(threadId, getOptionalUserId(), sort, page, size);
+        Map<String, Object> body = new HashMap<>();
+        body.put("items", p.getContent());
+        body.put("page", p.getNumber() + 1);
+        body.put("size", p.getSize());
+        body.put("total", p.getTotalElements());
+        return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/posts/{id}/like")
+    public ResponseEntity<PostLikeResponse> likeStatus(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(postService.likeStatus(userId, id));
+    }
+
+    @PostMapping("/posts/{id}/like")
+    public ResponseEntity<PostLikeResponse> like(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(postService.like(userId, id));
+    }
+
+    @DeleteMapping("/posts/{id}/like")
+    public ResponseEntity<PostLikeResponse> unlike(@PathVariable("id") Long id) {
+        Long userId = getUserId();
+        return ResponseEntity.ok(postService.unlike(userId, id));
+    }
+
+    @PostMapping("/threads/{threadId}/posts")
+    public ResponseEntity<PostDto> create(
+            @PathVariable("threadId") Long threadId,
+            @Valid @RequestBody CreatePostRequest req,
+            HttpServletRequest httpRequest
+    ) {
+        Long userId = getUserId();
+        rateLimiter.enforce("post-create-ip", com.example.demo.common.RequestIdentity.clientIp(httpRequest), 60, 30);
+        rateLimiter.enforce("post-create-user", String.valueOf(userId), 60, 20);
+        PostDto dto = postService.create(userId, threadId, req);
+        return ResponseEntity.status(HttpStatus.CREATED).body(dto);
+    }
+
+    @PatchMapping("/posts/{id}")
+    public ResponseEntity<PostDto> update(
+            @PathVariable("id") Long id,
+            @Valid @RequestBody UpdatePostRequest req
+    ) {
+        Long userId = getUserId();
+        PostDto dto = postService.update(userId, id, req);
+        return ResponseEntity.ok(dto);
+    }
+
+    @DeleteMapping("/posts/{id}")
+    public ResponseEntity<Void> delete(
+            @PathVariable("id") Long id
+    ) {
+        Long userId = getUserId();
+        postService.delete(userId, id);
+        return ResponseEntity.noContent().build();
+    }
+
+    private Long getUserId() {
+        Long userId = getOptionalUserId();
+        if (userId != null) {
+            return userId;
+        }
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
+    }
+
+    private Long getOptionalUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof Long) {
+            return (Long) auth.getPrincipal();
+        }
+        return null;
+    }
+}

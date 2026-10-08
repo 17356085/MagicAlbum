@@ -1,0 +1,8 @@
+# Canonical BlueAlbum Python test dependencies
+pytest>=8.3.0
+selenium>=4.27.0
+playwright>=1.48.0
+httpx>=0.28.0
+python-dotenv>=1.0.0
+pytest-xdist>=3.6.0
+faker>=28.0.0

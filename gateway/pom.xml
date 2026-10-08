@@ -55,12 +55,27 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>4.0.0</version>
+                <version>4.0.1</version>
                 <configuration>
                     <skip>false</skip>
                     <mainClass>com.example.gateway.BlueAlbumGatewayApplication</mainClass>
                 </configuration>
-                <executions combine.self="override"/>
+                <executions combine.self="override">
+                    <execution>
+                        <id>repackage</id>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>disable-process-aot</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>disable-process-test-aot</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

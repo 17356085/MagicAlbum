@@ -1,23 +1,10 @@
 spring:
-  config:
-    import:
-      - optional:nacos:bluealbum-gateway-local.yml?group=${NACOS_CONFIG_GROUP:DEFAULT_GROUP}&refreshEnabled=true
   cloud:
     nacos:
       config:
-        enabled: true
-        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
-        group: ${NACOS_CONFIG_GROUP:DEFAULT_GROUP}
-        namespace: ${NACOS_CONFIG_NAMESPACE:}
-        health-indicator:
-          enabled: true
+        enabled: false
       discovery:
-        enabled: true
-        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
-        group: ${NACOS_DISCOVERY_GROUP:DEFAULT_GROUP}
-        namespace: ${NACOS_DISCOVERY_NAMESPACE:}
-        health-indicator:
-          enabled: true
+        enabled: false
     gateway:
       server:
         webflux:
@@ -29,6 +16,9 @@ spring:
                   - http://localhost:5073
                   - http://localhost:5173
                   - http://localhost:5174
+                  - http://127.0.0.1:5073
+                  - http://127.0.0.1:5173
+                  - http://127.0.0.1:5174
                 allowed-methods:
                   - GET
                   - POST
@@ -40,13 +30,16 @@ spring:
                   - Authorization
                   - Content-Type
                   - X-Requested-With
+                  - X-Device-Id
+                  - X-Session-Id
+                  - X-Request-Id
                 allow-credentials: true
           routes:
             - id: notification-service-api
-              uri: lb://bluealbum-notification-service
+              uri: http://127.0.0.1:8081
               predicates:
                 - Path=/api/v1/notifications/**
             - id: bluealbum-monolith-api
-              uri: lb://bluealbum-monolith
+              uri: http://127.0.0.1:8080
               predicates:
-                - Path=/api/v1/**
+                - Path=/api/v1/**,/uploads/**

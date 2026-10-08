@@ -1,79 +1,120 @@
 # 性能与压力测试（k6 + Prometheus + Grafana）
 
-## 1. 目标与 SLA（默认）
+本文描述仓库内可复现的本地隔离压测流程。配置中的阈值是本次测试的
+判断门槛，不是已经测得的成绩、生产 SLO、容量承诺或“生产可用”结论。
 
-- 关键接口：登录、分区列表、帖子列表/详情、发帖、评论
-- SLA（全局阈值，k6 阈值校验 + Prometheus 告警双保险）
-  - P99 ≤ 500ms
-  - P95 ≤ 300ms
-  - 错误率（http_req_failed）≤ 0.1%
+## 1. 测试范围与配置门槛
 
-## 2. 压测环境（容器化隔离）
+[`k6/core.js`](k6/core.js) 会注册合成用户，并混合执行登录、分区列表、
+主题列表/详情、发主题和发回复（posts）等请求。写入比例由
+`WRITE_RATE` 控制。
 
-目录：[docker-compose.perf.yml](file:///d:/Desktop/BlueAlbum/perf/docker-compose.perf.yml)
+k6 当前配置的阈值为：
 
-- 独立 MySQL：MagicAlbum_perf（端口映射 3307）
-- Nginx：对后端多实例做负载均衡（端口映射 8088）
-- Prometheus（端口映射 9099）+ Grafana（端口映射 3001）
+- `http_req_duration` P95 ≤ 300 ms；
+- `http_req_duration` P99 ≤ 500 ms；
+- `http_req_failed` ≤ 0.1%。
 
-后端在 perf profile 下额外开启：
-- Actuator/Micrometer 指标端口 9090（容器内访问）
+[`prometheus/alerts.yml`](prometheus/alerts.yml) 另行配置了 API P99、5xx
+比例、JVM 死锁和 Hikari 连接池水位告警。它们与 k6 指标的采集口径不同，
+不能互相替代，也不能在没有新一轮实测结果时写成“达标”。特别是，脚本
+对发回复的 429 检查允许通过，但 k6 的 `http_req_failed` 仍可能把非成功
+HTTP 响应计入失败；报告时要把预期限流和真实错误分开说明。
 
-## 3. 启动与横向扩展（1× / 2× / 5×）
+## 2. 压测环境
 
-在仓库根目录执行：
+环境定义在 [`docker-compose.perf.yml`](docker-compose.perf.yml)，命令从
+仓库根目录执行：
 
 ```bash
 docker compose -f perf/docker-compose.perf.yml up -d --build
 ```
 
-横向扩容后端实例数（示例：2×、5×）：
+主要入口和端口如下：
+
+- Nginx 压测入口：<http://localhost:8088>
+- Prometheus：<http://localhost:9099>
+- Grafana：<http://localhost:3001>
+- cAdvisor：<http://localhost:8089>
+- MySQL、Redis、RabbitMQ 的宿主机映射分别为 3307、6380、5673；RabbitMQ 管理界面为 15673。
+
+容器网络内 k6 应访问 `http://nginx:8080`。后端管理/Prometheus 端口
+`9090` 只在容器网络中暴露给 Prometheus，不是宿主机访问入口。
+
+该 Compose 文件包含仅供本机隔离实验的数据库、消息队列和 Grafana 登录
+配置。本文不复制其中的默认值；在共享机器、联网环境或任何端口暴露前，
+必须先替换这些配置并使用你自己管理的凭据。Grafana 登录信息以 Compose
+文件中的 `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` 为准，
+不要把示例配置当作可复用凭据。
+
+## 3. 后端实例扩展
+
+Nginx 会把请求转发到 `api` 服务，可以在首次启动后扩展 API 实例：
 
 ```bash
 docker compose -f perf/docker-compose.perf.yml up -d --scale api=2
 docker compose -f perf/docker-compose.perf.yml up -d --scale api=5
 ```
 
-访问入口：
-- 压测目标（Nginx）：http://localhost:8088
-- Prometheus：http://localhost:9099
-- Grafana：http://localhost:3001（admin/admin）
+实例数量、数据库、缓存、消息队列和压测参数必须写入结果归档；不同
+环境的结果不可直接横向比较。
 
-## 4. 运行压测（每级 15min）
+## 4. 运行压测
 
-默认脚本：[core.js](file:///d:/Desktop/BlueAlbum/perf/k6/core.js)
-
-并发测试方案：[CONCURRENCY.md](file:///d:/Desktop/BlueAlbum/perf/CONCURRENCY.md)
-
-1× / 2× / 5× 日常流量的推荐做法：
-- 固定业务比例（读多写少），逐级上调 VU 目标或 stage target
-- 每级持续 15min，记录拐点（首次 SLA 超限时刻、资源饱和度）
-
-示例：15min 稳态（100 VU），前后各 2min 升降：
+直接运行一次 2 分钟升压、15 分钟稳态、2 分钟降压的示例：
 
 ```bash
+: "${PERF_PASSWORD:?set a disposable PERF_PASSWORD before running}"
 docker compose -f perf/docker-compose.perf.yml --profile tools run --rm \
   -e BASE_URL=http://nginx:8080 \
   -e USERS=200 \
+  -e PASSWORD="$PERF_PASSWORD" \
   -e WRITE_RATE=0.2 \
   -e STAGES='[{"duration":"2m","target":100},{"duration":"15m","target":100},{"duration":"2m","target":0}]' \
   k6 run /scripts/core.js
 ```
 
-每次执行会在 `perf/results/` 生成一份 `summary-*.json`。
+压测用户和写入数据会落在独立的 perf 数据库中；只在该隔离环境运行，
+上例强制通过 `PASSWORD` 提供本轮合成账号密码，不要复用业务凭据。
+每次 k6 执行会把 JSON 摘要写入 `perf/results/summary-*.json`。
 
-## 5. 观测指标与瓶颈定位
+并发阶梯、稳态和读写矩阵由 [`run-concurrency-tests.sh`](run-concurrency-tests.sh)
+封装，完整方案见 [`CONCURRENCY.md`](CONCURRENCY.md)：
 
-Grafana 看板：MagicAlbum 性能压测看板（已随容器自动导入）
+```bash
+bash perf/run-concurrency-tests.sh step
+bash perf/run-concurrency-tests.sh soak
+bash perf/run-concurrency-tests.sh write-matrix
+# 依次运行全部方案（默认约 205 分钟的排程时间）
+bash perf/run-concurrency-tests.sh all
+```
 
-重点关注：
-- 延迟：API P95/P99 曲线（http_server_requests_seconds_bucket）
-- 错误率：5xx 比例、超时与重试
-- 资源：容器 CPU / 内存 working set（cAdvisor）
-- DB：QPS、连接池活跃/最大（MySQL exporter + Hikari）
+该脚本默认使用容器内地址、`USERS_MULTIPLIER=2`、`THINK_TIME_S=0.3`、
+阶梯稳态 15 分钟和稳态测试 30 分钟；可通过脚本中声明的环境变量覆盖。
+该脚本当前不会把 `PASSWORD` 透传给 k6；需要显式合成账号密码时使用上面的
+直接命令。脚本需要 Bash（Linux、WSL 或 Git Bash）以及可用的 Docker Compose。
 
-## 6. 二次验证（优化后回归）
+## 5. 观测与结果解释
 
-- 保持相同脚本、相同 stage 配置复跑
-- 对比 P95/P99 与资源水位（CPU/内存/连接池）
-- 验收：SLA 稳定达标且资源利用率处于合理区间（无持续性饱和）
+Prometheus 配置会抓取 API、cAdvisor、MySQL exporter 和 Redis exporter；
+Grafana 看板由 [`grafana/dashboards/magicalbum-perf.json`](grafana/dashboards/magicalbum-perf.json)
+自动加载。重点记录：
+
+- k6 的 P95、P99、`http_req_failed`、`http_reqs`、`iterations`、`checks`；
+- API 的 5xx、429 和接口级延迟；
+- JVM CPU、堆、GC、线程数及 Hikari 连接池；
+- MySQL/Redis 指标，以及 RabbitMQ 发布、消费和队列堆积。
+
+`perf/results/` 中已有的 JSON 和 Markdown 是历史归档，不是当前工作树的
+新一轮验证。每次正式记录至少写明日期、Git 分支/提交、实例数、数据库、
+VU/stage、`WRITE_RATE`、`THINK_TIME_S`、各指标和阈值结果；没有这些证据时，
+只能写“未验证”。
+
+## 6. 停止环境
+
+```bash
+docker compose -f perf/docker-compose.perf.yml down
+```
+
+该命令默认保留命名卷。只有确认不再需要本轮数据时，才使用会删除 perf
+卷数据的 `down -v`。

@@ -50,7 +50,7 @@
 
     <!-- 聚合模块 -->
     <modules>
-        <module>end</module>
+        <module>backend</module>
         <module>gateway</module>
         <module>notification-service</module>
     </modules>

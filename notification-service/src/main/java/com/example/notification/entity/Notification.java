@@ -8,6 +8,9 @@ public class Notification {
     private String type;
     private String title;
     private String content;
+    private Long threadId;
+    private Long targetId;
+    private String targetType;
     private boolean read;
     private Instant createdAt;
 
@@ -49,6 +52,30 @@ public class Notification {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public Long getThreadId() {
+        return threadId;
+    }
+
+    public void setThreadId(Long threadId) {
+        this.threadId = threadId;
+    }
+
+    public Long getTargetId() {
+        return targetId;
+    }
+
+    public void setTargetId(Long targetId) {
+        this.targetId = targetId;
+    }
+
+    public String getTargetType() {
+        return targetType;
+    }
+
+    public void setTargetType(String targetType) {
+        this.targetType = targetType;
     }
 
     public boolean isRead() {

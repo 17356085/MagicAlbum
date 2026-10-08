@@ -1,90 +1,176 @@
-version: "3.8"
-
 services:
-  postgres:
-    image: postgres:16
-    container_name: MagicAlbum-postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: MagicAlbum
-      POSTGRES_USER: MagicAlbum
-      POSTGRES_PASSWORD: MagicAlbum
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   mysql:
     image: mysql:8.0
-    container_name: MagicAlbum-mysql
-    command: ["--default-authentication-plugin=mysql_native_password", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    restart: unless-stopped
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     environment:
-      MYSQL_DATABASE: MagicAlbum
-      MYSQL_USER: MagicAlbum
-      MYSQL_PASSWORD: MagicAlbum
-      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: ${DB_NAME:-MagicAlbum}
+      MYSQL_USER: ${DB_USER:?DB_USER must be set in .env}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD must be set in .env}
+      NOTIFICATION_DB_NAME: ${NOTIFICATION_DB_NAME:-MagicAlbum_notifications}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     volumes:
       - mysqldata:/var/lib/mysql
+      - ./scripts/init-notification-db.sh:/docker-entrypoint-initdb.d/01-notification-db.sh:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysql -h 127.0.0.1 -u root -Nse 'SELECT 1'"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
 
   redis:
-    image: redis:alpine
-    container_name: MagicAlbum-redis
+    image: redis:7-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
 
   rabbitmq:
-    image: rabbitmq:management
-    container_name: MagicAlbum-rabbitmq
+    image: rabbitmq:3.13-management
+    restart: unless-stopped
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER must be set in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
 
-  nacos:
-    image: nacos/nacos-server:v3.1.1
-    container_name: MagicAlbum-nacos
-    environment:
-      MODE: standalone
-      NACOS_AUTH_TOKEN: "Qmx1ZUFsYnVtTG9jYWxEZXZPbmx5TmFjb3NUb2tlbl9DaGFuZ2VJblByb2R1Y3Rpb24="
-      NACOS_AUTH_IDENTITY_KEY: "bluealbum-nacos-identity"
-      NACOS_AUTH_IDENTITY_VALUE: "bluealbum-local-dev"
-      JVM_XMS: 512m
-      JVM_XMX: 512m
-      JVM_XMN: 256m
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
     ports:
-      - "18080:8080"
-      - "8848:8848"
-      - "9848:9848"
-      - "9849:9849"
+      - "127.0.0.1:8080:8080"
     volumes:
-      - nacosdata:/home/nacos/data
-      - nacoslogs:/home/nacos/logs
+      - backenduploads:/app/uploads
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-MagicAlbum}
+      DB_USER: ${DB_USER:?DB_USER must be set in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:?RABBITMQ_USER must be set in .env}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set in .env}
+      APP_RABBIT_ENABLED: "true"
+      APP_ADMIN_EMAIL: ${APP_ADMIN_EMAIL:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-MagicAlbum}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set in .env}
+      NOTIFICATION_SERVICE_BASE_URL: http://notification-service:8081
+      NOTIFICATION_SERVICE_MODE: remote
+      APP_AUTH_VERIFY_MODE: off
+      AI_PROVIDER: mock
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      NOTIFICATION_SERVICE_PORT: 8081
+      NOTIFICATION_DATASOURCE_URL: "jdbc:mysql://mysql:3306/${NOTIFICATION_DB_NAME:-MagicAlbum_notifications}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8"
+      NOTIFICATION_DATASOURCE_USERNAME: ${DB_USER:?DB_USER must be set in .env}
+      NOTIFICATION_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      NOTIFICATION_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      NOTIFICATION_JWT_ISSUER: ${JWT_ISSUER:-MagicAlbum}
+      NOTIFICATION_INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set in .env}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      SPRING_PROFILES_ACTIVE: compose
+    depends_on:
+      backend:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9000/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  frontend:
+    build:
+      context: frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5173:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
-  pgdata:
+  backenduploads:
   mysqldata:
-  nacosdata:
-  nacoslogs:
+  redisdata:
+  rabbitmqdata:

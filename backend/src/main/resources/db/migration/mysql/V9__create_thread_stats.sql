@@ -1,0 +1,2 @@
+-- Deprecated thread_stats table removed; counts are computed from posts and likes.
+-- Kept as a no-op migration to preserve Flyway version history.

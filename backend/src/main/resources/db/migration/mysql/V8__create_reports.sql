@@ -1,0 +1,2 @@
+-- Deprecated report moderation skeleton removed.
+-- Kept as a no-op migration to preserve Flyway version history.

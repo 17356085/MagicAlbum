@@ -1,20 +1,17 @@
 spring:
-  config:
-    import:
-      - optional:nacos:bluealbum-notification-service-local.yml?group=${NACOS_CONFIG_GROUP:DEFAULT_GROUP}&refreshEnabled=true
   cloud:
     nacos:
       config:
-        enabled: true
+        enabled: false
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
         group: ${NACOS_CONFIG_GROUP:DEFAULT_GROUP}
         namespace: ${NACOS_CONFIG_NAMESPACE:}
         health-indicator:
-          enabled: true
+          enabled: false
       discovery:
-        enabled: true
+        enabled: false
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
         group: ${NACOS_DISCOVERY_GROUP:DEFAULT_GROUP}
         namespace: ${NACOS_DISCOVERY_NAMESPACE:}
         health-indicator:
-          enabled: true
+          enabled: false

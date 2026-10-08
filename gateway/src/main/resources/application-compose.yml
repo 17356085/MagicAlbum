@@ -1,0 +1,19 @@
+spring:
+  cloud:
+    nacos:
+      config:
+        enabled: false
+      discovery:
+        enabled: false
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: notification-service-api
+              uri: http://notification-service:8081
+              predicates:
+                - Path=/api/v1/notifications/**
+            - id: bluealbum-monolith-api
+              uri: http://backend:8080
+              predicates:
+                - Path=/api/v1/**,/uploads/**

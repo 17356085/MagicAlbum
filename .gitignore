@@ -1,4 +1,4 @@
-# Docs
+# Local documentation, historical reports and personal material are not published.
 /docs/
 
 # Environment files
@@ -49,6 +49,7 @@ build/
 
 # Generated Maven artifacts
 effective-pom
+/DEnvironmentapache-maven-3.9.11mvn_repository/
 
 # Node / frontend
 node_modules/
@@ -56,17 +57,29 @@ dist/
 coverage/
 .vite/
 *.tsbuildinfo
-front/.playwright-browsers/
+frontend/.playwright-browsers/
 
 # Test outputs
 test-artifacts/
 playwright-report/
 
+# Canonical Python test run products
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+tests/reports/
+tests/screenshots/
+test/reports/
+test/screenshots/
+py-selenium/reports/
+py-selenium/screenshots/
+**/chromedriver.exe
+
 # Runtime uploads / local generated content
-end/uploads/
+backend/uploads/
 
 # Local secrets kept out of repo
-end/src/main/resources/application-secrets.yml
+backend/src/main/resources/application-secrets.yml
 
 # Auto Claude data directory
 .auto-claude/

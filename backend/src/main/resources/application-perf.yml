@@ -1,0 +1,40 @@
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true
+
+spring:
+  datasource:
+    hikari:
+      leak-detection-threshold: ${DB_LEAK_DETECT_MS:20000}
+
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9090}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http:
+          server:
+            requests: true
+
+logging:
+  level:
+    com.zaxxer.hikari: WARN
+
+app:
+  rabbit:
+    enabled: true

@@ -1,111 +1,86 @@
-# 并发测试方案
+# 并发测试方案（本地 perf 配置）
 
-## 目标
+本方案用于在一次具体的隔离压测环境中记录并发阶梯、稳态和读写比例下的
+首次配置门槛失效点。它不能单独证明系统的生产容量、稳定承载能力或生产
+可用性；结论必须随环境、提交和完整结果一起归档。
 
-并发测试用于找到系统的稳定承载区间和首次 SLA 失效点。与单次压力测试不同，本方案按并发阶梯、长时间稳态、读写比例矩阵分别验证。
+## 配置门槛
 
-默认 SLA 与 `perf/k6/core.js` 保持一致：
+[`k6/core.js`](k6/core.js) 当前配置的 k6 阈值为：
 
-- P99 <= 500ms
-- P95 <= 300ms
-- `http_req_failed` <= 0.1%
+- P95 ≤ 300 ms；
+- P99 ≤ 500 ms；
+- `http_req_failed` ≤ 0.1%。
+
+这些是本次脚本的测试门槛，不是已经验证的 SLA。Prometheus 的 API P99、5xx、
+JVM 死锁和 Hikari 告警来自另一套采集窗口；出现 k6 通过并不意味着这些
+服务端告警一定通过。发回复的 429 还需要区分设计内限流与真实错误，因为
+脚本的业务检查和 `http_req_failed` 的统计口径并不相同。
 
 ## 前置条件
 
-先启动完整 perf 环境：
+从仓库根目录启动完整隔离环境：
 
 ```bash
 docker compose -f perf/docker-compose.perf.yml up -d --build
 ```
 
-确认入口：
+也可以先按 [`perf/README.md`](README.md) 的说明检查 Docker、端口和凭据配置。
+入口为：
 
-- API 压测入口：`http://localhost:8088`
-- Prometheus：`http://localhost:9099`
-- Grafana：`http://localhost:3001`
+- API 压测入口：<http://localhost:8088>
+- Prometheus：<http://localhost:9099>
+- Grafana：<http://localhost:3001>
 
-在容器网络内，k6 默认压测 `http://nginx:8080`。
+压测容器网络内的默认目标是 `http://nginx:8080`。数据库、Redis、RabbitMQ
+和 Grafana 的登录配置仅适用于本机隔离实验；共享或暴露环境前应先替换，
+不要把 Compose 里的示例凭据当作通用凭据。封装脚本不会透传 k6 的
+`PASSWORD`；需要显式合成账号密码时，请按 [`perf/README.md`](README.md)
+中的直接 k6 命令运行。
 
 ## 1. 阶梯并发测试
 
-并发阶梯：
-
-- 10 VU
-- 25 VU
-- 50 VU
-- 100 VU
-- 200 VU
-
-默认每个并发级别执行：
-
-- 2 分钟升压
-- 15 分钟稳态
-- 2 分钟降压
-
-执行命令：
+[`run-concurrency-tests.sh`](run-concurrency-tests.sh) 的阶梯档位是 10、25、
+50、100、200 VU。每档默认由 2 分钟升压、15 分钟稳态、2 分钟降压组成：
 
 ```bash
 bash perf/run-concurrency-tests.sh step
 ```
 
-可调整稳态时间：
+单独缩短稳态时间（仅用于快速检查排程，不应冒充正式结果）：
 
 ```bash
 STEADY_DURATION=5m bash perf/run-concurrency-tests.sh step
 ```
 
-观察重点：
+脚本默认把 VU 数乘以 `USERS_MULTIPLIER=2` 作为 `USERS` 注册合成用户，
+并使用 `WRITE_RATE=0.2`、`THINK_TIME_S=0.3`。每档先记录 k6 的 P95、P99、
+`http_req_failed`，再结合 API 5xx/429、JVM、Hikari 和数据库指标解释。
 
-- k6：P95、P99、`http_req_failed`
-- API：HTTP 5xx、429、接口级 P95/P99
-- JVM：CPU、堆内存、GC、线程数
-- Hikari：active / idle / pending / max connections
-- MySQL：QPS、慢查询、连接数、锁等待
-
-判定方式：
-
-- 首个出现 P95 > 300ms、P99 > 500ms、错误率 > 0.1% 的 VU 档位，即首次 SLA 失效点。
-- 如果只在写入接口出现 429，需要单独区分“预期限流”和“真实错误”。
+记录“首次门槛失效点”时，应写明触发的是哪个指标、哪个 VU 档位和完整
+运行参数。这个点只适用于本次环境和测试数据，不能外推为生产容量。
 
 ## 2. 稳态并发测试
 
-默认固定 50 VU，连续 30 分钟：
+默认 50 VU，稳态 30 分钟，前后各 2 分钟升降压：
 
 ```bash
 bash perf/run-concurrency-tests.sh soak
 ```
 
-调整为 100 VU、15 分钟：
+例如 100 VU、15 分钟稳态：
 
 ```bash
 SOAK_VUS=100 SOAK_DURATION=15m bash perf/run-concurrency-tests.sh soak
 ```
 
-观察重点：
-
-- P95/P99 是否随时间持续升高
-- `http_req_failed` 是否持续增加
-- Hikari active 是否长期贴近 max
-- pending connection 是否出现持续堆积
-- JVM heap 是否持续上涨且 GC 后无法回落
-- 线程数是否持续增长
-- MySQL 连接数、慢查询、锁等待是否异常
-
-判定方式：
-
-- 稳态阶段内 SLA 全程达标，资源水位无持续性上升，认为该并发档位可稳定承载。
-- 如果前 5 分钟正常、后续逐步变差，优先排查连接泄漏、慢查询、队列堆积、缓存失效和 GC 压力。
+除延迟和错误率外，还要记录是否出现持续的连接池 pending、JVM 堆增长、
+GC 后不回落、线程增长、慢查询或锁等待。一次稳态运行只说明该次样本的
+观察结果；没有完整结果和资源证据时，应标为“未验证”。
 
 ## 3. 读写比例并发测试
 
-默认固定 50 VU，分别测试：
-
-- 只读：`WRITE_RATE=0`
-- 轻写：`WRITE_RATE=0.1`
-- 常规写：`WRITE_RATE=0.2`
-- 高写：`WRITE_RATE=0.5`
-
-执行命令：
+默认固定 50 VU，依次运行 `WRITE_RATE=0`、`0.1`、`0.2`、`0.5`：
 
 ```bash
 bash perf/run-concurrency-tests.sh write-matrix
@@ -117,50 +92,38 @@ bash perf/run-concurrency-tests.sh write-matrix
 MATRIX_VUS=100 bash perf/run-concurrency-tests.sh write-matrix
 ```
 
-观察重点：
+写入比例升高时，单独比较 `threads_create`、`posts_create`、429、MySQL
+写入 QPS、锁等待、连接池 pending 和 RabbitMQ 队列；不要只看全局
+`http_req_failed` 就断言业务失败原因。
 
-- 写比例升高后 P95/P99 的增长幅度
-- `threads_create`、`posts_create` 是否成为长尾延迟来源
-- 429 是否随写比例增加
-- MySQL 写入 QPS、锁等待、连接池 pending 是否上升
-- RabbitMQ 发布/消费是否堆积
+## 4. 结果归档
 
-判定方式：
-
-- 如果只读稳定、写入比例升高后失败率或长尾延迟明显增加，瓶颈优先定位写链路。
-- 如果 429 是设计内限流，应在 k6 脚本中单独统计 429，并明确它是否计入 SLA 错误率。
-
-## 结果归档
-
-每次 k6 执行都会生成：
+每次 k6 执行会生成：
 
 ```text
 perf/results/summary-*.json
 ```
 
-建议每轮测试后新增一份 Markdown 归档，记录：
+每轮另写一份 Markdown 记录，至少包含：
 
-- 测试日期
-- Git commit / 分支
-- 环境规模：API 实例数、DB、Redis、RabbitMQ
-- k6 参数：VU、stage、`WRITE_RATE`、`THINK_TIME_S`
-- P95/P99、错误率、吞吐量
-- CPU、内存、连接池、DB 指标截图或摘要
-- 首次 SLA 失效点
-- 结论与后续优化项
+- 测试日期、Git 分支和提交；
+- API 实例数、数据库、Redis、RabbitMQ 和 Compose 配置；
+- VU、stage、`WRITE_RATE`、`THINK_TIME_S`、`USERS`；
+- P95/P99、`http_req_failed`、吞吐量和检查通过率；
+- CPU、内存、连接池、数据库和队列指标；
+- 首次配置门槛失效点、429 的解释和未验证项。
 
-## 预计耗时
+`perf/results/` 已有文件是历史记录。除非重新执行并保存上述证据，不要
+把历史数据写成当前提交的性能达标或生产容量结论。
 
-默认完整执行 `all`：
+## 5. 排程时间
 
-- 阶梯并发：5 档，每档 19 分钟，约 95 分钟
-- 稳态并发：34 分钟
-- 读写比例矩阵：4 档，每档 19 分钟，约 76 分钟
+按脚本默认 stage 计算的只是预计排程时间，不是运行速度或性能结果：
 
-总耗时约 205 分钟，不含镜像构建、服务启动和结果整理时间。
+- 阶梯：5 档 × 19 分钟，约 95 分钟；
+- 稳态：约 34 分钟；
+- 读写矩阵：4 档 × 19 分钟，约 76 分钟；
+- `all` 合计约 205 分钟，另加镜像构建、服务启动和归档时间。
 
-正式执行建议分批运行：
-
-1. 先跑阶梯并发，找到失效点。
-2. 再选择失效点以下一档做稳态测试。
-3. 最后在稳定档位上跑读写比例矩阵。
+建议先运行 `step`，再选择首次门槛失效点以下的档位运行 `soak`，最后运行
+`write-matrix`。这是测试顺序建议，不是对任何档位的承载保证。

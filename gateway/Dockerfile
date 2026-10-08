@@ -1,0 +1,20 @@
+FROM maven:3.9.9-eclipse-temurin-21 AS build
+WORKDIR /workspace
+
+COPY pom.xml /workspace/pom.xml
+COPY gateway/pom.xml /workspace/gateway/pom.xml
+RUN mvn -q -e -pl gateway -am dependency:go-offline
+COPY gateway/src /workspace/gateway/src
+RUN mvn -q -e -pl gateway -am package
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_OPTS=""
+EXPOSE 9000
+COPY --from=build /workspace/gateway/target/*.jar /app/app.jar
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

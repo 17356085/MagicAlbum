@@ -1,0 +1,27 @@
+spring:
+  config:
+    import: optional:nacos:bluealbum-gateway-cloud.yml?group=${NACOS_CONFIG_GROUP:DEFAULT_GROUP}&refreshEnabled=true
+  cloud:
+    nacos:
+      config:
+        enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        group: ${NACOS_CONFIG_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_CONFIG_NAMESPACE:}
+      discovery:
+        enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        group: ${NACOS_DISCOVERY_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_DISCOVERY_NAMESPACE:}
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: notification-service-api
+              uri: lb://bluealbum-notification-service
+              predicates:
+                - Path=/api/v1/notifications/**
+            - id: bluealbum-monolith-api
+              uri: lb://bluealbum-monolith
+              predicates:
+                - Path=/api/v1/**

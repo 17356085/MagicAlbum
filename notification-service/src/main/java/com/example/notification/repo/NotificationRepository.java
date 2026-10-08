@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +18,9 @@ import java.util.Optional;
 
 @Repository
 public class NotificationRepository {
+    private static final String SELECT_COLUMNS =
+            "id, user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at";
+
     private static final RowMapper<Notification> ROW_MAPPER = (rs, rowNum) -> {
         Notification notification = new Notification();
         notification.setId(rs.getLong("id"));
@@ -24,6 +28,9 @@ public class NotificationRepository {
         notification.setType(rs.getString("type"));
         notification.setTitle(rs.getString("title"));
         notification.setContent(rs.getString("content"));
+        notification.setThreadId(rs.getObject("thread_id", Long.class));
+        notification.setTargetId(rs.getObject("target_id", Long.class));
+        notification.setTargetType(rs.getString("target_type"));
         notification.setRead(rs.getBoolean("read_flag"));
         notification.setCreatedAt(rs.getTimestamp("created_at").toInstant());
         return notification;
@@ -42,7 +49,7 @@ public class NotificationRepository {
         listArgs.add(offset);
 
         List<Notification> items = jdbcTemplate.query(
-                "SELECT id, user_id, type, title, content, read_flag, created_at FROM notifications "
+                "SELECT " + SELECT_COLUMNS + " FROM notifications "
                         + query.whereClause()
                         + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
                 ROW_MAPPER,
@@ -58,7 +65,7 @@ public class NotificationRepository {
 
     public Optional<Notification> findByIdAndUserId(Long id, Long userId) {
         List<Notification> matches = jdbcTemplate.query(
-                "SELECT id, user_id, type, title, content, read_flag, created_at FROM notifications WHERE id = ? AND user_id = ?",
+                "SELECT " + SELECT_COLUMNS + " FROM notifications WHERE id = ? AND user_id = ?",
                 ROW_MAPPER,
                 id,
                 userId
@@ -75,15 +82,28 @@ public class NotificationRepository {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
-                    "INSERT INTO notifications (user_id, type, title, content, read_flag, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO notifications "
+                            + "(user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     Statement.RETURN_GENERATED_KEYS
             );
             ps.setLong(1, notification.getUserId());
             ps.setString(2, notification.getType());
             ps.setString(3, notification.getTitle());
             ps.setString(4, notification.getContent());
-            ps.setBoolean(5, notification.isRead());
-            ps.setTimestamp(6, Timestamp.from(createdAt));
+            if (notification.getThreadId() == null) {
+                ps.setNull(5, Types.BIGINT);
+            } else {
+                ps.setLong(5, notification.getThreadId());
+            }
+            if (notification.getTargetId() == null) {
+                ps.setNull(6, Types.BIGINT);
+            } else {
+                ps.setLong(6, notification.getTargetId());
+            }
+            ps.setString(7, notification.getTargetType());
+            ps.setBoolean(8, notification.isRead());
+            ps.setTimestamp(9, Timestamp.from(createdAt));
             return ps;
         }, keyHolder);
 

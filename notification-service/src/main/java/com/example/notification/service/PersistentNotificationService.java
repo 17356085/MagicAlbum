@@ -56,6 +56,9 @@ public class PersistentNotificationService implements NotificationService {
         notification.setType(request.getType().trim());
         notification.setTitle(request.getTitle().trim());
         notification.setContent(request.getContent().trim());
+        notification.setThreadId(request.getThreadId());
+        notification.setTargetId(request.getTargetId());
+        notification.setTargetType(request.getTargetType() == null ? null : request.getTargetType().trim());
         notification.setRead(false);
         return toDto(notificationRepository.save(notification));
     }
@@ -67,7 +70,10 @@ public class PersistentNotificationService implements NotificationService {
                 notification.getTitle(),
                 notification.getContent(),
                 notification.isRead(),
-                notification.getCreatedAt()
+                notification.getCreatedAt(),
+                notification.getThreadId(),
+                notification.getTargetId(),
+                notification.getTargetType()
         );
     }
 }

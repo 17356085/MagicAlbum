@@ -49,7 +49,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: end/Dockerfile
+      dockerfile: backend/Dockerfile
     environment:
       SPRING_PROFILES_ACTIVE: perf,mysql
       DB_HOST: mysql_perf

@@ -107,8 +107,8 @@ function listSections() {
 }
 
 function createThread(token, sectionId) {
-  const title = `perf thread ${randStr(12)}`;
-  const content = `perf content ${randStr(64)}`;
+  const title = `[性能测试] 自动生成主题 ${randStr(8)}`;
+  const content = `这是一条性能测试自动生成的主题内容，用于验证写入链路。run=${randStr(16)}`;
   const res = http.post(
     apiUrl("/api/v1/threads"),
     JSON.stringify({ sectionId, title, content }),

@@ -1,0 +1,2 @@
+-- Deprecated attachments metadata table removed; uploads use storage providers directly.
+-- Kept as a no-op migration to preserve Flyway version history.
