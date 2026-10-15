@@ -1,6 +1,7 @@
 package com.example.demo.notifications.service.mock;
 
 import com.example.demo.notifications.dto.NotificationDto;
+import com.example.demo.notifications.dto.NotificationPageResponse;
 import com.example.demo.notifications.service.NotificationService;
 import org.springframework.stereotype.Service;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -8,7 +9,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -24,34 +26,31 @@ public class InMemoryNotificationService implements NotificationService {
     private final AtomicLong idSequence = new AtomicLong(1000);
 
     private List<NotificationDto> ensureSeed(Long userId) {
-        return store.computeIfAbsent(userId, k -> new ArrayList<>());
+        return store.computeIfAbsent(userId, k -> new CopyOnWriteArrayList<>());
     }
 
     @Override
-    public Map<String, Object> list(Long userId, String type, Boolean unread, int page, int size) {
+    public NotificationPageResponse list(Long userId, String authorization, String type, Boolean unread, int page, int size) {
         List<NotificationDto> all = new ArrayList<>(ensureSeed(userId));
         if (type != null && !type.isBlank()) {
-            String t = type.toLowerCase();
-            all = all.stream().filter(n -> t.equals(String.valueOf(n.getType()).toLowerCase())).collect(Collectors.toList());
+            String t = type.toLowerCase(Locale.ROOT);
+            all = all.stream().filter(n -> t.equals(String.valueOf(n.getType()).toLowerCase(Locale.ROOT))).collect(Collectors.toList());
         }
         if (unread != null) {
             all = all.stream().filter(n -> unread ? !n.isRead() : true).collect(Collectors.toList());
         }
         int total = all.size();
-        int from = Math.max(0, (page - 1) * size);
-        int to = Math.min(total, from + size);
-        List<NotificationDto> items = from >= total ? List.of() : all.subList(from, to);
+        int normalizedPage = Math.max(1, page);
+        int normalizedSize = Math.min(Math.max(1, size), 100);
+        long offset = ((long) normalizedPage - 1) * normalizedSize;
+        List<NotificationDto> items = offset >= total ? List.of()
+                : all.subList((int) offset, (int) Math.min(total, offset + normalizedSize));
 
-        Map<String, Object> body = new java.util.HashMap<>();
-        body.put("items", items);
-        body.put("page", page);
-        body.put("size", size);
-        body.put("total", total);
-        return body;
+        return new NotificationPageResponse(items, normalizedPage, normalizedSize, total, null);
     }
 
     @Override
-    public NotificationDto markRead(Long userId, Long id) {
+    public NotificationDto markRead(Long userId, String authorization, Long id) {
         List<NotificationDto> list = ensureSeed(userId);
         for (NotificationDto n : list) {
             if (id != null && id.equals(n.getId())) {

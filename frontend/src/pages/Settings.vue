@@ -86,34 +86,51 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="rounded-md border border-gray-200 bg-white p-2 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-    <div>
-      <div class="overflow-x-auto">
-        <div class="grid grid-cols-2 gap-1 rounded-md bg-gray-50 p-1 dark:bg-gray-900/40 md:flex md:min-w-max">
+  <div class="ui-page">
+    <header class="ui-page-header">
+      <div class="min-w-0">
+        <h1 class="ui-title">设置</h1>
+        <p class="ui-description">管理公开资料、通知偏好、关联状态与账号安全。</p>
+      </div>
+    </header>
+
+    <div class="ui-panel overflow-hidden">
+      <nav class="ui-toolbar" aria-label="设置导航">
+        <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           <button
             v-for="tab in tabs"
             :key="tab.key"
             type="button"
-            class="min-w-0 rounded px-3 py-2 text-sm font-medium transition-colors md:px-4"
-            :class="selectedTab === tab.key ? 'bg-white text-brandDay-700 shadow-sm dark:bg-gray-800 dark:text-brandNight-300' : 'text-gray-600 hover:bg-white/70 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800/70 dark:hover:text-gray-50'"
+            class="settings-tab ui-button min-w-0 flex-1 whitespace-normal px-3 py-2 text-sm sm:flex-none sm:px-4"
             :aria-current="selectedTab === tab.key ? 'page' : undefined"
             @click="selectTab(tab.key)"
           >
             {{ tab.label }}
           </button>
         </div>
+
+      </nav>
+
+      <div class="p-4 sm:p-6">
+        <SettingsProfileTab v-if="selectedTab === 'profile'" @dirty-change="setTabDirty('profile', $event)" />
+        <SettingsNotificationsTab v-else-if="selectedTab === 'notifications'" @dirty-change="setTabDirty('notifications', $event)" />
+        <SettingsConnectedTab v-else-if="selectedTab === 'connected'" />
+
+        <SettingsAccount v-else @dirty-change="setTabDirty('account', $event)" />
       </div>
-    </div>
-
-    <div class="px-2 pb-2 pt-4">
-      <SettingsProfileTab v-if="selectedTab === 'profile'" @dirty-change="setTabDirty('profile', $event)" />
-      <SettingsNotificationsTab v-else-if="selectedTab === 'notifications'" @dirty-change="setTabDirty('notifications', $event)" />
-      <SettingsConnectedTab v-else-if="selectedTab === 'connected'" />
-
-      <SettingsAccount v-else @dirty-change="setTabDirty('account', $event)" />
     </div>
   </div>
 </template>
 
 <style scoped>
+.settings-tab[aria-current='page'] {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.settings-tab:not([aria-current='page']):hover {
+  border-color: var(--ui-border);
+  background: var(--ui-subtle);
+}
 </style>

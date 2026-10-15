@@ -1,16 +1,16 @@
 <template>
-  <div class="border-t border-gray-100 px-4 py-2.5 dark:border-gray-800">
-    <div class="flex items-center gap-3 text-[11px] uppercase tracking-[0.22em] text-gray-400 dark:text-gray-500">
+  <div class="border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+    <div class="ui-muted flex items-center gap-3 text-[11px] uppercase tracking-[0.18em]">
       <span class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
       <span>第三方登录</span>
       <span class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
     </div>
-    <div class="mt-2.5 flex items-center justify-center gap-2.5">
+    <div class="mt-3 flex flex-wrap items-center justify-center gap-2">
       <button
         v-for="provider in providers"
         :key="provider.id"
         type="button"
-        class="inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white shadow-sm transition hover:-translate-y-0.5 dark:bg-gray-800"
+        class="ui-button inline-flex h-10 w-10 min-h-10 p-0"
         :class="provider.enabled ? 'border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700' : 'border-gray-200 text-gray-400 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-500 dark:hover:bg-gray-700'"
         :disabled="!provider.enabled"
         :aria-label="`${provider.label} 登录`"
@@ -38,7 +38,7 @@
         </svg>
       </button>
     </div>
-    <p class="mt-2 text-center text-[10px] leading-4 text-gray-400 dark:text-gray-500">
+    <p class="ui-muted mt-2 text-center text-[10px] leading-4">
       {{ footerText }}
     </p>
   </div>

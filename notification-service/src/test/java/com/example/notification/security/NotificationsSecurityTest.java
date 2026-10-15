@@ -142,6 +142,21 @@ class NotificationsSecurityTest {
     }
 
     @Test
+    void large_pages_return_empty_items_without_overflow_and_keep_user_scoped_total() throws Exception {
+        for (int page : new int[]{21474838, Integer.MAX_VALUE}) {
+            mockMvc.perform(get("/api/v1/notifications")
+                            .header("Authorization", bearerToken(101L))
+                            .param("page", Integer.toString(page))
+                            .param("size", "100"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items").isEmpty())
+                    .andExpect(jsonPath("$.total").value(1))
+                    .andExpect(jsonPath("$.page").value(page))
+                    .andExpect(jsonPath("$.size").value(100));
+        }
+    }
+
+    @Test
     void ordinary_user_jwt_cannot_call_internal_endpoint() throws Exception {
         mockMvc.perform(post("/api/v1/notifications/internal")
                         .header("Authorization", bearerToken(101L))
@@ -213,6 +228,37 @@ class NotificationsSecurityTest {
     }
 
     @Test
+    void internal_event_id_is_idempotent_and_conflicting_payload_is_rejected() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        String body = notificationJson(303L, null, null, null, eventId, "Created internally");
+
+        mockMvc.perform(post("/api/v1/notifications/internal")
+                        .header(InternalServiceAuthenticationFilter.INTERNAL_CREDENTIAL_HEADER, INTERNAL_CREDENTIAL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/v1/notifications/internal")
+                        .header(InternalServiceAuthenticationFilter.INTERNAL_CREDENTIAL_HEADER, INTERNAL_CREDENTIAL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/v1/notifications/internal")
+                        .header(InternalServiceAuthenticationFilter.INTERNAL_CREDENTIAL_HEADER, INTERNAL_CREDENTIAL)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(notificationJson(303L, null, null, null, eventId, "Different payload")))
+                .andExpect(status().isConflict());
+
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM notifications WHERE idempotency_key = ?",
+                Integer.class,
+                eventId.toString()
+        );
+        org.assertj.core.api.Assertions.assertThat(count).isEqualTo(1);
+    }
+
+    @Test
     void invalid_target_metadata_is_rejected() throws Exception {
         mockMvc.perform(post("/api/v1/notifications/internal")
                         .header(InternalServiceAuthenticationFilter.INTERNAL_CREDENTIAL_HEADER, INTERNAL_CREDENTIAL)
@@ -278,8 +324,14 @@ class NotificationsSecurityTest {
     }
 
     private String notificationJson(long userId, Long threadId, Long targetId, String targetType) {
+        return notificationJson(userId, threadId, targetId, targetType, null, "Created internally");
+    }
+
+    private String notificationJson(long userId, Long threadId, Long targetId, String targetType,
+                                    UUID eventId, String title) {
         StringBuilder json = new StringBuilder("{\"userId\":").append(userId)
-                .append(",\"type\":\"system\",\"title\":\"Created internally\",\"content\":\"Created by a trusted service\"");
+                .append(",\"type\":\"system\",\"title\":\"").append(title)
+                .append("\",\"content\":\"Created by a trusted service\"");
         if (threadId != null) {
             json.append(",\"threadId\":").append(threadId);
         }
@@ -288,6 +340,9 @@ class NotificationsSecurityTest {
         }
         if (targetType != null) {
             json.append(",\"targetType\":\"").append(targetType).append("\"");
+        }
+        if (eventId != null) {
+            json.append(",\"eventId\":\"").append(eventId).append("\"");
         }
         return json.append('}').toString();
     }

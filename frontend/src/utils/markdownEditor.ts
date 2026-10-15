@@ -43,6 +43,23 @@ export function insertText(
   return wrapSelection(value, '', '', range, text)
 }
 
+export function replaceSelection(
+  value: string,
+  replacement: string,
+  range?: Partial<TextSelectionRange>,
+): WrappedTextResult {
+  const safeValue = String(value || '')
+  const safeRange = clampRange(safeValue, range)
+  const safeReplacement = String(replacement || '')
+  const nextValue = `${safeValue.slice(0, safeRange.start)}${safeReplacement}${safeValue.slice(safeRange.end)}`
+  const selectionStart = safeRange.start
+
+  return {
+    value: nextValue,
+    selection: { start: selectionStart, end: selectionStart + safeReplacement.length },
+  }
+}
+
 export function appendLine(
   value: string,
   line: string,

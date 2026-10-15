@@ -15,6 +15,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -64,8 +65,61 @@ class SectionServiceTest {
         verify(sectionRepository, times(0)).search(any(), any(PageRequest.class));
     }
 
+    @Test
+    void list_should_trim_query_before_repository_and_cache_key() {
+        SectionRepository sectionRepository = mock(SectionRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(sectionRepository.search(any(), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        SectionService service = new SectionService(sectionRepository, redisTemplate, null);
+        service.list("  tech  ", 1, 20);
+
+        verify(valueOperations).get("cache:sections:list:tech:1:20");
+        verify(sectionRepository).search(eq("tech"), any(PageRequest.class));
+    }
+
+    @Test
+    void list_should_fallback_and_delete_cache_when_cached_section_is_missing_id() throws Exception {
+        SectionRepository sectionRepository = mock(SectionRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenReturn(
+                "{\"items\":[{\"name\":\"Tech\",\"slug\":\"tech\",\"visible\":true}],\"total\":1}");
+        when(sectionRepository.search(any(), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        SectionService service = new SectionService(sectionRepository, redisTemplate, null);
+        assertThat(service.list(null, 1, 20)).isNotNull();
+
+        verify(redisTemplate).delete("cache:sections:list::1:20");
+        verify(sectionRepository).search(eq(null), any(PageRequest.class));
+    }
+
+    @Test
+    void list_should_fallback_and_delete_cache_when_cached_total_is_negative() throws Exception {
+        SectionRepository sectionRepository = mock(SectionRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenReturn("{\"items\":[],\"total\":-1}");
+        when(sectionRepository.search(any(), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        SectionService service = new SectionService(sectionRepository, redisTemplate, null);
+        assertThat(service.list(null, 1, 20)).isNotNull();
+
+        verify(redisTemplate).delete("cache:sections:list::1:20");
+        verify(sectionRepository).search(eq(null), any(PageRequest.class));
+    }
+
     private Section section(Long id, String name, String slug) {
         Section section = new Section();
+        section.setId(id);
         section.setName(name);
         section.setSlug(slug);
         section.setVisible(true);

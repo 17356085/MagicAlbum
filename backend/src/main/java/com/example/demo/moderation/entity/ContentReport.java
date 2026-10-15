@@ -1,5 +1,8 @@
 package com.example.demo.moderation.entity;
 
+import com.example.demo.moderation.model.ReportReason;
+import com.example.demo.moderation.model.ReportStatus;
+import com.example.demo.moderation.model.ReportTargetType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

@@ -5,29 +5,15 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { initRecentVisitsTracking } from './composables/useRecentVisits'
+import { initializeTheme } from './utils/theme'
 
 // Import highlight.js themes as URLs for dynamic switching
 import hljsThemeDarkUrl from 'highlight.js/styles/atom-one-dark.css?url'
 import hljsThemeLightUrl from 'highlight.js/styles/atom-one-light.css?url'
 
-function initThemeClassFromStorage(): void {
-  const saved = localStorage.getItem('theme')
-  const root = document.documentElement
-  if (saved === 'dark') {
-    root.classList.add('dark')
-  } else if (saved === 'light') {
-    root.classList.remove('dark')
-  } else {
-    const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-    if (systemDark) root.classList.add('dark')
-    else root.classList.remove('dark')
-  }
-}
-
 function applyHljsTheme(): void {
-  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
   const hasDarkClass = document.documentElement.classList.contains('dark')
-  const isDark = prefersDark || hasDarkClass
+  const isDark = hasDarkClass
 
   const href = isDark ? hljsThemeDarkUrl : hljsThemeLightUrl
   const id = 'hljs-theme'
@@ -43,20 +29,12 @@ function applyHljsTheme(): void {
   }
 }
 
-initThemeClassFromStorage()
+initializeTheme()
 applyHljsTheme()
-
-if (window.matchMedia) {
-  const mq = window.matchMedia('(prefers-color-scheme: dark)')
-  if (typeof mq.addEventListener === 'function') {
-    mq.addEventListener('change', applyHljsTheme)
-  } else if (typeof mq.addListener === 'function') {
-    mq.addListener(applyHljsTheme)
-  }
-}
 
 const observer = new MutationObserver(applyHljsTheme)
 observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+if (import.meta.hot) import.meta.hot.dispose(() => observer.disconnect())
 
 try { initRecentVisitsTracking(router) } catch (_) {}
 

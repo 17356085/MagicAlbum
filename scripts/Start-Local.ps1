@@ -10,6 +10,8 @@ $blueAlbumRoot = Split-Path -Parent $PSScriptRoot
 $blueAlbumRunDir = Join-Path $blueAlbumRoot 'test-artifacts/local-runtime'
 $blueAlbumEnvFile = Join-Path $blueAlbumRunDir 'runtime.env'
 $blueAlbumStateFile = Join-Path $blueAlbumRunDir 'processes.json'
+$blueAlbumComposeFile = Join-Path $blueAlbumRoot 'docker-compose.local.yml'
+Import-Module (Join-Path $PSScriptRoot 'lib/LocalRuntime.psm1') -Force
 New-Item -ItemType Directory -Path $blueAlbumRunDir -Force | Out-Null
 
 function New-LocalSecret {
@@ -19,7 +21,7 @@ function New-LocalSecret {
     return [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
 }
 
-function Wait-LocalHealth([string]$Name, [string]$Url, [int]$ProcessId) {
+function Wait-LocalHealth([string]$Name, [string]$Url, [int]$ProcessId, [switch]$Actuator) {
     $deadline = [DateTime]::UtcNow.AddSeconds(150)
     while ([DateTime]::UtcNow -lt $deadline) {
         if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
@@ -27,7 +29,13 @@ function Wait-LocalHealth([string]$Name, [string]$Url, [int]$ProcessId) {
         }
         try {
             $response = Invoke-WebRequest -Uri $Url -TimeoutSec 3 -UseBasicParsing
-            if ($response.StatusCode -eq 200) { return }
+            if ($response.StatusCode -eq 200) {
+                if (-not $Actuator) { return }
+                try {
+                    $health = ConvertFrom-Json -InputObject $response.Content
+                    if ($health.status -eq 'UP') { return }
+                } catch { }
+            }
         } catch { }
         Start-Sleep -Seconds 2
     }
@@ -44,25 +52,7 @@ if (-not $JavaHome -or -not (Test-Path (Join-Path $JavaHome 'bin/javac.exe'))) {
     throw 'Provide a working JDK 21 or newer with -JavaHome.'
 }
 $blueAlbumJava = Join-Path $JavaHome 'bin/java.exe'
-$env:JAVA_HOME = $JavaHome
-$env:Path = "$(Join-Path $JavaHome 'bin');$env:Path"
 Get-Command docker,mvn,node -ErrorAction Stop | Out-Null
-& docker info --format '{{.ServerVersion}}'
-if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop must be running.' }
-
-if (Test-Path $blueAlbumStateFile) {
-    $oldState = Get-Content -LiteralPath $blueAlbumStateFile -Raw | ConvertFrom-Json
-    foreach ($entry in $oldState) {
-        $running = Get-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue
-        if ($running -and $running.StartTime.ToUniversalTime().Ticks -eq ([DateTime]$entry.StartTime).ToUniversalTime().Ticks) {
-            throw 'A managed local run is active. Run scripts/Stop-Local.ps1 before restarting.'
-        }
-    }
-}
-foreach ($port in @(8080,8081,9000,5173)) {
-    $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    if ($listener) { throw "Port $port is already in use. No existing process was stopped." }
-}
 
 if (-not (Test-Path $blueAlbumEnvFile)) {
     $settings = @(
@@ -73,6 +63,7 @@ if (-not (Test-Path $blueAlbumEnvFile)) {
         'REDIS_HOST=127.0.0.1', 'REDIS_PORT=16379', "REDIS_PASSWORD=$(New-LocalSecret)",
         'SPRING_RABBITMQ_HOST=127.0.0.1', 'SPRING_RABBITMQ_PORT=15673',
         'SPRING_RABBITMQ_USERNAME=bluealbum', "SPRING_RABBITMQ_PASSWORD=$(New-LocalSecret)",
+        'RABBITMQ_MANAGEMENT_PORT=25673',
         'APP_RABBIT_ENABLED=true', 'JWT_ISSUER=MagicAlbum', "JWT_SECRET=$(New-LocalSecret)",
         "INTERNAL_SERVICE_TOKEN=$(New-LocalSecret)",
         'NOTIFICATION_SERVICE_MODE=remote', 'NOTIFICATION_SERVICE_BASE_URL=http://127.0.0.1:8081',
@@ -83,30 +74,76 @@ if (-not (Test-Path $blueAlbumEnvFile)) {
     )
     [IO.File]::WriteAllLines($blueAlbumEnvFile, $settings, (New-Object Text.UTF8Encoding $false))
 }
-$originalEnv = @{}
-$started = [System.Collections.Generic.List[object]]::new()
-try {
-    foreach ($line in Get-Content -LiteralPath $blueAlbumEnvFile) {
-        if ($line -match '^([A-Z][A-Z0-9_]*)=(.*)$') {
-            $key = $Matches[1]
-            $originalEnv[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
-            [Environment]::SetEnvironmentVariable($key, $Matches[2], 'Process')
+
+$runtimeValues = Read-LocalRuntimeEnvironment -Path $blueAlbumEnvFile
+$runtimeValues = Add-LocalRuntimeCompatibilityDefaults -Values $runtimeValues
+Assert-LocalRuntimeConfiguration -Values $runtimeValues
+$portConfiguration = Get-LocalPortConfiguration -Values $runtimeValues
+
+if (Test-Path $blueAlbumStateFile) {
+    $oldState = Read-LocalProcessSnapshot -Path $blueAlbumStateFile
+    foreach ($entry in @($oldState)) {
+        $running = Get-Process -Id ([int]$entry.ProcessId) -ErrorAction SilentlyContinue
+        if ($running) {
+            try {
+                $sameStart = $running.StartTime.ToUniversalTime().Ticks -eq ([DateTime]$entry.StartTime).ToUniversalTime().Ticks
+            } catch {
+                throw 'A managed local process could not be checked safely; run scripts/Stop-Local.ps1 manually.'
+            }
+            if ($sameStart) {
+                throw 'A managed local run is active. Run scripts/Stop-Local.ps1 before restarting.'
+            }
         }
     }
-    if (-not $originalEnv.ContainsKey('VITE_AUTH_VERIFY_MODE')) {
-        $originalEnv['VITE_AUTH_VERIFY_MODE'] = [Environment]::GetEnvironmentVariable('VITE_AUTH_VERIFY_MODE', 'Process')
+}
+
+# Only application ports are preflighted here. Compose owns dependency-container
+# reuse; it reports a dependency-port conflict without stopping an existing resource.
+$portsToCheck = @(
+    [pscustomobject]@{ Name = 'backend'; Port = $portConfiguration.Backend },
+    [pscustomobject]@{ Name = 'notification-service'; Port = $portConfiguration.Notification },
+    [pscustomobject]@{ Name = 'gateway'; Port = $portConfiguration.Gateway },
+    [pscustomobject]@{ Name = 'frontend'; Port = $portConfiguration.Frontend }
+)
+foreach ($port in $portsToCheck) {
+    $listener = Get-NetTCPConnection -LocalPort $port.Port -State Listen -ErrorAction SilentlyContinue
+    if ($listener) {
+        throw "Port $($port.Port) for $($port.Name) is already in use. No existing process was stopped."
     }
-    $env:VITE_AUTH_VERIFY_MODE = 'off'
+}
+
+$isolatedNames = @(Get-LocalEnvironmentNamesToIsolate)
+$environmentNames = @($isolatedNames + @($runtimeValues.Keys) + @('JAVA_HOME', 'Path')) | Select-Object -Unique
+$environmentSnapshot = Get-LocalEnvironmentSnapshot -Names $environmentNames
+$started = [System.Collections.Generic.List[object]]::new()
+
+try {
+    foreach ($name in $isolatedNames) {
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+    foreach ($entry in $runtimeValues.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, 'Process')
+    }
+    [Environment]::SetEnvironmentVariable('JAVA_HOME', $JavaHome, 'Process')
+    [Environment]::SetEnvironmentVariable('Path', "$(Join-Path $JavaHome 'bin');$([Environment]::GetEnvironmentVariable('Path', 'Process'))", 'Process')
+
     Push-Location $blueAlbumRoot
     try {
-        & docker compose --env-file $blueAlbumEnvFile -f docker-compose.local.yml up -d --wait --wait-timeout 180
+        & docker info --format '{{.ServerVersion}}'
+        if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop must be running.' }
+
+        & docker compose --env-file $blueAlbumEnvFile -f $blueAlbumComposeFile up -d --wait --wait-timeout 180
         if ($LASTEXITCODE -ne 0) { throw 'Local dependency startup failed.' }
+
         # Separate histories and schemas: neither service needs automatic Flyway baselining.
-        $sql = "CREATE DATABASE IF NOT EXISTS bluealbum_local_notifications CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON bluealbum_local_notifications.* TO 'bluealbum'@'%';"
-        $sql | & docker compose --env-file $blueAlbumEnvFile -f docker-compose.local.yml exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root'
+        $notificationDb = [string]$runtimeValues['NOTIFICATION_DB_NAME']
+        $databaseUser = [string]$runtimeValues['DB_USER']
+        $sql = "CREATE DATABASE IF NOT EXISTS ``$notificationDb`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON ``$notificationDb``.* TO '$databaseUser'@'%';"
+        $sql | & docker compose --env-file $blueAlbumEnvFile -f $blueAlbumComposeFile exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root'
         if ($LASTEXITCODE -ne 0) { throw 'Notification database initialization failed.' }
+
         if ($DependenciesOnly) {
-            Write-Host 'Isolated MySQL, Redis and RabbitMQ dependencies are healthy.'
+            Write-Host 'Isolated MySQL, Redis and RabbitMQ dependencies are healthy and were retained.'
             return
         }
         if (-not $NoBuild) {
@@ -114,49 +151,58 @@ try {
             & mvn -B package *> (Join-Path $blueAlbumRunDir 'build.log')
             if ($LASTEXITCODE -ne 0) { throw "Java build failed. See $blueAlbumRunDir/build.log." }
         }
+
+        # V3 must complete before backend starts and can run V20261014 or dispatch outbox rows.
         $applications = @(
-            @{ Name='backend'; Jar='backend/target/demo1-0.0.1-SNAPSHOT.jar'; Port=8080 },
-            @{ Name='notification-service'; Jar='notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar'; Port=8081 },
-            @{ Name='gateway'; Jar='gateway/target/bluealbum-gateway-0.0.1-SNAPSHOT.jar'; Port=9000 }
+            @{ Name = 'notification-service'; Jar = 'notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar'; Port = 8081 },
+            @{ Name = 'backend'; Jar = 'backend/target/demo1-0.0.1-SNAPSHOT.jar'; Port = 8080 },
+            @{ Name = 'gateway'; Jar = 'gateway/target/bluealbum-gateway-0.0.1-SNAPSHOT.jar'; Port = 9000 }
         )
         foreach ($app in $applications) {
             $jar = Join-Path $blueAlbumRoot $app.Jar
             if (-not (Test-Path $jar)) { throw "Missing $jar. Run without -NoBuild." }
             $listener = Get-NetTCPConnection -LocalPort $app.Port -State Listen -ErrorAction SilentlyContinue
-            if ($listener) { throw "Port $($app.Port) became occupied by PID $($listener.OwningProcess)." }
+            if ($listener) { throw "Port $($app.Port) became occupied. No existing process was stopped." }
             # Windows locks a running JAR. Run a snapshot so future builds remain possible.
             $runJar = Join-Path $blueAlbumRunDir "$($app.Name).jar"
             Copy-Item -LiteralPath $jar -Destination $runJar -Force
-            $arguments = @('-jar', "`"$runJar`"", '--server.address=127.0.0.1')
+            $arguments = @('-jar', "`"$runJar`"", '--server.address=127.0.0.1', "--server.port=$($app.Port)")
             if ($app.Name -eq 'backend') {
                 $uploads = Join-Path $blueAlbumRunDir 'uploads'
                 $arguments += "`"--app.storage.local.baseDir=$uploads`""
             }
             $process = Start-Process -FilePath $blueAlbumJava -ArgumentList $arguments -WorkingDirectory $blueAlbumRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $blueAlbumRunDir "$($app.Name).log") -RedirectStandardError (Join-Path $blueAlbumRunDir "$($app.Name).err.log")
-            $entry = @{ Name=$app.Name; ProcessId=$process.Id; StartTime=$process.StartTime.ToUniversalTime().ToString('o') }
+            $entry = @{ Name = $app.Name; ProcessId = $process.Id; StartTime = $process.StartTime.ToUniversalTime().ToString('o') }
             $started.Add($entry)
-            Wait-LocalHealth $app.Name "http://127.0.0.1:$($app.Port)/actuator/health" $process.Id
+            Write-LocalProcessSnapshot -Path $blueAlbumStateFile -Entries $started.ToArray()
+            Wait-LocalHealth $app.Name "http://127.0.0.1:$($app.Port)/actuator/health" $process.Id -Actuator
             Write-Host "$($app.Name) is healthy."
         }
+
         $vite = Join-Path $blueAlbumRoot 'frontend/node_modules/vite/bin/vite.js'
         if (-not (Test-Path $vite)) { throw 'Install frontend dependencies with pnpm install first.' }
         $node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
         $process = Start-Process -FilePath $node -ArgumentList @("`"$vite`"", '--host', '127.0.0.1', '--port', '5173', '--strictPort') -WorkingDirectory (Join-Path $blueAlbumRoot 'frontend') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $blueAlbumRunDir 'frontend.log') -RedirectStandardError (Join-Path $blueAlbumRunDir 'frontend.err.log')
-        $started.Add(@{ Name='frontend'; ProcessId=$process.Id; StartTime=$process.StartTime.ToUniversalTime().ToString('o') })
+        $started.Add(@{ Name = 'frontend'; ProcessId = $process.Id; StartTime = $process.StartTime.ToUniversalTime().ToString('o') })
+        Write-LocalProcessSnapshot -Path $blueAlbumStateFile -Entries $started.ToArray()
         Wait-LocalHealth 'frontend' 'http://127.0.0.1:5173/' $process.Id
-        [IO.File]::WriteAllText($blueAlbumStateFile, (ConvertTo-Json -InputObject $started.ToArray()), (New-Object Text.UTF8Encoding $false))
         Write-Host 'BlueAlbum is running at http://127.0.0.1:5173 (local AI mock; isolated MySQL/Redis/RabbitMQ).'
-    } finally { Pop-Location }
+    } finally {
+        Pop-Location
+    }
 } catch {
-    foreach ($entry in $started) {
-        $process = Get-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue
-        if ($process -and $process.StartTime.ToUniversalTime().Ticks -eq ([DateTime]$entry.StartTime).ToUniversalTime().Ticks) {
-            Stop-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue
+    $cleanupFailures = [System.Collections.Generic.List[string]]::new()
+    for ($index = $started.Count - 1; $index -ge 0; $index--) {
+        $cleanup = Stop-LocalManagedProcess -Entry $started[$index] -WorkspaceRoot $blueAlbumRoot
+        if ($cleanup.State -in @('mismatch', 'failed')) {
+            $cleanupFailures.Add([string]$cleanup.Name)
         }
     }
+    if ($cleanupFailures.Count -gt 0) {
+        Write-Warning "Startup cleanup could not stop application process(es): $($cleanupFailures -join ', ')."
+    }
+    Write-Warning 'Startup failed. Application processes started by this attempt were cleaned where ownership was verified; dependency containers were retained.'
     throw
 } finally {
-    foreach ($key in $originalEnv.Keys) {
-        [Environment]::SetEnvironmentVariable($key, $originalEnv[$key], 'Process')
-    }
+    Restore-LocalEnvironmentSnapshot -Snapshot $environmentSnapshot
 }

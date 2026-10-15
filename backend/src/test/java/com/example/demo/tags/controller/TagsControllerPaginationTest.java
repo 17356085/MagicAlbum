@@ -27,7 +27,8 @@ class TagsControllerPaginationTest {
                 .list(null, null, 0, 100)
                 .getBody();
 
-        assertThat(body).containsEntry("page", 1).containsEntry("size", 50);
+        assertThat(body.page()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(50);
         verify(tagService).search(isNull(), isNull(Long.class), eq(0), eq(100));
     }
 
@@ -41,7 +42,8 @@ class TagsControllerPaginationTest {
                 .popular(null, 100)
                 .getBody();
 
-        assertThat(body).containsEntry("size", 20).containsEntry("total", 1);
+        assertThat(body.size()).isEqualTo(20);
+        assertThat(body.total()).isEqualTo(1);
         verify(tagService).popular(isNull(Long.class), eq(100));
     }
 }

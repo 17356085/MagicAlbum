@@ -58,50 +58,50 @@ const {
 </script>
 
 <template>
-  <div ref="rootRef" class="space-y-3">
+  <div ref="rootRef" class="space-y-4">
     <div class="flex flex-wrap items-center gap-2">
       <div :class="mobilePreviewExclusive && showPreview ? 'hidden lg:flex' : 'flex'" class="flex-wrap items-center gap-2">
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('bold')">粗体</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('italic')">斜体</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('heading')">标题</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('quote')">引用</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('code')">代码块</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('list')">列表</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('ordered-list')">有序列表</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('link')">链接</button>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="insertMarkdown('image')">图片</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('bold')">粗体</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('italic')">斜体</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('heading')">标题</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('quote')">引用</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('code')">代码块</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('list')">列表</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('ordered-list')">有序列表</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('link')">链接</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('image')">图片</button>
       </div>
-      <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" :aria-pressed="showPreview" @click="showPreview = !showPreview">
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :aria-pressed="showPreview" @click="showPreview = !showPreview">
         <template v-if="showPreview">
           <span v-if="mobilePreviewExclusive" class="lg:hidden">返回编辑</span>
           <span :class="mobilePreviewExclusive ? 'hidden lg:inline' : ''">隐藏预览</span>
         </template>
         <template v-else>{{ previewLabel }}</template>
       </button>
-      <span class="ml-auto text-xs text-gray-500 dark:text-gray-400">字数：{{ contentLength }}<template v-if="typeof maxLength === 'number'">/{{ maxLength }}</template></span>
+      <span class="ui-muted ml-auto text-xs">字数：{{ contentLength }}<template v-if="typeof maxLength === 'number'">/{{ maxLength }}</template></span>
     </div>
 
-    <div v-if="showLinkPanel" ref="linkPanelRef" class="rounded-md border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div v-if="showLinkPanel" ref="linkPanelRef" class="ui-panel p-4">
       <div class="mb-2 text-sm font-medium dark:text-gray-100">插入链接</div>
       <div class="grid gap-3 md:grid-cols-2">
-        <label class="text-xs text-gray-600 dark:text-gray-300">
+        <label class="text-sm font-medium">
           链接文本
           <input
             ref="linkTextInputRef"
             v-model="linkLabel"
             type="text"
-            class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="请输入链接文本"
             @keyup.enter="submitLinkPanel"
             @keyup.esc="closeLinkPanel"
           />
         </label>
-        <label class="text-xs text-gray-600 dark:text-gray-300">
+        <label class="text-sm font-medium">
           链接地址
           <input
             v-model="linkUrl"
             type="url"
-            class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="https://"
             @keyup.enter="submitLinkPanel"
             @keyup.esc="closeLinkPanel"
@@ -109,36 +109,36 @@ const {
         </label>
       </div>
       <div class="mt-2 flex items-center justify-between gap-2">
-        <div v-if="linkError" class="text-xs text-red-600 dark:text-red-400">{{ linkError }}</div>
-        <div v-else class="text-xs text-gray-500 dark:text-gray-400">按 Enter 确认，Esc 取消</div>
+        <div v-if="linkError" class="text-xs text-red-600 dark:text-red-400" role="alert">{{ linkError }}</div>
+        <div v-else class="ui-muted text-xs">按 Enter 确认，Esc 取消</div>
         <div class="flex items-center gap-2">
-          <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="closeLinkPanel">取消</button>
-          <button type="button" class="rounded bg-brandDay-600 px-2.5 py-1 text-xs text-white hover:bg-brandDay-700 dark:bg-brandNight-600 dark:hover:bg-brandNight-700" @click="submitLinkPanel">插入链接</button>
+          <button type="button" class="ui-button px-2.5 py-1 text-xs" @click="closeLinkPanel">取消</button>
+          <button type="button" class="ui-button-primary px-2.5 py-1 text-xs" @click="submitLinkPanel">插入链接</button>
         </div>
       </div>
     </div>
 
-    <div v-if="showImagePanel" ref="imagePanelRef" class="rounded-md border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div v-if="showImagePanel" ref="imagePanelRef" class="ui-panel p-4">
       <div class="mb-2 text-sm font-medium dark:text-gray-100">插入图片</div>
       <div class="grid gap-3 md:grid-cols-2">
-        <label class="text-xs text-gray-600 dark:text-gray-300">
+        <label class="text-sm font-medium">
           图片说明
           <input
             ref="imageAltInputRef"
             v-model="imageAlt"
             type="text"
-            class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="请输入图片说明"
             @keyup.enter="submitImagePanel"
             @keyup.esc="closeImagePanel"
           />
         </label>
-        <label class="text-xs text-gray-600 dark:text-gray-300">
+        <label class="text-sm font-medium">
           图片地址
           <input
             v-model="imageUrl"
             type="url"
-            class="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="https://"
             @keyup.enter="submitImagePanel"
             @keyup.esc="closeImagePanel"
@@ -146,19 +146,19 @@ const {
         </label>
       </div>
       <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div v-if="imageError" class="text-xs text-red-600 dark:text-red-400">{{ imageError }}</div>
-        <div v-else class="text-xs text-gray-500 dark:text-gray-400">可直接填图片 URL，也可选择本地图片上传后插入</div>
+        <div v-if="imageError" class="text-xs text-red-600 dark:text-red-400" role="alert">{{ imageError }}</div>
+        <div v-else class="ui-muted text-xs">可直接填图片 URL，也可选择本地图片上传后插入</div>
         <div class="flex items-center gap-2">
           <button
             type="button"
-            class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200"
+            class="ui-button px-2.5 py-1 text-xs"
             :disabled="!uploadImage || uploading"
             @click="fileInputRef?.click()"
           >
             {{ uploading ? '上传中...' : '上传图片' }}
           </button>
-          <button type="button" class="rounded border px-2.5 py-1 text-xs dark:border-gray-700 dark:text-gray-200" @click="closeImagePanel">取消</button>
-          <button type="button" class="rounded bg-brandDay-600 px-2.5 py-1 text-xs text-white hover:bg-brandDay-700 dark:bg-brandNight-600 dark:hover:bg-brandNight-700" @click="submitImagePanel">插入图片</button>
+          <button type="button" class="ui-button px-2.5 py-1 text-xs" @click="closeImagePanel">取消</button>
+          <button type="button" class="ui-button-primary px-2.5 py-1 text-xs" @click="submitImagePanel">插入图片</button>
         </div>
       </div>
     </div>
@@ -174,17 +174,17 @@ const {
           :maxlength="maxLength"
           :placeholder="placeholder"
           :class="mobilePreviewExclusive ? 'min-h-[180px] lg:min-h-[260px]' : 'min-h-[260px]'"
-          class="w-full resize-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+          class="ui-field w-full resize-none min-h-[260px] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
           @input="onTextareaInput"
           @keydown="onTextareaKeydown"
         />
-        <div v-if="uploading" class="absolute top-2 right-3 rounded border border-gray-200 bg-white/85 px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-800/85 dark:text-gray-200">
+        <div v-if="uploading" class="ui-panel absolute right-3 top-2 px-2 py-1 text-xs">
           上传中 {{ uploadProgress }}%
         </div>
       </div>
 
-      <div v-if="showPreview" :class="['min-h-[260px] rounded-md border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40', mobilePreviewExclusive ? 'lg:block' : '']">
-        <div class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">{{ previewLabel }}</div>
+      <div v-if="showPreview" :class="['min-h-[260px] border border-gray-200 bg-[var(--ui-subtle)] p-4 dark:border-gray-700', mobilePreviewExclusive ? 'lg:block' : '']">
+        <div class="ui-muted mb-2 text-xs font-medium">{{ previewLabel }}</div>
         <div class="prose max-w-none break-words dark:prose-invert" v-html="previewHtml" />
       </div>
     </div>

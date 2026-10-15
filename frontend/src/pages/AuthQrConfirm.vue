@@ -1,44 +1,44 @@
 <template>
-  <section class="mx-auto max-w-xl px-4 py-10">
-    <div class="rounded-3xl border border-sky-100 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+  <section class="ui-page mx-auto max-w-xl px-4 py-10">
+    <div class="ui-panel p-5 sm:p-6">
       <div class="space-y-2">
-        <div class="text-xs font-semibold uppercase tracking-[0.22em] text-sky-500 dark:text-cyan-300">QR Confirm</div>
-        <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">移动端确认登录</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400">确认设备信息后，再完成一次登录确认。</p>
+        <div class="ui-muted text-xs font-semibold uppercase tracking-[0.18em]">QR Confirm</div>
+        <h1 class="ui-title">移动端确认登录</h1>
+        <p class="ui-description mt-1">确认设备信息后，再完成一次登录确认。</p>
       </div>
 
-      <div class="mt-5 rounded-2xl bg-sky-50/70 px-4 py-3 text-sm text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-        <div><span class="font-medium text-gray-800 dark:text-gray-100">会话：</span>{{ qrId || '缺少 qrId' }}</div>
+      <div class="ui-toolbar mt-5 flex-col items-stretch border border-gray-200 bg-[var(--ui-subtle)] p-4 text-sm dark:border-gray-700 sm:flex-row sm:items-center">
+        <div class="min-w-0 break-all"><span class="font-medium">会话：</span>{{ qrId || '缺少 qrId' }}</div>
         <div class="mt-2 flex items-center gap-2">
-          <span class="rounded-full px-3 py-1 text-xs font-medium" :class="statusClass">{{ statusLabel }}</span>
-          <span v-if="countdownLabel" class="text-xs text-gray-500 dark:text-gray-400">{{ countdownLabel }}</span>
+          <span class="ui-tag text-xs font-medium" :class="statusClass">{{ statusLabel }}</span>
+          <span v-if="countdownLabel" class="ui-muted text-xs">{{ countdownLabel }}</span>
         </div>
       </div>
 
-      <p v-if="message" class="mt-4 text-sm" :class="messageClass">{{ message }}</p>
+      <p v-if="message" class="mt-4 text-sm" :class="messageClass" role="status" aria-live="polite">{{ message }}</p>
 
-      <div v-if="!qrId" class="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+      <div v-if="!qrId" class="ui-error mt-5 text-sm" role="alert">
         当前链接缺少二维码会话参数，无法继续确认。
       </div>
 
-      <div v-else-if="!isLoggedIn" class="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 dark:border-amber-900/50 dark:bg-amber-950/30">
+      <div v-else-if="!isLoggedIn" class="mt-5 border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
         <div class="text-sm font-medium text-amber-700 dark:text-amber-300">请先登录移动端账号</div>
         <p class="mt-1 text-sm text-amber-600/90 dark:text-amber-200/80">登录后会继续停留在当前确认页。</p>
         <div class="mt-4">
-          <button type="button" class="rounded-xl bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 dark:bg-cyan-500 dark:hover:bg-cyan-600" @click="openLogin">
+          <button type="button" class="ui-button-primary" @click="openLogin">
             先登录
           </button>
         </div>
       </div>
 
       <div v-else class="mt-5 space-y-4">
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 dark:border-gray-700 dark:bg-gray-800/70">
-          <div class="text-sm font-medium text-gray-800 dark:text-gray-100">设备确认</div>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">确认后，桌面端会收到当前账号的扫码状态。</p>
+        <div class="border-t border-gray-200 pt-5 dark:border-gray-700">
+          <div class="text-sm font-medium">设备确认</div>
+          <p class="ui-muted mt-1 text-sm">确认后，桌面端会收到当前账号的扫码状态。</p>
           <div class="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
-              class="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-700"
+              class="ui-button disabled:cursor-not-allowed"
               :disabled="scanning || confirming || status === 'SCANNED' || status === 'CONFIRMED' || status === 'EXPIRED' || status === 'CANCELLED'"
               @click="handleScan"
             >
@@ -46,7 +46,7 @@
             </button>
             <button
               type="button"
-              class="rounded-xl bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-cyan-500 dark:hover:bg-cyan-600"
+              class="ui-button-primary disabled:cursor-not-allowed"
               :disabled="confirming || scanning || status !== 'SCANNED'"
               @click="handleConfirm"
             >
@@ -55,7 +55,7 @@
           </div>
         </div>
 
-        <div v-if="status === 'CONFIRMED'" class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <div v-if="status === 'CONFIRMED'" class="mt-4 border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300" role="status" aria-live="polite">
           当前账号已完成确认，桌面端将自动进入登录态。
         </div>
       </div>

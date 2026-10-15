@@ -79,7 +79,11 @@ public class JwtTokenProvider {
                     .parseSignedClaims(token)
                     .getPayload();
             String sub = claims.getSubject();
-            return sub != null ? Long.parseLong(sub) : null;
+            if (claims.getExpiration() == null || sub == null) {
+                return null;
+            }
+            long userId = Long.parseLong(sub);
+            return userId > 0 ? userId : null;
         } catch (Exception e) {
             return null;
         }

@@ -66,10 +66,10 @@ function avatarOf(item: FollowingFeedItem): string {
 function excerpt(item: FollowingFeedItem): string {
   const text = String(item.summary || item.content || item.contentMd || '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-\[\]]/g, '')
+    .replace(/[#>*_`~\-[\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
   if (!text) return ''
@@ -164,20 +164,17 @@ async function loadFeed(requestSeq = ++loadRequestSeq): Promise<void> {
   }
   const data = await listUserThreads(target.id, { page: page.value, size: size.value })
   if (requestSeq !== loadRequestSeq) return
-  const normalized = Array.isArray(data)
-    ? { items: data, page: page.value, size: size.value, total: data.length }
-    : (data || { items: [], page: page.value, size: size.value, total: 0 })
   feed.value = {
-    items: (normalized.items || []).map((thread) => ({
+    items: data.items.map((thread) => ({
       ...thread,
       authorId: thread.authorId || target.id,
       authorUsername: thread.authorUsername || target.username,
       authorNickname: thread.authorNickname || target.nickname,
       authorAvatarUrl: thread.authorAvatarUrl || target.avatarUrl,
     })),
-    page: Number(normalized.page || page.value),
-    size: Number(normalized.size || size.value),
-    total: Number(normalized.total || 0),
+    page: data.page,
+    size: data.size,
+    total: data.total,
   }
 }
 
@@ -250,32 +247,39 @@ watch([currentUserId, isLoggedIn], () => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-[920px] space-y-3">
-    <section class="overflow-hidden rounded-lg bg-white shadow-sm dark:bg-gray-800">
-      <div class="flex items-center justify-between px-4 pt-3 text-xs text-gray-500 dark:text-gray-400">
+  <section class="ui-page mx-auto max-w-[920px]">
+    <header class="ui-page-header">
+      <div>
+        <h1 class="ui-title">关注动态</h1>
+        <p class="ui-description">查看你关注的成员最近发布的帖子。</p>
+      </div>
+      <router-link v-if="currentUserId" :to="`/users/${currentUserId}/following`" class="ui-button">全部关注</router-link>
+    </header>
+
+    <section class="ui-panel mb-3 overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 text-xs text-[var(--ui-muted)]">
         <span>全部动态包含所有关注用户的新帖；头像仅用于快捷筛选</span>
-        <router-link v-if="currentUserId" :to="`/users/${currentUserId}/following`" class="shrink-0 text-brandDay-600 hover:underline dark:text-brandNight-300">全部关注</router-link>
       </div>
       <div class="flex h-24 items-center gap-2 px-2 py-3">
         <button
           type="button"
-          class="flex size-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-50 hover:text-brandDay-600 dark:hover:bg-gray-700 dark:hover:text-brandNight-300"
+          class="ui-button h-8 w-8 shrink-0 rounded-full p-0 text-[var(--ui-muted)]"
           @click="scrollChannels('left')"
           aria-label="向左查看更多关注用户"
         >
           ‹
         </button>
 
-        <div ref="channelScroller" class="scrollbar-none flex min-w-0 flex-1 items-center gap-5 overflow-x-auto px-1 py-1">
+        <div ref="channelScroller" class="ui-scroll flex min-w-0 flex-1 items-center gap-5 overflow-x-auto px-1 py-1">
           <button
             type="button"
             class="flex h-[72px] w-[76px] shrink-0 flex-col items-center justify-start text-center"
             @click="selectUser('all')"
           >
             <div
-              class="mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 bg-white text-brandDay-500 dark:bg-gray-800 dark:text-brandNight-300"
+              class="mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 bg-[var(--ui-surface)] text-[var(--ui-accent)]"
               style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;"
-              :class="selectedUserId === 'all' ? 'border-brandDay-500 dark:border-brandNight-400' : 'border-gray-200 dark:border-gray-700'"
+              :class="selectedUserId === 'all' ? 'border-[var(--ui-accent)]' : 'border-[var(--ui-border)]'"
             >
               <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" />
@@ -283,7 +287,7 @@ watch([currentUserId, isLoggedIn], () => {
             </div>
             <div
               class="mt-1.5 h-4 w-full truncate text-xs leading-4"
-              :class="selectedUserId === 'all' ? 'font-medium text-brandDay-600 dark:text-brandNight-300' : 'text-gray-600 dark:text-gray-300'"
+              :class="selectedUserId === 'all' ? 'font-medium text-[var(--ui-accent)]' : 'text-[var(--ui-muted)]'"
             >
               全部动态
             </div>
@@ -302,12 +306,12 @@ watch([currentUserId, isLoggedIn], () => {
                 alt="avatar"
                 class="block h-12 w-12 rounded-full border-2 object-cover"
                 style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;"
-                :class="selectedUserId === String(u.id) ? 'border-brandDay-500 dark:border-brandNight-400' : 'border-transparent'"
+                :class="selectedUserId === String(u.id) ? 'border-[var(--ui-accent)]' : 'border-transparent'"
               />
             </div>
             <div
               class="mt-1.5 h-4 w-full truncate text-xs leading-4"
-              :class="selectedUserId === String(u.id) ? 'font-medium text-brandDay-600 dark:text-brandNight-300' : 'text-gray-600 dark:text-gray-300'"
+              :class="selectedUserId === String(u.id) ? 'font-medium text-[var(--ui-accent)]' : 'text-[var(--ui-muted)]'"
             >
               {{ userDisplayName(u) }}
             </div>
@@ -316,7 +320,7 @@ watch([currentUserId, isLoggedIn], () => {
 
         <button
           type="button"
-          class="flex size-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-50 hover:text-brandDay-600 dark:hover:bg-gray-700 dark:hover:text-brandNight-300"
+          class="ui-button h-8 w-8 shrink-0 rounded-full p-0 text-[var(--ui-muted)]"
           @click="scrollChannels('right')"
           aria-label="向右查看更多关注用户"
         >
@@ -325,29 +329,30 @@ watch([currentUserId, isLoggedIn], () => {
       </div>
     </section>
 
-    <div v-if="loading" class="rounded-lg bg-white py-12 text-center text-sm text-gray-500 shadow-sm dark:bg-gray-800">
+    <div v-if="loading" class="ui-panel ui-empty" role="status">
       正在加载...
     </div>
-    <div v-else-if="error" class="rounded-lg bg-white py-12 text-center text-sm text-red-500 shadow-sm dark:bg-gray-800">
+    <div v-else-if="error" class="ui-error" role="alert">
       {{ error }}
     </div>
-    <div v-else-if="visibleItems.length === 0" class="px-2 py-2 text-sm text-gray-500 dark:text-gray-400">
-      {{ emptyText }}
+    <div v-else-if="visibleItems.length === 0" class="ui-panel ui-empty" role="status">
+      <h2>暂无关注动态</h2>
+      <p>{{ emptyText }}</p>
     </div>
 
-    <div v-else class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-      <ul class="space-y-4">
+    <div v-else class="ui-panel overflow-hidden">
+      <ul>
         <li
           v-for="item in visibleItems"
           :key="item.id"
-          class="group rounded-lg border border-gray-100 bg-white p-4 transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700"
+          class="ui-list-row"
         >
           <div class="block">
             <div class="flex flex-col items-start gap-5 md:flex-row">
               <router-link
                 v-if="firstImageUrl(item)"
                 :to="`/threads/${item.id}`"
-                class="group/img relative h-48 w-full shrink-0 overflow-hidden rounded-lg border border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-800 md:h-40 md:w-64"
+                class="group/img relative h-48 w-full shrink-0 overflow-hidden rounded-lg border border-[var(--ui-border)] bg-[var(--ui-subtle)] md:h-40 md:w-64"
               >
                 <img :src="firstImageUrl(item)" alt="" class="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-sm" />
                 <img
@@ -360,20 +365,20 @@ watch([currentUserId, isLoggedIn], () => {
               </router-link>
 
               <div class="min-w-0 w-full flex-1">
-                <router-link :to="`/threads/${item.id}`" class="mb-2.5 block line-clamp-2 text-lg font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400">
+                <router-link :to="`/threads/${item.id}`" class="mb-2.5 block line-clamp-2 text-lg font-bold text-[var(--ui-ink)] hover:text-[var(--ui-accent)]">
                   {{ item.title }}
                 </router-link>
-                <p class="line-clamp-3 text-sm leading-6 text-gray-600 dark:text-gray-300">
+                <p class="line-clamp-3 text-sm leading-6 text-[var(--ui-muted)]">
                   {{ excerpt(item) || '暂无内容摘要' }}
                 </p>
 
-                <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-400">
-                  <router-link :to="item.authorId ? (`/users/${item.authorId}`) : '/users'" class="flex items-center gap-1.5 hover:text-gray-600 dark:hover:text-gray-200">
-                    <img :src="avatarOf(item)" class="h-5 w-5 rounded-full bg-gray-100 object-cover dark:bg-gray-700" alt="" />
+                <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--ui-muted)]">
+                  <router-link :to="item.authorId ? (`/users/${item.authorId}`) : '/users'" class="flex items-center gap-1.5 hover:text-[var(--ui-ink)]">
+                    <img :src="avatarOf(item)" class="h-5 w-5 rounded-full bg-[var(--ui-subtle)] object-cover" alt="" />
                     {{ displayNameOf(item) }}
                   </router-link>
                   <span>·</span>
-                  <span v-if="item.sectionName || item.sectionId" class="rounded bg-gray-100 px-2 py-0.5 font-medium transition-colors dark:bg-gray-700">
+                  <span v-if="item.sectionName || item.sectionId" class="ui-tag">
                     {{ item.sectionName || item.sectionId }}
                   </span>
                   <span v-if="item.sectionName || item.sectionId">·</span>
@@ -389,31 +394,22 @@ watch([currentUserId, isLoggedIn], () => {
       </ul>
     </div>
 
-    <div v-if="visibleItems.length > 0" class="flex flex-col items-start gap-2 rounded-lg bg-white px-3 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:bg-gray-800">
-      <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ feed.total || 0 }} 条 · 每页 {{ size }} 条</div>
+    <div v-if="visibleItems.length > 0" class="ui-panel mt-3 flex flex-col items-start gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <div class="text-xs text-[var(--ui-muted)]">共 {{ feed.total || 0 }} 条 · 每页 {{ size }} 条</div>
       <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-        <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="loading || page <= 1" @click="setPage(page - 1)">上一页</button>
-        <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
+        <button type="button" class="ui-button" :disabled="loading || page <= 1" @click="setPage(page - 1)">上一页</button>
+        <span class="text-sm text-[var(--ui-muted)]">第</span>
         <input
           v-model="inputPage"
-          class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
+          class="ui-field w-16 text-center"
+          aria-label="页码"
           inputmode="numeric"
           @keyup.enter="goToInputPage"
           @blur="goToInputPage"
         />
-        <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
-        <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="loading || page >= totalPages" @click="setPage(page + 1)">下一页</button>
+        <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+        <button type="button" class="ui-button" :disabled="loading || page >= totalPages" @click="setPage(page + 1)">下一页</button>
       </div>
     </div>
-  </div>
+  </section>
 </template>
-
-<style scoped>
-.scrollbar-none {
-  scrollbar-width: none;
-}
-
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
-}
-</style>

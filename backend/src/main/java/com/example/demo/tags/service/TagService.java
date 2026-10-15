@@ -47,7 +47,7 @@ public class TagService {
     @Transactional(readOnly = true)
     public Page<TagStatsDto> search(String q, Long sectionId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 50);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
         String query = (q == null || q.isBlank()) ? null : q.trim();
         return tagRepository.search(query, sectionId, PageRequest.of(pageIndex, limit))
                 .map(view -> new TagStatsDto(

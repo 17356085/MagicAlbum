@@ -1,12 +1,12 @@
 <template>
   <div class="flex items-center gap-2">
-    <router-link :to="profileLink" class="flex items-center gap-2 hover:opacity-90">
+    <router-link :to="profileLink" class="flex min-w-0 items-center gap-2 hover:opacity-90">
       <img
         :src="resolvedAvatarUrl"
         alt="avatar"
         class="w-8 h-8 rounded-full object-cover border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-700"
       />
-      <span class="text-gray-700 dark:text-gray-200">{{ displayLabel }}</span>
+      <span class="max-w-28 truncate text-gray-700 dark:text-gray-200">{{ displayLabel }}</span>
     </router-link>
     <button class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center" aria-label="登出" title="登出" @click="$emit('logout')">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">

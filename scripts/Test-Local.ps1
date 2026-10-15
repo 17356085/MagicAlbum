@@ -1,12 +1,21 @@
 #Requires -Version 7.0
 [CmdletBinding()]
-param([string]$BaseUrl = 'http://127.0.0.1:5173')
+param(
+    [string]$BaseUrl = 'http://127.0.0.1:5173',
+    [string]$ArtifactDirectory
+)
 
 $ErrorActionPreference = 'Stop'
 $blueAlbumRoot = Split-Path -Parent $PSScriptRoot
-$blueAlbumRunDir = Join-Path $blueAlbumRoot 'test-artifacts/local-runtime'
+$defaultArtifactDirectory = Join-Path $blueAlbumRoot 'test-artifacts/local-runtime'
+$blueAlbumRunDir = if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) {
+    $defaultArtifactDirectory
+} else {
+    [IO.Path]::GetFullPath((Join-Path (Get-Location) $ArtifactDirectory))
+}
 $blueAlbumApi = "$($BaseUrl.TrimEnd('/'))/api/v1"
 $checks = [System.Collections.Generic.List[object]]::new()
+New-Item -ItemType Directory -Path $blueAlbumRunDir -Force | Out-Null
 
 function Assert-Local([bool]$Condition, [string]$Name) {
     $checks.Add(@{ Name=$Name; Passed=$Condition })
@@ -28,6 +37,15 @@ function Send-Local([string]$Method, [string]$Path, $Body, [string]$Token, [int]
         return ConvertFrom-Json -InputObject $response.Content
     }
     return $response.Content
+}
+
+function Get-LocalNotificationPage([string]$Token) {
+    $headers = @{ 'X-Device-Id' = $script:blueAlbumDeviceId; Authorization = "Bearer $Token" }
+    $response = Invoke-WebRequest -Uri "$blueAlbumApi/notifications?unread=true&page=1&size=100" -Method GET -Headers $headers -TimeoutSec 3 -SkipHttpErrorCheck
+    if ($response.StatusCode -ne 200) {
+        throw "Notification lookup returned HTTP $($response.StatusCode)."
+    }
+    return ConvertFrom-Json -InputObject $response.Content
 }
 
 try {
@@ -70,8 +88,30 @@ try {
     $null = Send-Local PATCH "/threads/$($thread.id)" @{title='forbidden update';content='blocked'} $reader.Token 403
     $post = Send-Local POST "/threads/$($thread.id)/posts" @{contentMd='本地试运行评论'} $reader.Token 201
     Assert-Local ($post.id -and $post.authorId -eq $reader.UserId) 'Comment persisted with correct author'
-    $notifications = Send-Local GET '/notifications?unread=true' $null $owner.Token
-    $notification = @($notifications.items | Where-Object { $_.type -eq 'reply' }) | Select-Object -First 1
+    $notificationDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    $notification = $null
+    $notificationLookupFailed = $false
+    do {
+        try {
+            $notifications = Get-LocalNotificationPage $owner.Token
+            $notification = @($notifications.items | Where-Object {
+                    $_.type -eq 'reply' -and
+                    $_.threadId -eq $thread.id -and
+                    $_.targetId -eq $post.id -and
+                    $_.targetType -eq 'post'
+                }) | Select-Object -First 1
+            $notificationLookupFailed = $false
+        } catch {
+            $notificationLookupFailed = $true
+            $notification = $null
+        }
+        if ($null -eq $notification -and [DateTime]::UtcNow -lt $notificationDeadline) {
+            Start-Sleep -Milliseconds 500
+        }
+    } while ($null -eq $notification -and [DateTime]::UtcNow -lt $notificationDeadline)
+    if ($notificationLookupFailed -and $null -eq $notification) {
+        throw 'Notification lookup did not succeed within the 30-second delivery window.'
+    }
     Assert-Local ($null -ne $notification) 'Comment creates cross-service reply notification'
     Assert-Local ($notification.threadId -eq $thread.id -and $notification.targetId -eq $post.id -and $notification.targetType -eq 'post' -and $notification.link -eq "/threads/$($thread.id)#post-$($post.id)") 'Reply notification preserves its persisted target and safe local link'
     $null = Send-Local PATCH "/notifications/$($notification.id)/read" $null $reader.Token 404

@@ -2,6 +2,7 @@ package com.example.demo.posts.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.demo.common.RedisKeys;
+import com.example.demo.common.RedisCacheEvictor;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.dto.PostLikeResponse;
@@ -89,7 +90,7 @@ public class PostService {
     public Page<PostDto> listByThread(Long threadId, Long currentUserId, String sort, int page, int size) {
         findNormalThread(threadId);
         int limit = Math.min(Math.max(size, 1), 50);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
         String normalizedSort = normalizeSort(sort);
         CachedPostPage cached = readThreadPostsCache(threadId, normalizedSort, page, limit);
         if (cached != null) {
@@ -108,13 +109,13 @@ public class PostService {
     }
 
     public Page<PostDto> listByAuthor(Long authorId, int page, int size) {
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 50));
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 50));
         Page<PostQueryView> p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, null, null, pr);
         return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
     public Page<PostDto> listByAuthor(Long authorId, String q, Long sectionId, String sort, int page, int size) {
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 50));
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 50));
         String s = (sort == null || sort.isBlank()) ? "createdAt" : sort.trim();
         String keyword = (q == null || q.isBlank()) ? null : q.trim();
         Page<PostQueryView> p;
@@ -134,6 +135,7 @@ public class PostService {
         return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
+    @Transactional
     public PostDto create(Long authorId, Long threadId, CreatePostRequest req) {
         if (authorId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或令牌缺失");
@@ -421,10 +423,7 @@ public class PostService {
             return;
         }
         try {
-            java.util.Set<String> keys = redisTemplate.keys(RedisKeys.threadPostsPattern(threadId));
-            if (keys != null && !keys.isEmpty()) {
-                redisTemplate.delete(keys);
-            }
+            RedisCacheEvictor.evictMatching(redisTemplate, RedisKeys.threadPostsPattern(threadId));
         } catch (Exception ignored) {
         }
     }

@@ -1,14 +1,14 @@
 <template>
-  <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+  <div class="border border-gray-200 bg-[var(--ui-subtle)] p-4 dark:border-gray-700">
     <div class="flex items-start justify-between gap-3">
       <div>
-        <div class="text-sm font-medium">人工验证</div>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <div class="text-sm font-semibold">人工验证</div>
+        <p class="ui-muted mt-1 text-xs leading-5">
           {{ verifyHint }}
         </p>
       </div>
       <span
-        class="shrink-0 rounded-full px-2 py-0.5 text-[11px]"
+        class="ui-tag shrink-0 text-[11px]"
         :class="statusClass"
       >
         {{ statusLabel }}
@@ -18,13 +18,13 @@
     <div v-if="isTurnstileMode" class="mt-3 space-y-2">
       <div
         ref="turnstileContainerRef"
-        class="min-h-[68px] rounded-xl border border-gray-200 bg-white px-2 py-2 dark:border-gray-700 dark:bg-gray-950"
+        class="min-h-[68px] rounded-lg border border-gray-200 bg-[var(--ui-surface)] px-2 py-2 dark:border-gray-700"
       ></div>
       <div class="flex items-center gap-2">
         <button
           v-if="status === 'verified' || status === 'failed' || status === 'expired'"
           type="button"
-          class="rounded px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+          class="ui-button px-3 py-1.5 text-xs"
           @click="resetState"
         >
           重新验证
@@ -35,7 +35,7 @@
     <div v-else class="mt-3 flex items-center gap-2">
       <button
         type="button"
-        class="rounded px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+        class="ui-button px-3 py-1.5 text-xs"
         :class="verified ? 'bg-emerald-600 text-white hover:bg-emerald-700' : isMockVerifyEnabled() ? 'bg-brandDay-600 text-white hover:bg-brandDay-700 dark:bg-brandNight-600 dark:hover:bg-brandNight-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed dark:bg-gray-800 dark:text-gray-400'"
         :disabled="status === 'verifying' || !isMockVerifyEnabled()"
         @click="startManualVerify"
@@ -45,7 +45,7 @@
       <button
         v-if="verified"
         type="button"
-        class="rounded px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+        class="ui-button px-3 py-1.5 text-xs"
         @click="resetState"
       >
         重新验证

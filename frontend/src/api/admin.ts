@@ -1,5 +1,6 @@
 import api from './client'
-import type { Id } from '@/types'
+import { decodePageResponse } from './pagination'
+import type { Id, PageResult } from '@/types'
 
 export type AdminReportAction = 'DISMISS' | 'HIDE'
 
@@ -17,12 +18,7 @@ export interface AdminReport {
   targetThreadId?: Id | null
 }
 
-export interface AdminReportsPage {
-  items: AdminReport[]
-  page: number
-  size: number
-  total: number
-}
+export type AdminReportsPage = PageResult<AdminReport>
 
 export interface AdminStatusResponse {
   admin?: boolean
@@ -45,13 +41,7 @@ export async function listAdminReports({
   const { data } = await api.get<AdminReportsPage>('/admin/reports', {
     params: { status, page, size },
   })
-
-  return {
-    items: Array.isArray(data?.items) ? data.items : [],
-    page: Number.isFinite(Number(data?.page)) && Number(data.page) > 0 ? Number(data.page) : page,
-    size: Number.isFinite(Number(data?.size)) && Number(data.size) > 0 ? Number(data.size) : size,
-    total: Number.isFinite(Number(data?.total)) && Number(data.total) >= 0 ? Number(data.total) : 0,
-  }
+  return decodePageResponse<AdminReport>(data, { page, size, endpoint: '/admin/reports' })
 }
 
 export async function resolveAdminReport(id: Id, action: AdminReportAction): Promise<void> {

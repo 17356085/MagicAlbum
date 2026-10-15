@@ -92,10 +92,10 @@ async function load(): Promise<void> {
       size: size.value,
       sort: sortKey.value === 'likes' ? 'likeCount' : 'time',
     })
-    items.value = Array.isArray(data) ? (data as CommentItem[]) : ((data.items || []) as CommentItem[])
-    total.value = Array.isArray(data) ? data.length : Number(data.total || 0)
-    page.value = Array.isArray(data) ? page.value : Number(data.page || page.value)
-    size.value = Array.isArray(data) ? size.value : Number(data.size || size.value)
+    items.value = data.items as CommentItem[]
+    total.value = data.total
+    page.value = data.page
+    size.value = data.size
     tryScrollToId(props.scrollToPostId)
   } catch (_) {
     error.value = '加载评论失败'
@@ -327,8 +327,8 @@ watch([sortKey, sortOrder], () => {
 </script>
 
 <template>
-  <div class="mt-8">
-    <div class="mb-3" v-if="replyToPostId == null">
+  <section class="ui-panel mt-10" aria-labelledby="comments-heading">
+    <div class="border-b border-[var(--ui-border)] px-4 py-5 sm:px-6" v-if="replyToPostId == null">
       <CommentsComposer
         :is-logged-in="isLoggedIn"
         :is-submitting="isSubmitting"
@@ -383,7 +383,7 @@ watch([sortKey, sortOrder], () => {
       @update:showTimeMenu="showTimeMenu = $event"
       @upload-image="onSelectUploadImage"
     />
-  </div>
+  </section>
 </template>
 
 <style scoped>

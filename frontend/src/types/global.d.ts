@@ -34,7 +34,7 @@ declare global {
     'profile-updated': CustomEvent<import('./index').ProfileUpdatedDetail>
   }
 
-  interface RecentVisitsStorageShape extends Array<RecentVisit> {}
+  type RecentVisitsStorageShape = RecentVisit[]
 
   interface AuthStateChangedDetail {
     loggedIn: boolean

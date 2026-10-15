@@ -6,6 +6,7 @@ import { getUserProfile } from '@/api/users'
 import { updateVisitSectionById, updateVisitTitleById, updateVisitTitleByPath } from '@/composables/useRecentVisits'
 import { normalizeImageUrl } from '@/utils/image'
 import type { Thread } from '@/types'
+import { formatPageTitle } from '@/config/brand'
 
 function getRouteParamId(value: string | string[] | undefined): string {
   return Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '')
@@ -52,7 +53,9 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
       try {
         const titleText = String(thread.value?.title || '').trim()
         if (titleText) {
-          document.title = titleText
+          if (route.name === 'thread-detail' && getRouteParamId(route.params.id as string | string[] | undefined) === id) {
+            document.title = formatPageTitle(titleText)
+          }
           const path = route.fullPath || route.path
           updateVisitTitleByPath(path, titleText)
           try {

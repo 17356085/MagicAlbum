@@ -43,13 +43,15 @@ public class SectionService {
     }
 
     public Page<Section> list(String q, int page, int size) {
-        CachedSectionPage cached = readCache(cacheKey(q, page, size));
+        String normalizedQ = normalizeQuery(q);
+        String key = cacheKey(normalizedQ, page, size);
+        CachedSectionPage cached = readCache(key);
         if (cached != null) {
-            return new PageImpl<>(cached.items(), PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 100)), cached.total());
+            return new PageImpl<>(cached.items(), PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 100)), cached.total());
         }
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 100));
-        Page<Section> result = sectionRepository.search(q == null || q.isBlank() ? null : q, pr);
-        writeCache(cacheKey(q, page, size), new CachedSectionPage(result.getContent(), result.getTotalElements()));
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 100));
+        Page<Section> result = sectionRepository.search(normalizedQ, pr);
+        writeCache(key, new CachedSectionPage(result.getContent(), result.getTotalElements()));
         return result;
     }
 
@@ -59,11 +61,21 @@ public class SectionService {
         }
         try {
             String json = redisTemplate.opsForValue().get(key);
-            if (json == null || json.isBlank()) {
+            if (json == null) {
                 return null;
             }
-            return objectMapper.readValue(json, CachedSectionPage.class);
+            if (json.isBlank()) {
+                deleteQuietly(key);
+                return null;
+            }
+            CachedSectionPage payload = objectMapper.readValue(json, CachedSectionPage.class);
+            if (!isValid(payload)) {
+                deleteQuietly(key);
+                return null;
+            }
+            return payload;
         } catch (Exception ignored) {
+            deleteQuietly(key);
             return null;
         }
     }
@@ -80,6 +92,37 @@ public class SectionService {
 
     private String cacheKey(String q, int page, int size) {
         return RedisKeys.sectionsList(q, page, size);
+    }
+
+    private String normalizeQuery(String q) {
+        return q == null || q.isBlank() ? null : q.trim();
+    }
+
+    private boolean isValid(CachedSectionPage payload) {
+        if (payload == null || payload.items() == null || payload.total() < 0 || payload.total() < payload.items().size()) {
+            return false;
+        }
+        return payload.items().stream().allMatch(this::isValidSection);
+    }
+
+    private boolean isValidSection(Section section) {
+        return section != null
+                && section.getId() != null
+                && section.getId() > 0
+                && section.getName() != null
+                && !section.getName().isBlank()
+                && section.getSlug() != null
+                && !section.getSlug().isBlank();
+    }
+
+    private void deleteQuietly(String key) {
+        if (redisTemplate == null || key == null) {
+            return;
+        }
+        try {
+            redisTemplate.delete(key);
+        } catch (Exception ignored) {
+        }
     }
 
     private static ObjectMapper defaultObjectMapper() {

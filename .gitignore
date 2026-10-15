@@ -1,5 +1,21 @@
-# Local documentation, historical reports and personal material are not published.
-/docs/
+# Only the engineering handbook is shared; historical and personal documents stay local.
+/docs/*
+!/docs/engineering/
+
+# Local tools, dependency caches and generated deliverables
+/.agents/
+/.claude/
+/.impeccable/
+/.pnpm-store/
+/.tmp/
+/outputs/
+/frontend/.tlo/
+/project_tree.txt
+/skills-lock.json
+/nul
+/*.docx
+/backend/pixel.png
+/DDesktopBlueAlbum.auto-claudeideation/
 
 # Environment files
 .env

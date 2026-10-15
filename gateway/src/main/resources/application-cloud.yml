@@ -21,7 +21,13 @@ spring:
               uri: lb://bluealbum-notification-service
               predicates:
                 - Path=/api/v1/notifications/**
+            - id: bluealbum-ai-api
+              uri: lb://bluealbum-monolith
+              predicates:
+                - Path=/api/v1/ai/**
+              metadata:
+                response-timeout: 120000
             - id: bluealbum-monolith-api
               uri: lb://bluealbum-monolith
               predicates:
-                - Path=/api/v1/**
+                - Path=/api/v1/**,/uploads/**

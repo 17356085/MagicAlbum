@@ -93,9 +93,7 @@ async function loadNotifications(): Promise<void> {
       page: notifQuery.value.page,
       size: notifQuery.value.size,
     })
-    notifList.value = Array.isArray(data)
-      ? { items: data, page: notifQuery.value.page, size: notifQuery.value.size, total: data.length }
-      : data
+    notifList.value = data
   } catch (_) {
     notifError.value = '加载通知失败，请重试。'
   } finally {
@@ -232,50 +230,50 @@ onMounted(() => {
 
 <template>
   <div class="space-y-5">
-    <section aria-labelledby="notification-preferences-title">
-      <h2 id="notification-preferences-title" class="text-sm font-semibold text-gray-900 dark:text-gray-50">通知偏好</h2>
-      <div v-if="settingsLoading" class="mt-3 rounded-md border border-brandDay-100 bg-brandDay-50/60 p-4 text-xs text-gray-600 dark:border-brandNight-700 dark:bg-brandNight-900/20 dark:text-gray-300" role="status" aria-live="polite">
+    <section aria-labelledby="notification-preferences-title" class="space-y-4 border-b border-gray-200 pb-6 dark:border-gray-700">
+      <h2 id="notification-preferences-title" class="text-base font-semibold">通知偏好</h2>
+      <div v-if="settingsLoading" class="ui-muted text-sm" role="status" aria-live="polite">
         正在加载通知偏好...
       </div>
-      <div v-else-if="settingsError" class="mt-3 flex flex-col gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-xs text-red-700 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200" role="alert">
+      <div v-else-if="settingsError" class="ui-error flex flex-col gap-3 text-sm" role="alert">
         <span>{{ settingsError }}</span>
-        <button type="button" class="w-fit rounded-md border border-red-300 px-3 py-1.5 font-medium hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-400 dark:border-red-800 dark:hover:bg-red-900/40" @click="loadNotificationSettings">
+        <button type="button" class="ui-button w-fit px-3 py-1.5 text-xs" @click="loadNotificationSettings">
           重试加载
         </button>
       </div>
-      <div v-else-if="settingsLoaded" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label v-for="preference in notificationPreferences" :key="preference.key" :for="`notification-preference-${preference.key}`" class="flex min-h-20 cursor-pointer items-center justify-between gap-4 rounded-md border border-gray-100 p-3 text-sm transition-colors hover:border-brandDay-200 hover:bg-brandDay-50/50 dark:border-gray-700 dark:hover:border-brandNight-700 dark:hover:bg-brandNight-900/20">
+      <div v-else-if="settingsLoaded" class="divide-y divide-gray-200 dark:divide-gray-700">
+        <label v-for="preference in notificationPreferences" :key="preference.key" :for="`notification-preference-${preference.key}`" class="flex min-h-20 cursor-pointer items-center justify-between gap-4 py-4 text-sm transition-colors hover:bg-[var(--ui-subtle)]">
           <span>
-            <span class="block font-medium text-gray-900 dark:text-gray-50">{{ preference.label }}</span>
-            <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ preference.description }}</span>
+            <span class="block font-medium">{{ preference.label }}</span>
+            <span class="ui-muted mt-1 block text-xs">{{ preference.description }}</span>
           </span>
           <input :id="`notification-preference-${preference.key}`" v-model="notifSettings.inApp[preference.key]" type="checkbox" class="h-4 w-4 shrink-0 rounded border-gray-300 text-brandDay-600 focus:ring-brandDay-500 dark:border-gray-600 dark:bg-gray-700 dark:text-brandNight-500" />
         </label>
-        <div class="rounded-md border border-gray-100 bg-gray-50/80 p-3 text-sm dark:border-gray-700 dark:bg-gray-900/40">
+        <div class="flex items-start gap-4 py-4 text-sm">
           <div class="flex items-start justify-between gap-3">
             <div>
-              <p class="font-medium text-gray-700 dark:text-gray-200">系统通知</p>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">系统通知由平台统一发送，当前不可关闭。</p>
+              <p class="font-medium">系统通知</p>
+              <p class="ui-muted mt-1 text-xs">系统通知由平台统一发送，当前不可关闭。</p>
             </div>
-            <span class="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-gray-700 dark:text-gray-300">固定开启</span>
+            <span class="ui-tag shrink-0 text-[11px]">固定开启</span>
           </div>
         </div>
-        <div class="rounded-md border border-gray-100 bg-gray-50/80 p-3 text-sm dark:border-gray-700 dark:bg-gray-900/40">
+        <div class="flex items-start gap-4 py-4 text-sm">
           <div class="flex items-start justify-between gap-3">
             <div>
-              <p class="font-medium text-gray-700 dark:text-gray-200">邮件通知</p>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">邮件投递尚未实现，当前仅支持站内通知。</p>
+              <p class="font-medium">邮件通知</p>
+              <p class="ui-muted mt-1 text-xs">邮件投递尚未实现，当前仅支持站内通知。</p>
             </div>
-            <span class="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-gray-300 dark:text-gray-700">暂不可用</span>
+            <span class="ui-tag shrink-0 text-[11px]">暂不可用</span>
           </div>
         </div>
       </div>
-      <div class="mt-4 flex flex-wrap items-center justify-end gap-3">
+      <div class="flex flex-wrap items-center justify-end gap-3 pt-1">
         <span v-if="settingsDirty" class="text-xs text-amber-700 dark:text-amber-300">有未保存的修改</span>
-        <span v-if="settingsMessage" :class="['text-xs', settingsMessageError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']" role="status" aria-live="polite">{{ settingsMessage }}</span>
+        <span v-if="settingsMessage" :class="['text-xs', settingsMessageError ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300']" role="status" aria-live="polite">{{ settingsMessage }}</span>
         <button
           type="button"
-          class="rounded-md bg-brandDay-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-shadow duration-200 hover:bg-brandDay-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 disabled:opacity-60 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
+          class="ui-button-primary"
           :disabled="!canSaveSettings"
           @click="saveNotificationSettings"
         >
@@ -284,12 +282,12 @@ onMounted(() => {
       </div>
     </section>
 
-    <section aria-labelledby="notification-list-title">
+    <section aria-labelledby="notification-list-title" class="space-y-4">
       <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h2 id="notification-list-title" class="text-sm font-semibold text-gray-900 dark:text-gray-50">通知列表</h2>
+        <h2 id="notification-list-title" class="text-base font-semibold">通知列表</h2>
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <label for="notification-type-filter" class="sr-only">通知类型</label>
-          <select id="notification-type-filter" v-model="notifQuery.type" aria-label="通知类型" class="rounded-md border border-gray-300 px-2 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-800">
+          <select id="notification-type-filter" v-model="notifQuery.type" aria-label="通知类型" class="ui-field min-h-9 w-auto px-2 py-1.5 text-xs">
             <option value="">全部</option>
             <option value="reply">回复</option>
             <option value="mention">提及</option>
@@ -297,29 +295,29 @@ onMounted(() => {
             <option value="follow">关注</option>
             <option value="system">系统</option>
           </select>
-          <label class="inline-flex items-center gap-2 rounded-md border border-gray-200 px-2 py-1.5 dark:border-gray-700">
+          <label class="ui-button inline-flex min-h-9 cursor-pointer gap-2 px-2 py-1.5 text-xs">
             <input v-model="notifQuery.unread" type="checkbox" /> 仅未读
           </label>
-          <button type="button" class="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brandDay-500 dark:border-gray-700 dark:hover:bg-gray-700" @click="loadNotifications">刷新</button>
+          <button type="button" class="ui-button min-h-9 px-3 py-1.5 text-xs" @click="loadNotifications">刷新</button>
         </div>
       </div>
       <div class="mt-3">
-        <div v-if="notifLoading" class="text-xs text-gray-500" role="status" aria-live="polite">正在加载通知...</div>
-        <div v-else-if="notifError" class="flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200" role="alert">
+        <div v-if="notifLoading" class="ui-muted text-sm" role="status" aria-live="polite">正在加载通知...</div>
+        <div v-else-if="notifError" class="ui-error flex items-center justify-between gap-3 text-sm" role="alert">
           <span>{{ notifError }}</span>
-          <button type="button" class="shrink-0 rounded-md border border-red-300 px-3 py-1.5 font-medium hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-400 dark:border-red-800 dark:hover:bg-red-900/40" @click="loadNotifications">
+          <button type="button" class="ui-button shrink-0 px-3 py-1.5 text-xs" @click="loadNotifications">
             重试
           </button>
         </div>
-        <div v-else-if="!(notifList.items || []).length" class="rounded-md border border-dashed border-gray-200 p-4 text-center text-xs text-gray-500 dark:border-gray-700">
+        <div v-else-if="!(notifList.items || []).length" class="ui-empty border border-dashed border-gray-200 dark:border-gray-700">
           暂无通知
         </div>
-        <ul v-else class="space-y-2" aria-label="通知列表">
-          <li v-for="item in notifList.items || []" :key="item.id" class="rounded-md border border-gray-100 p-3 text-xs dark:border-gray-700">
+        <ul v-else class="divide-y divide-gray-200 dark:divide-gray-700" aria-label="通知列表">
+          <li v-for="item in notifList.items || []" :key="item.id" class="ui-list-row px-0 py-4 text-sm">
             <article>
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="rounded bg-brandDay-50 px-2 py-0.5 text-brandDay-700 dark:bg-brandNight-900/50 dark:text-brandNight-200">{{ notificationTypeLabel(item.type) }}</span>
+                  <span class="ui-tag">{{ notificationTypeLabel(item.type) }}</span>
                   <span :class="item.read ? 'text-gray-400 dark:text-gray-500' : 'font-medium text-brandDay-700 dark:text-brandNight-300'">{{ notificationStatusLabel(item.read) }}</span>
                 </div>
                 <time class="text-[11px] text-gray-400 dark:text-gray-500" :datetime="item.createdAt || undefined" :title="notificationAbsoluteTime(item.createdAt)">
@@ -328,14 +326,14 @@ onMounted(() => {
               </div>
               <div class="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div class="min-w-0 flex-1">
-                  <span class="block font-medium text-gray-900 dark:text-gray-50">{{ notificationTitle(item) }}</span>
-                  <span class="mt-1 block text-gray-600 dark:text-gray-300">{{ item.content || '暂无详细内容' }}</span>
+                   <span class="block font-medium">{{ notificationTitle(item) }}</span>
+                   <span class="ui-muted mt-1 block">{{ item.content || '暂无详细内容' }}</span>
                 </div>
                 <div class="flex shrink-0 items-center gap-2 sm:pt-0.5">
-                  <button v-if="notificationCanNavigate(item)" type="button" class="rounded-md border border-brandDay-200 px-2 py-1 text-brandDay-700 hover:bg-brandDay-50 focus:outline-none focus:ring-2 focus:ring-brandDay-500 dark:border-brandNight-700 dark:text-brandNight-200 dark:hover:bg-brandNight-900/30 dark:focus:ring-accentCyan-400" :aria-label="`查看${notificationTitle(item)}`" @click="openNotification(item)">
+                   <button v-if="notificationCanNavigate(item)" type="button" class="ui-button px-2 py-1 text-xs" :aria-label="`查看${notificationTitle(item)}`" @click="openNotification(item)">
                     查看
                   </button>
-                  <button v-if="!item.read" type="button" class="rounded-md border border-gray-200 px-2 py-1 text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brandDay-500 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700" @click="setNotificationRead(item.id)">
+                   <button v-if="!item.read" type="button" class="ui-button px-2 py-1 text-xs" @click="setNotificationRead(item.id)">
                     标记为已读
                   </button>
                 </div>

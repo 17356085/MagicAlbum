@@ -1,4 +1,5 @@
 import api from './client'
+import { decodePageResponse } from './pagination'
 import type { PageResult, Section } from '@/types'
 
 const useMock = String(import.meta.env.VITE_USE_API_MOCK || '').toLowerCase() === 'true'
@@ -16,15 +17,12 @@ const mockSections: Section[] = [
 
 export async function listSections(
   params: Record<string, string | number | boolean | undefined> = {},
-): Promise<PageResult<Section> | Section[]> {
+): Promise<PageResult<Section>> {
+  const page = Number(params.page ?? 1)
+  const size = Number(params.size ?? 20)
   if (useMock) {
-    return { items: mockSections, page: 1, size: 20, total: mockSections.length }
+    return decodePageResponse<Section>({ items: mockSections, page, size, total: mockSections.length }, { page, size, endpoint: '/sections' })
   }
-  try {
-    const { data } = await api.get('/sections', { params })
-    return data
-  } catch (e) {
-    // 非 Mock 模式不再回退到本地 mock，以避免 ID 不一致导致后端报错
-    throw e
-  }
+  const { data } = await api.get('/sections', { params })
+  return decodePageResponse<Section>(data, { page, size, endpoint: '/sections' })
 }

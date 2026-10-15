@@ -20,18 +20,6 @@ function createEmptyThreadList(): PageResult<Thread> {
   return { items: [], page: 1, size: 10, total: 0 }
 }
 
-function normalizeThreadList(data: PageResult<Thread> | Thread[]): PageResult<Thread> {
-  if (Array.isArray(data)) {
-    return {
-      items: data,
-      page: query.value.page,
-      size: query.value.size,
-      total: data.length,
-    }
-  }
-  return data || createEmptyThreadList()
-}
-
 const query = ref<MyThreadsQuery>({ q: '', sectionId: '', page: 1, size: 10, sort: 'updatedAt' })
 const loading = ref(false)
 const error = ref('')
@@ -44,7 +32,7 @@ async function load(): Promise<void> {
   error.value = ''
   try {
     const data = await listMyThreads({ q: query.value.q, sectionId: query.value.sectionId || undefined, page: query.value.page, size: query.value.size, sort: query.value.sort })
-    list.value = normalizeThreadList(data)
+    list.value = data
   } catch (_) {
     error.value = '加载我的帖子失败'
   } finally { loading.value = false }
@@ -53,7 +41,7 @@ async function load(): Promise<void> {
 async function loadSections(): Promise<void> {
   try {
     const data = await listSections({ size: 200 })
-    sections.value = Array.isArray(data) ? data : (data.items || [])
+    sections.value = data.items
   } catch (_) {
     // 保持空列表即可
   }
@@ -80,7 +68,9 @@ async function confirmDelete(): Promise<void> {
     pendingDeleteId.value = null
     await load()
   } catch (_) {
-    // 可根据需要在此处设置错误消息
+    error.value = '删除帖子失败，请检查网络后重试'
+    showDeleteConfirm.value = false
+    pendingDeleteId.value = null
   } finally {
     deleting.value = false
   }
@@ -134,10 +124,10 @@ watch(() => query.value.page, (val) => {
 function excerpt(item: Thread): string {
   const text = String(item.content || item.contentMd || '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-\[\]]/g, '')
+    .replace(/[#>*_`~\-[\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
   if (!text) return '暂无内容摘要'
@@ -146,116 +136,77 @@ function excerpt(item: Thread): string {
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm dark:bg-gray-800 dark:border-gray-700">
-    <div class="mb-4 flex items-center justify-between">
-      <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100">我的帖子</h2>
-      <div class="flex items-center gap-3">
-        <select v-model="query.sort" @change="query.page=1; load()" class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 focus:border-brandDay-500 focus:ring-1 focus:ring-brandDay-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
+  <section class="ui-page">
+    <header class="ui-page-header">
+      <div>
+        <h1 class="ui-title">我的帖子</h1>
+        <p class="ui-description">整理你发起的讨论，继续和社区交流。</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <select v-model="query.sort" class="ui-field w-auto" aria-label="帖子排序" @change="query.page=1; load()">
           <option value="updatedAt">最近更新</option>
           <option value="createdAt">最新创建</option>
         </select>
-        <div class="flex items-center gap-2">
-          <select v-model="query.sectionId" @change="query.page=1; load()" class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 focus:border-brandDay-500 focus:ring-1 focus:ring-brandDay-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200">
-            <option value="">全部分区</option>
-            <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
-        </div>
+        <select v-model="query.sectionId" class="ui-field w-auto" aria-label="按分区筛选" @change="query.page=1; load()">
+          <option value="">全部分区</option>
+          <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </select>
       </div>
-    </div>
+    </header>
 
-    <div class="mb-4 flex gap-2">
-      <input 
-        v-model="query.q" 
-        placeholder="搜索我的帖子..." 
-        @keyup.enter="query.page=1; load()" 
-        class="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brandDay-500 focus:ring-1 focus:ring-brandDay-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200 dark:placeholder-gray-400" 
-      />
-      <button class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600" @click="query.page=1; load()">
-        搜索
-      </button>
-    </div>
+    <section class="ui-panel overflow-hidden">
+      <div class="ui-toolbar">
+        <input v-model="query.q" class="ui-field min-w-[220px] flex-1" placeholder="搜索我的帖子..." aria-label="搜索我的帖子" @keyup.enter="query.page=1; load()" />
+        <button type="button" class="ui-button-primary" @click="query.page=1; load()">搜索</button>
+      </div>
 
-    <div v-if="loading" class="py-8 text-center text-sm text-gray-500">正在加载...</div>
-    <div v-else-if="error" class="py-8 text-center text-sm text-red-500">{{ error }}</div>
-    <div v-else-if="(list.items || []).length === 0" class="rounded-lg border border-dashed border-gray-200 py-10 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-      暂无帖子
-    </div>
-    <ul v-else class="space-y-3">
-      <li v-for="item in (list.items||[])" :key="item.id" class="group overflow-hidden rounded-lg border border-gray-100 bg-white transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700">
-        <div class="p-4">
-          <div class="mb-2 flex flex-wrap items-center gap-2">
-            <span class="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
-              {{ item.sectionName || ('#' + item.sectionId) }}
-            </span>
-            <span class="text-xs text-gray-400">创建 {{ formatRelativeTime(item.createdAt) }}</span>
-            <span class="text-xs text-gray-400">更新 {{ formatRelativeTime(item.updatedAt || item.createdAt) }}</span>
-          </div>
-
-          <router-link :to="'/threads/' + item.id" class="block">
-            <h3 class="line-clamp-2 text-base font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400">
-              {{ item.title }}
-            </h3>
-          </router-link>
-
-          <p class="mt-2 line-clamp-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
-            {{ excerpt(item) }}
-          </p>
-
-          <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-            <span>回复 {{ Number(item.replyCount || 0) }}</span>
-            <span>点赞 {{ Number(item.likeCount || 0) }}</span>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-gray-50/70 px-4 py-2 dark:border-gray-700 dark:bg-gray-900/20">
-          <div class="text-xs text-gray-400">ID: {{ item.id }}</div>
-          <div class="flex items-center gap-2">
-            <router-link :to="'/threads/' + item.id" class="rounded-md px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-white hover:text-brandDay-700 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-brandNight-300">
-              查看
+      <div v-if="loading" class="ui-empty" role="status">正在加载...</div>
+      <div v-else-if="error" class="ui-error m-4" role="alert">{{ error }}</div>
+      <div v-else-if="(list.items || []).length === 0" class="ui-empty" role="status">
+        <h2>暂无帖子</h2>
+        <p>发布第一个主题，开始一段新的讨论。</p>
+      </div>
+      <ul v-else>
+        <li v-for="item in (list.items||[])" :key="item.id" class="ui-list-row">
+          <div class="min-w-0">
+            <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ui-muted)]">
+              <span class="ui-tag">{{ item.sectionName || ('#' + item.sectionId) }}</span>
+              <span>创建 {{ formatRelativeTime(item.createdAt) }}</span>
+              <span>更新 {{ formatRelativeTime(item.updatedAt || item.createdAt) }}</span>
+            </div>
+            <router-link :to="'/threads/' + item.id" class="block">
+              <h2 class="line-clamp-2 text-base font-bold text-[var(--ui-ink)] hover:text-[var(--ui-accent)]">{{ item.title }}</h2>
             </router-link>
-            <router-link :to="'/threads/' + item.id + '/edit'" class="rounded-md px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-white hover:text-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100">编辑</router-link>
-            <button class="rounded-md px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 transition-colors" @click="askRemove(item.id)">删除</button>
+            <p class="mt-2 line-clamp-2 text-sm leading-6 text-[var(--ui-muted)]">{{ excerpt(item) }}</p>
+            <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--ui-muted)]">
+              <span>回复 {{ Number(item.replyCount || 0) }}</span>
+              <span>点赞 {{ Number(item.likeCount || 0) }}</span>
+            </div>
           </div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-border)] pt-3">
+            <div class="text-xs text-[var(--ui-muted)]">ID: {{ item.id }}</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <router-link :to="'/threads/' + item.id" class="ui-button">查看</router-link>
+              <router-link :to="'/threads/' + item.id + '/edit'" class="ui-button">编辑</router-link>
+              <button type="button" class="ui-button border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/30" @click="askRemove(item.id)">删除</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+
+      <footer class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div class="text-xs text-[var(--ui-muted)]">共 {{ list.total || 0 }} 条 · 每页 {{ query.size }} 条</div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="ui-button" :disabled="loading || (query.page || 1) <= 1" @click="prevPage">上一页</button>
+          <span class="text-sm text-[var(--ui-muted)]">第</span>
+          <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+          <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+          <button type="button" class="ui-button" :disabled="loading || (query.page || 1) >= totalPages" @click="nextPage">下一页</button>
         </div>
-      </li>
-    </ul>
-
-    <!-- 分页控件 -->
-    <div class="mt-6 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-gray-700">
-      <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ list.total || 0 }} 条 · 每页 {{ query.size }} 条</div>
-      <div class="flex items-center gap-2">
-        <button
-          class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
-          :disabled="loading || (query.page || 1) <= 1"
-          @click="prevPage"
-        >上一页</button>
-        <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
-        <input
-          v-model="inputPage"
-          class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
-          inputmode="numeric"
-          @keyup.enter="goToInputPage"
-          @blur="goToInputPage"
-        />
-        <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
-        <button
-          class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
-          :disabled="loading || (query.page || 1) >= totalPages"
-          @click="nextPage"
-        >下一页</button>
-      </div>
-    </div>
-  </div>
-
-  <ConfirmDialog
-    v-if="showDeleteConfirm"
-    title="删除帖子"
-    message="确定删除该帖子？删除后不可恢复"
-    :danger="true"
-    :loading="deleting"
-    @confirm="confirmDelete"
-    @cancel="cancelDelete"
-  />
+      </footer>
+    </section>
+    <ConfirmDialog v-if="showDeleteConfirm" title="删除帖子" message="确定删除该帖子？删除后不可恢复" :danger="true" :loading="deleting" @confirm="confirmDelete" @cancel="cancelDelete" />
+  </section>
 </template>
 
 <style scoped>

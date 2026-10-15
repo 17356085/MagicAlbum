@@ -1,4 +1,7 @@
+import { isAxiosError } from 'axios'
 import api from './client'
+import { decodePageResponse } from './pagination'
+import { normalizeThread } from './threads'
 import type {
   ApiError,
   Id,
@@ -30,6 +33,20 @@ interface ListUserThreadsQuery {
 interface ListUserRelationsQuery {
   page?: number
   size?: number
+}
+
+function responseStatus(error: unknown): number {
+  if (isAxiosError(error)) {
+    return Number(error.response?.status ?? 0)
+  }
+  if (typeof error !== 'object' || error === null || !('response' in error)) {
+    return 0
+  }
+  const response = error.response
+  if (typeof response !== 'object' || response === null || !('status' in response)) {
+    return 0
+  }
+  return Number(response.status ?? 0)
 }
 
 function delay(ms: number): Promise<void> {
@@ -90,15 +107,7 @@ export async function listUsers({
   params.size = size
   if (fields && String(fields).trim()) params.fields = String(fields).trim()
   const { data } = await api.get('/users', { params })
-  // 统一返回结构为 { items, page, size, total }
-  if (Array.isArray(data)) {
-    return { items: data, page, size, total: data.length }
-  }
-  const items = Array.isArray(data?.items) ? data.items : []
-  const total = Number(data?.total ?? items.length)
-  const retPage = Number(data?.page ?? page)
-  const retSize = Number(data?.size ?? size)
-  return { items, page: retPage, size: retSize, total }
+  return decodePageResponse<User>(data, { page, size, endpoint: '/users' })
 }
 
 // 用户搜索联想：根据关键字返回前 N 条匹配的用户
@@ -142,8 +151,8 @@ export async function getCurrentUser(): Promise<User | null> {
       const payload = (root?.data ?? root?.result ?? root ?? null) as Record<string, unknown> | null
       const user = (payload?.user ?? payload?.profile ?? payload?.userInfo ?? payload ?? null) as User | null
       if (user && typeof user === 'object' && (user.id || user.userId)) return user
-    } catch (e: any) {
-      const status = Number(e?.response?.status || 0)
+    } catch (error: unknown) {
+      const status = responseStatus(error)
       if (status === 401 || status === 403) {
         return null
       }
@@ -179,16 +188,7 @@ export async function listUserFollowing(
   { page = 1, size = 10 }: ListUserRelationsQuery = {},
 ): Promise<PageResult<User>> {
   const { data } = await api.get(`/users/${id}/following`, { params: { page, size } })
-  if (Array.isArray(data)) {
-    return { items: data, page, size, total: data.length }
-  }
-  const items = Array.isArray(data?.items) ? data.items : []
-  return {
-    items,
-    page: Number(data?.page ?? page),
-    size: Number(data?.size ?? size),
-    total: Number(data?.total ?? items.length),
-  }
+  return decodePageResponse<User>(data, { page, size, endpoint: `/users/${id}/following` })
 }
 
 export async function listUserFollowers(
@@ -196,23 +196,14 @@ export async function listUserFollowers(
   { page = 1, size = 10 }: ListUserRelationsQuery = {},
 ): Promise<PageResult<User>> {
   const { data } = await api.get(`/users/${id}/followers`, { params: { page, size } })
-  if (Array.isArray(data)) {
-    return { items: data, page, size, total: data.length }
-  }
-  const items = Array.isArray(data?.items) ? data.items : []
-  return {
-    items,
-    page: Number(data?.page ?? page),
-    size: Number(data?.size ?? size),
-    total: Number(data?.total ?? items.length),
-  }
+  return decodePageResponse<User>(data, { page, size, endpoint: `/users/${id}/followers` })
 }
 
 // 列出指定用户的主题帖（公开接口），分页与默认每页10条
 export async function listUserThreads(
   id: Id,
   { q, sectionId, sort = 'updatedAt', page = 1, size = 10 }: ListUserThreadsQuery = {},
-): Promise<PageResult<Thread> | Thread[]> {
+): Promise<PageResult<Thread>> {
   const params: Record<string, string | number> = {}
   if (q && String(q).trim()) params.q = String(q).trim()
   if (sectionId) params.sectionId = sectionId
@@ -220,7 +211,8 @@ export async function listUserThreads(
   params.page = page
   params.size = size
   const { data } = await api.get(`/users/${id}/threads`, { params })
-  return data
+  const decoded = decodePageResponse<Thread & { authorAvatar?: string }>(data, { page, size, endpoint: `/users/${id}/threads` })
+  return { ...decoded, items: decoded.items.map((item) => normalizeThread(item)) }
 }
 
 // 按昵称搜索的前端回退：分页扫描用户并拉取 profile 后按“用户名/昵称”过滤

@@ -1,0 +1,27 @@
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    event_id VARCHAR(36) NOT NULL,
+    recipient_user_id BIGINT NOT NULL,
+    type VARCHAR(40) NOT NULL,
+    title VARCHAR(120) NOT NULL,
+    content VARCHAR(1000) NOT NULL,
+    thread_id BIGINT NULL,
+    target_id BIGINT NULL,
+    target_type VARCHAR(10) NULL,
+    status VARCHAR(16) NOT NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    available_at TIMESTAMP(6) NOT NULL,
+    lease_owner VARCHAR(64) NULL,
+    lease_until TIMESTAMP(6) NULL,
+    last_error VARCHAR(1000) NULL,
+    delivered_at TIMESTAMP(6) NULL,
+    created_at TIMESTAMP(6) NOT NULL,
+    updated_at TIMESTAMP(6) NOT NULL,
+    PRIMARY KEY (id),
+    CONSTRAINT uk_notification_outbox_event_id UNIQUE (event_id),
+    KEY idx_notification_outbox_claim (status, available_at, lease_until, id),
+    KEY idx_notification_outbox_expired (status, lease_until, id),
+    KEY idx_notification_outbox_cleanup (status, updated_at),
+    CONSTRAINT fk_notification_outbox_user
+        FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

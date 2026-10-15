@@ -11,6 +11,7 @@ public class Notification {
     private Long threadId;
     private Long targetId;
     private String targetType;
+    private String idempotencyKey;
     private boolean read;
     private Instant createdAt;
 
@@ -76,6 +77,14 @@ public class Notification {
 
     public void setTargetType(String targetType) {
         this.targetType = targetType;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 
     public boolean isRead() {

@@ -3,6 +3,7 @@ import type { RouteRecordRaw, RouterScrollBehavior } from 'vue-router'
 import ThreadCreate from '@/pages/ThreadCreate.vue'
 import ThreadDetail from '@/pages/ThreadDetail.vue'
 import { getStoredAccessToken, hasRealToken, setPendingAuthRedirect } from '@/utils/authStorage'
+import { formatPageTitle } from '@/config/brand'
 
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/discover' },
@@ -60,6 +61,19 @@ router.beforeEach((to, from) => {
   }
 
   return { name: 'discover', query: { login: '1' } }
+})
+
+const pageTitles: Record<string, string> = {
+  discover: '发现', sections: '分区', ranking: '排行榜', feed: '关注动态',
+  users: '搜索用户', 'user-profile': '个人主页', 'user-following': '关注', 'user-followers': '粉丝',
+  'thread-create': '发帖', 'thread-edit': '编辑帖子', 'thread-detail': '帖子',
+  settings: '设置', 'my-threads': '我的帖子', 'my-posts': '我的评论', 'my-bookmarks': '我的收藏',
+  'admin-reports': '举报审核', history: '最近浏览',
+  'auth-oauth-callback': '授权登录', 'auth-qr-confirm': '确认登录',
+}
+
+router.afterEach((to, _from, failure) => {
+  if (!failure) document.title = formatPageTitle(pageTitles[String(to.name || '')])
 })
 
 export default router

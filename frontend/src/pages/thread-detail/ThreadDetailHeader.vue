@@ -75,11 +75,12 @@ watch(authorId, loadFollowState, { immediate: true })
 </script>
 
 <template>
-  <div class="border-b border-gray-100 bg-gray-50/50 p-5 dark:border-gray-700 dark:bg-gray-800/50">
-    <div class="flex items-start gap-4">
+  <header class="border-b border-[var(--ui-border)] bg-[var(--ui-subtle)] px-5 py-6 sm:px-8">
+    <div class="flex min-w-0 items-start gap-4">
       <button
+        type="button"
         aria-label="返回"
-        class="mt-1 shrink-0 rounded-full p-1.5 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+        class="ui-button mt-1 h-10 w-10 shrink-0 !p-2 text-[var(--ui-muted)]"
         @click="$emit('back')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
@@ -87,49 +88,49 @@ watch(authorId, loadFollowState, { immediate: true })
         </svg>
       </button>
       <div class="min-w-0 flex-1">
-        <div class="mb-2 flex items-center gap-3 text-xs text-gray-500">
+        <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--ui-muted)]">
           <router-link
             :to="{ name: 'discover', query: { sectionId: props.thread.sectionId, page: 1 } }"
-            class="rounded bg-brandDay-50 px-2 py-0.5 font-medium text-brandDay-600 transition-colors hover:bg-brandDay-100 dark:bg-brandNight-900/30 dark:text-brandNight-300 dark:hover:bg-brandNight-900/50"
+            class="ui-tag"
           >
             {{ props.thread.sectionName || props.thread.sectionId }}
           </router-link>
           <span>·</span>
           <span>{{ formatRelativeTime(props.thread.createdAt) }}</span>
-          <span v-if="props.thread.updatedAt && props.thread.updatedAt !== props.thread.createdAt" class="text-gray-400">
+          <span v-if="props.thread.updatedAt && props.thread.updatedAt !== props.thread.createdAt" class="text-[var(--ui-muted)]">
             (编辑于 {{ formatRelativeTime(props.thread.updatedAt) }})
           </span>
         </div>
-        <h1 class="break-words text-2xl font-bold leading-tight text-gray-900 dark:text-gray-100" v-html="renderTitleMarkdownHtml(props.thread.title)" />
+        <h1 class="ui-title break-words" v-html="renderTitleMarkdownHtml(props.thread.title)" />
 
         <div v-if="props.thread.tags?.length" class="mt-3 flex flex-wrap gap-2">
           <router-link
             v-for="tag in props.thread.tags"
             :key="tag"
             :to="{ name: 'discover', query: { q: tag, page: 1, sectionId: props.thread.sectionId } }"
-            class="rounded-md bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-brandDay-50 hover:text-brandDay-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-brandNight-900/30 dark:hover:text-brandNight-300"
+            class="ui-tag"
           >
             #{{ tag }}
           </router-link>
         </div>
 
-        <div class="mt-4 flex items-center justify-between gap-3">
-          <router-link :to="props.thread.authorId ? (`/users/${props.thread.authorId}`) : '/users'" class="group flex items-center gap-2">
+        <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <router-link :to="props.thread.authorId ? (`/users/${props.thread.authorId}`) : '/users'" class="group flex min-w-0 items-center gap-2">
             <img
               :src="props.displayAuthorAvatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${props.thread.authorNickname || props.thread.authorUsername || 'U'}`"
-              class="h-8 w-8 rounded-full bg-gray-100 object-cover ring-2 ring-transparent transition-all group-hover:ring-brandDay-100 dark:bg-gray-700 dark:group-hover:ring-brandNight-900"
+              class="h-8 w-8 rounded-full bg-[var(--ui-subtle)] object-cover"
               alt=""
             />
-            <span class="text-sm font-medium text-gray-700 transition-colors group-hover:text-brandDay-600 dark:text-gray-300 dark:group-hover:text-brandNight-400">
+            <span class="truncate text-sm font-medium text-[var(--ui-ink)] group-hover:text-[var(--ui-accent)]">
               {{ props.thread.authorNickname || props.thread.authorUsername || props.thread.authorId }}
             </span>
           </router-link>
           <div v-if="showFollowButton" class="flex shrink-0 items-center gap-2">
-            <span v-if="followError" class="text-xs text-red-500">{{ followError }}</span>
+            <span v-if="followError" class="text-xs text-rose-600 dark:text-rose-300" role="alert">{{ followError }}</span>
             <button
               type="button"
-              class="rounded px-3 py-1.5 text-xs font-medium shadow-sm transition-colors disabled:opacity-60"
-              :class="followedByMe ? 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700' : 'bg-brandDay-600 text-white hover:bg-brandDay-700 dark:bg-brandNight-600 dark:hover:bg-brandNight-700'"
+              class="ui-button min-h-9 px-3 py-1 text-xs disabled:opacity-60"
+              :class="followedByMe ? '' : 'ui-button-primary'"
               :disabled="followLoading"
               @click="toggleFollow"
             >
@@ -139,5 +140,5 @@ watch(authorId, loadFollowState, { immediate: true })
         </div>
       </div>
     </div>
-  </div>
+  </header>
 </template>

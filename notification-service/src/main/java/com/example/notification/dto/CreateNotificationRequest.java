@@ -6,6 +6,8 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import java.util.UUID;
+
 public class CreateNotificationRequest {
     @NotNull
     @Positive
@@ -32,6 +34,9 @@ public class CreateNotificationRequest {
     @Size(max = 10)
     @Pattern(regexp = "post|thread|user")
     private String targetType;
+
+    /** Optional for old callers; when present it is the durable delivery idempotency key. */
+    private UUID eventId;
 
     public Long getUserId() {
         return userId;
@@ -87,5 +92,13 @@ public class CreateNotificationRequest {
 
     public void setTargetType(String targetType) {
         this.targetType = targetType;
+    }
+
+    public UUID getEventId() {
+        return eventId;
+    }
+
+    public void setEventId(UUID eventId) {
+        this.eventId = eventId;
     }
 }

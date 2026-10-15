@@ -2,8 +2,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ThreadDetailActions from '../../pages/thread-detail/ThreadDetailActions.vue'
-import { bookmarkThread, getThreadBookmarkState, unbookmarkThread } from '@/api/bookmarks'
-import { getThreadLikeState, likeThread, unlikeThread } from '@/api/threads'
 import { useAuthStore } from '@/stores/auth'
 
 const mocks = vi.hoisted(() => ({

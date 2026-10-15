@@ -1,13 +1,16 @@
 package com.example.demo.sections.controller;
 
+import com.example.demo.common.PageResponse;
 import com.example.demo.sections.entity.Section;
+import com.example.demo.sections.dto.SectionDto;
 import com.example.demo.sections.service.SectionService;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/sections")
@@ -19,17 +22,14 @@ public class SectionsController {
     }
 
     @GetMapping
-    public ResponseEntity<Map<String, Object>> list(
+    public ResponseEntity<PageResponse<SectionDto>> list(
             @RequestParam(value = "q", required = false) String q,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
         Page<Section> p = sectionService.list(q, page, size);
-        Map<String, Object> body = new HashMap<>();
-        body.put("items", p.getContent());
-        body.put("page", p.getNumber() + 1);
-        body.put("size", p.getSize());
-        body.put("total", p.getTotalElements());
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(PageResponse.from(p.map(section -> new SectionDto(section.getId(),
+                section.getName(), section.getSlug(), section.getDescription(), section.getRules(),
+                section.getVisible(), section.getCreatedAt()))));
     }
 }

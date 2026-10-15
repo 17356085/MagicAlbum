@@ -1,6 +1,6 @@
 <template>
-  <section class="mx-auto flex min-h-[60vh] max-w-xl items-center justify-center px-4 py-12">
-    <div class="w-full rounded-2xl border border-sky-100 bg-white p-6 text-center shadow-sm dark:border-gray-700 dark:bg-gray-900">
+  <section class="ui-page mx-auto flex min-h-[60vh] max-w-xl items-center justify-center px-4 py-12">
+    <div class="ui-panel w-full p-6 text-center sm:p-8">
       <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full" :class="success ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300'">
         <svg v-if="success" viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M20 6 9 17l-5-5" stroke-linecap="round" stroke-linejoin="round" />
@@ -10,17 +10,17 @@
         </svg>
       </div>
 
-      <h1 class="mt-4 text-xl font-semibold text-gray-900 dark:text-white">
+      <h1 class="ui-title mt-4">
         {{ success ? '登录成功，正在返回…' : '第三方登录未完成' }}
       </h1>
-      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+      <p class="ui-description mx-auto mt-2">
         {{ message }}
       </p>
 
-      <div class="mt-5 flex items-center justify-center gap-3">
+      <div class="mt-6 flex items-center justify-center gap-3">
         <button
           type="button"
-          class="rounded-xl bg-sky-500 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600 dark:bg-cyan-500 dark:hover:bg-cyan-600"
+          class="ui-button-primary"
           @click="goNext"
         >
           {{ success ? '立即跳转' : '返回首页' }}

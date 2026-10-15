@@ -3,9 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listThreads } from '@/api/threads'
 import { normalizeImageUrl } from '@/utils/image'
-import { createMarkdownRenderer, renderInlineMarkdown, renderMarkdown } from '@/utils/markdown'
+import { createMarkdownRenderer, renderInlineMarkdown } from '@/utils/markdown'
 import { getSingleQueryValue } from '@/utils/router'
-import type { Id, PageResult, Thread } from '@/types'
+import { formatAbsoluteTime } from '@/composables/time'
+import type { Id, Thread } from '@/types'
 
 const loading = ref(false)
 const error = ref('')
@@ -61,17 +62,6 @@ function goToInputPage() {
   setPage(target)
 }
 
-function createEmptyThreads(page = 1, size = 10): PageResult<Thread> {
-  return { items: [], page, size, total: 0 }
-}
-
-function normalizeThreadsResult(data: PageResult<Thread> | Thread[]): PageResult<Thread> {
-  if (Array.isArray(data)) {
-    return createEmptyThreads(page.value, size.value)
-  }
-  return data
-}
-
 function sortThreadsByCreatedAt(list: Thread[]): Thread[] {
   return [...list].sort((a, b) => {
     const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0
@@ -101,13 +91,11 @@ async function load() {
     tag.value = rt
     const data = await listThreads({ q: rq, tag: rt, page: page.value, size: size.value, sectionId: sid })
     if (requestSeq !== loadRequestSeq) return
-    const normalized = normalizeThreadsResult(data)
-    const arr = Array.isArray(data) ? data : (normalized.items || [])
-    items.value = sortThreadsByCreatedAt(arr)
-    currentSectionName.value = arr.length > 0 ? (arr[0].sectionName || '') : ''
-    total.value = Array.isArray(data) ? arr.length : Number(normalized.total || 0)
-    page.value = Array.isArray(data) ? page.value : Number(normalized.page || page.value)
-    size.value = Array.isArray(data) ? size.value : Number(normalized.size || size.value)
+    items.value = sortThreadsByCreatedAt(data.items)
+    currentSectionName.value = data.items.length > 0 ? (data.items[0].sectionName || '') : ''
+    total.value = data.total
+    page.value = data.page
+    size.value = data.size
   } catch (_) {
     if (requestSeq === loadRequestSeq) error.value = '加载帖子失败'
   } finally {
@@ -135,8 +123,8 @@ watch(() => route.query.tag, () => {
   load()
 })
 
-function firstImageUrl(mdText: string | undefined) {
-  if (!mdText) return null
+function firstImageUrl(mdText: string | undefined): string | undefined {
+  if (!mdText) return undefined
   const text = String(mdText)
   // Markdown 图片语法 ![alt](url "title")
   const m1 = text.match(/!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/)
@@ -144,7 +132,7 @@ function firstImageUrl(mdText: string | undefined) {
   // HTML <img src="url">
   const m2 = text.match(/<img[^>]+src=["']([^"']+)["']/i)
   if (m2 && m2[1]) return normalizeImageUrl(m2[1])
-  return null
+  return undefined
 }
 
 // 提取纯文本摘要：移除图片、链接与 HTML 标签
@@ -157,9 +145,16 @@ function textExcerpt(mdText: string | undefined, maxLen = 180) {
   s = s.replace(/^(?: {4}|\t).*$\n?/gm, '')
   s = s.replace(/`[^`]*`/g, '')
   // 移除 Markdown 图片
-  s = s.replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
+  s = s.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
   // 将 Markdown 链接替换为可读文本
-  s = s.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '$1')
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+  // 摘要保持纯文本：去掉标题、引用、列表和强调标记，避免正文结构泄露到列表层级。
+  s = s.replace(/^\s{0,3}(?:#{1,6}\s+|>\s?)/gm, '')
+  s = s.replace(/^\s{0,3}(?:[-*+]\s+|\d+[.)]\s+)/gm, '')
+  s = s.replace(/^\s{0,3}(?:-{3,}|_{3,}|\*{3,})\s*$/gm, '')
+  s = s.replace(/(\*\*|__|~~)/g, '')
+  s = s.replace(/(^|[\s([{])[*_](?=\S)/gm, '$1')
+  s = s.replace(/[*_](?=$|[\s)\]}.,!?;:])/gm, '')
   // 移除 HTML 图片与标签
   s = s.replace(/<img[^>]*>/gi, '')
   s = s.replace(/<[^>]+>/g, '')
@@ -170,22 +165,6 @@ function textExcerpt(mdText: string | undefined, maxLen = 180) {
 }
 
 // 预览图不再支持展开/收起，统一在固定最大尺寸内完整显示
-
-// Markdown 预览：移除代码块与图片，仅渲染文本、行内元素
-const md = createMarkdownRenderer({ html: false, highlight: false })
-function renderPreviewMarkdownHtml(mdText: string | undefined) {
-  if (!mdText) return ''
-  let s = String(mdText)
-  // 移除代码块（```/~~~/缩进）与行内代码，避免预览过长与样式干扰
-  s = s.replace(/```[\s\S]*?```/g, '')
-  s = s.replace(/~~~[\s\S]*?~~~/g, '')
-  s = s.replace(/^(?: {4}|\t).*$/gm, '')
-  s = s.replace(/`[^`]*`/g, '')
-  // 移除图片（Markdown与HTML），避免与左侧预览图重复
-  s = s.replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
-  s = s.replace(/<img[^>]*>/gi, '')
-  return renderMarkdown(md, s)
-}
 
 // 标题行内 Markdown 渲染（仅文本行内，支持删除线），并进行清理
 const mdTitle = createMarkdownRenderer({ html: false, breaks: false, highlight: false })
@@ -199,86 +178,100 @@ function getAuthorAvatarUrl(thread: Thread): string {
 </script>
 
 <template>
-  <div>
-    <div v-if="q || tag" class="mb-2 text-xs text-gray-600 dark:text-gray-300">
-      <span v-if="q">搜索关键字：{{ q }}</span>
-      <span v-if="q && tag" class="mx-2 text-gray-400">·</span>
-      <span v-if="tag">标签：#{{ tag }}</span>
-    </div>
-    <div v-if="loading" class="text-gray-600 dark:text-gray-300">正在加载...</div>
-    <div v-else>
-      <div v-if="error" class="text-red-600 mb-3">{{ error }}</div>
-      <div v-else-if="items.length === 0" class="text-gray-600 dark:text-gray-300">暂无帖子</div>
-      <div v-else class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700">
-        <ul class="space-y-4">
-          <li v-for="t in items" :key="t.id" class="group rounded-lg border border-gray-100 bg-white p-4 transition-all hover:border-brandDay-200 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700">
-            <router-link :to="`/threads/${t.id}`" class="block">
-              <div class="flex flex-col md:flex-row items-start gap-5">
-                
-                <!-- 缩略图 (左侧) -->
-                <div v-if="firstImageUrl(t.content)" class="shrink-0 w-full md:w-64 h-48 md:h-40 overflow-hidden rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 relative group/img">
-                   <!-- 背景：高斯模糊填充 -->
-                   <img :src="firstImageUrl(t.content)" alt="" class="absolute inset-0 h-full w-full object-cover opacity-50 blur-sm scale-110" />
-                   <!-- 前景：完整显示 -->
-                   <img :src="firstImageUrl(t.content)" alt="封面" loading="lazy" class="relative z-10 h-full w-full object-contain transition-transform duration-500 group-hover:scale-105" style="-webkit-mask-image: radial-gradient(circle, black 60%, transparent 100%); mask-image: radial-gradient(circle, black 60%, transparent 100%);" />
-                </div>
+  <div class="ui-page mx-auto max-w-5xl">
+    <header class="ui-page-header">
+      <div class="min-w-0">
+        <h1 class="ui-title">发现</h1>
+        <p class="ui-description">浏览社区里正在发生的讨论，按分区、关键词或标签找到下一篇想读的帖子。</p>
+      </div>
+      <div v-if="sectionId !== null && currentSectionName" class="ui-muted text-sm">当前分区：{{ currentSectionName }}</div>
+    </header>
 
-                <!-- 内容 (右侧) -->
-                <div class="flex-1 min-w-0 w-full">
-                  <h2 class="text-lg font-bold text-gray-800 transition-colors group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-400 line-clamp-2 mb-2.5" v-html="renderTitleMarkdownHtml(t.title)"></h2>
-                  <div class="text-sm text-gray-600 line-clamp-3 dark:text-gray-300" v-html="renderPreviewMarkdownHtml(t.content)"></div>
-                  <div v-if="t.tags?.length" class="mt-3 flex flex-wrap gap-2">
-                    <router-link
-                      v-for="tag in t.tags"
-                      :key="tag"
-                      :to="{ name: 'discover', query: { tag, page: 1, sectionId: t.sectionId } }"
-                      class="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 transition-colors hover:bg-brandDay-50 hover:text-brandDay-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-brandNight-900/30 dark:hover:text-brandNight-300"
-                      @click.stop
-                    >
-                      #{{ tag }}
-                    </router-link>
-                  </div>
-                  
-                  <div class="mt-3 flex items-center gap-3 text-xs text-gray-400">
-                    <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="flex items-center gap-1.5 hover:text-gray-600 dark:hover:text-gray-200">
-                      <img
-                        :src="getAuthorAvatarUrl(t) || `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || t.authorId || 'U'}`"
-                        class="h-5 w-5 rounded-full object-cover bg-gray-100 dark:bg-gray-700" 
-                        alt=""
-                      />
-                      {{ t.authorNickname || t.authorUsername || t.authorId }}
-                    </router-link>
-                    <span>·</span>
-                    <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="rounded bg-gray-100 px-2 py-0.5 font-medium hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors">
-                      {{ t.sectionName || t.sectionId }}
-                    </router-link>
-                    <span>·</span>
-                    <span>{{ new Date(t.createdAt).toLocaleString() }}</span>
-                  </div>
-                </div>
-                
+    <div v-if="q || tag" class="ui-toolbar mb-4 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)]" aria-label="当前筛选">
+      <span class="ui-muted text-sm font-medium">当前筛选</span>
+      <span v-if="q" class="ui-tag">搜索关键字：{{ q }}</span>
+      <span v-if="tag" class="ui-tag">标签：#{{ tag }}</span>
+    </div>
+
+    <div v-if="loading" class="ui-panel" role="status" aria-live="polite">
+      <div class="ui-empty">
+        <h2>正在加载...</h2>
+        <div class="mx-auto mt-4 max-w-2xl space-y-3 text-left" aria-hidden="true">
+          <div class="ui-skeleton h-5 w-2/3" />
+          <div class="ui-skeleton h-4 w-full" />
+          <div class="ui-skeleton h-4 w-5/6" />
+        </div>
+      </div>
+    </div>
+    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
+    <div v-else-if="items.length === 0" class="ui-panel ui-empty">
+      <h2>暂无帖子</h2>
+      <p>换一个关键词或标签试试。</p>
+    </div>
+    <div v-else class="ui-panel overflow-hidden">
+      <ul>
+        <li v-for="t in items" :key="t.id" class="ui-list-row">
+          <div class="flex min-w-0 flex-col items-start gap-5 md:flex-row">
+            <div v-if="firstImageUrl(t.content)" class="h-40 w-full shrink-0 overflow-hidden rounded-lg border border-[var(--ui-border)] bg-[var(--ui-subtle)] md:w-56">
+              <img :src="firstImageUrl(t.content)" alt="帖子图片" loading="lazy" class="h-full w-full object-contain" />
+            </div>
+
+            <div class="min-w-0 flex-1">
+              <router-link :to="`/threads/${t.id}`" class="group block">
+                <h2 class="mb-2 line-clamp-2 break-words text-lg font-semibold leading-snug text-[var(--ui-ink)] group-hover:text-[var(--ui-accent)]" v-html="renderTitleMarkdownHtml(t.title)" />
+              </router-link>
+              <p class="line-clamp-3 text-sm leading-6 text-[var(--ui-muted)]">{{ textExcerpt(t.content) }}</p>
+              <div v-if="t.tags?.length" class="mt-3 flex flex-wrap gap-2">
+                <router-link
+                  v-for="tag in t.tags"
+                  :key="tag"
+                  :to="{ name: 'discover', query: { tag, page: 1, sectionId: t.sectionId } }"
+                  class="ui-tag"
+                >
+                  #{{ tag }}
+                </router-link>
               </div>
-            </router-link>
-          </li>
-        </ul>
-        <div class="mt-4 flex items-center justify-between">
-          <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ total }} 条 · 每页 {{ size }} 条</div>
-          <div class="flex items-center gap-2">
-            <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page <= 1" @click="prevPage">上一页</button>
-            <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
+
+              <div class="mt-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[var(--ui-muted)]">
+                <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="inline-flex min-w-0 items-center gap-2 text-[var(--ui-ink)] hover:text-[var(--ui-accent)]">
+                  <img
+                    :src="getAuthorAvatarUrl(t) || `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || t.authorId || 'U'}`"
+                    class="h-6 w-6 rounded-full bg-[var(--ui-subtle)] object-cover"
+                    alt=""
+                  />
+                  <span class="truncate">{{ t.authorNickname || t.authorUsername || t.authorId }}</span>
+                </router-link>
+                <span aria-hidden="true">·</span>
+                <router-link :to="{ name: 'discover', query: { sectionId: t.sectionId, page: 1 } }" class="ui-tag">
+                  {{ t.sectionName || t.sectionId }}
+                </router-link>
+                <span aria-hidden="true">·</span>
+                <time :datetime="t.createdAt">{{ formatAbsoluteTime(t.createdAt) || '时间未知' }}</time>
+              </div>
+            </div>
+          </div>
+        </li>
+      </ul>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
+        <div class="ui-muted text-xs">共 {{ total }} 条 · 每页 {{ size }} 条</div>
+        <nav class="flex min-w-0 flex-wrap items-center gap-2" aria-label="帖子分页">
+          <button class="ui-button min-h-9 px-3 py-1" :disabled="page <= 1" @click="prevPage">上一页</button>
+          <label class="ui-muted flex items-center gap-2 text-sm">
+            <span>第</span>
             <input
               v-model="inputPage"
               type="text"
               inputmode="numeric"
               pattern="[0-9]*"
-              class="rounded border px-2 py-1 text-sm w-16 text-center bg-white dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+              aria-label="页码"
+              class="ui-field w-16 py-1 text-center"
               @keyup.enter="goToInputPage"
               @blur="goToInputPage"
             />
-            <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
-            <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page >= totalPages" @click="nextPage">下一页</button>
-          </div>
-        </div>
+            <span>/ {{ totalPages }} 页</span>
+          </label>
+          <button class="ui-button min-h-9 px-3 py-1" :disabled="page >= totalPages" @click="nextPage">下一页</button>
+        </nav>
       </div>
     </div>
   </div>

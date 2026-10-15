@@ -86,7 +86,7 @@ public class UserFollowService {
     public Page<UserSummaryDto> listFollowers(Long userId, int page, int size) {
         ensureUserExists(userId);
         int limit = Math.min(Math.max(size, 1), 50);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
         Page<Long> ids = userFollowRepository.findFollowerIds(userId, PageRequest.of(pageIndex, limit));
         return toUserSummaryPage(ids);
     }
@@ -95,7 +95,7 @@ public class UserFollowService {
     public Page<UserSummaryDto> listFollowing(Long userId, int page, int size) {
         ensureUserExists(userId);
         int limit = Math.min(Math.max(size, 1), 50);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
         Page<Long> ids = userFollowRepository.findFollowingIds(userId, PageRequest.of(pageIndex, limit));
         return toUserSummaryPage(ids);
     }

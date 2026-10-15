@@ -1,4 +1,6 @@
 import api from './client'
+import { decodePageResponse } from './pagination'
+import { normalizeThread } from './threads'
 import type { Id, PageResult, Post, Thread, UpdateThreadPayload } from '@/types'
 
 interface MyListQuery {
@@ -20,7 +22,7 @@ export async function listMyThreads({
   page = 1,
   size = 20,
   sort,
-}: MyListQuery = {}): Promise<PageResult<Thread> | Thread[]> {
+}: MyListQuery = {}): Promise<PageResult<Thread>> {
   const params: Record<string, string | number> = {}
   if (q && q.trim()) params.q = q.trim()
   if (sectionId) params.sectionId = sectionId
@@ -28,7 +30,8 @@ export async function listMyThreads({
   params.page = page
   params.size = size
   const { data } = await api.get('/users/me/threads', { params })
-  return data
+  const decoded = decodePageResponse<Thread & { authorAvatar?: string }>(data, { page, size, endpoint: '/users/me/threads' })
+  return { ...decoded, items: decoded.items.map((item) => normalizeThread(item)) }
 }
 
 // 我的评论
@@ -39,7 +42,7 @@ export async function listMyPosts({
   page = 1,
   size = 20,
   sort,
-}: MyPostsQuery = {}): Promise<PageResult<Post> | Post[]> {
+}: MyPostsQuery = {}): Promise<PageResult<Post>> {
   const params: Record<string, string | number> = {}
   if (q && q.trim()) params.q = q.trim()
   if (threadId) params.threadId = threadId
@@ -48,7 +51,7 @@ export async function listMyPosts({
   params.page = page
   params.size = size
   const { data } = await api.get('/users/me/posts', { params })
-  return data
+  return decodePageResponse<Post>(data, { page, size, endpoint: '/users/me/posts' })
 }
 
 // 线程编辑与删除（本人资源）

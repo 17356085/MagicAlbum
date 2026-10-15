@@ -1,0 +1,24 @@
+<template>
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 48 48"
+    class="h-8 w-8"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <rect x="1" y="1" width="46" height="46" rx="12" fill="#1d4ed8" />
+    <path
+      d="M16 11.5h16a7.5 7.5 0 0 1 7.5 7.5v8a7.5 7.5 0 0 1-7.5 7.5h-6.2L17 39v-4.5h-1A7.5 7.5 0 0 1 8.5 27v-8a7.5 7.5 0 0 1 7.5-7.5Z"
+      fill="#e0f2fe"
+    />
+    <path
+      d="M15 24c1.8-4.2 3.6-4.2 5.4 0s3.6 4.2 5.4 0 3.6-4.2 5.4 0 3.6 4.2 5.4 0"
+      fill="none"
+      stroke="#1e40af"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2.6"
+    />
+    <path d="M16 29.5h16" fill="none" stroke="#93c5fd" stroke-linecap="round" stroke-width="2" />
+  </svg>
+</template>

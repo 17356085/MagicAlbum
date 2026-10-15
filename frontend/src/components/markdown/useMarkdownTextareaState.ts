@@ -1,6 +1,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createMarkdownRenderer, renderMarkdown } from '@/utils/markdown'
-import { insertText, wrapSelection } from '@/utils/markdownEditor'
+import { wrapSelection } from '@/utils/markdownEditor'
 import { handleMarkdownKeydown } from '@/components/markdown/handleMarkdownKeydown'
 import { normalizeAllOrderedLists } from '@/components/markdown/markdownListUtils'
 import { useMarkdownUrlPanels } from '@/components/markdown/useMarkdownUrlPanels'

@@ -138,16 +138,16 @@ watch(
 </script>
 
 <template>
-  <div class="border-t border-gray-100 px-5 py-5 dark:border-gray-700 sm:px-8">
+  <section class="px-5 py-5 sm:px-8" aria-label="帖子互动">
     <div class="flex flex-wrap items-center gap-3">
       <button
         type="button"
         :aria-pressed="liked"
         :disabled="likePending"
-        class="inline-flex min-h-10 items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+        class="ui-button min-h-10 px-4 py-2 disabled:opacity-60"
         :class="liked
           ? 'border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300'
-          : 'border-gray-200 bg-white text-gray-700 hover:border-rose-200 hover:text-rose-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-rose-800 dark:hover:text-rose-300'"
+          : 'hover:border-rose-200 hover:text-rose-600 dark:hover:border-rose-800 dark:hover:text-rose-300'"
         @click="toggleLike"
       >
         <span class="text-base leading-none">{{ liked ? '♥' : '♡' }}</span>
@@ -160,10 +160,10 @@ watch(
         :aria-pressed="bookmarked"
         :aria-busy="bookmarkLoading || bookmarkPending"
         :disabled="bookmarkLoading || bookmarkPending"
-        class="inline-flex min-h-10 items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+        class="ui-button min-h-10 px-4 py-2 disabled:opacity-60"
         :class="bookmarked
           ? 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300'
-          : 'border-gray-200 bg-white text-gray-700 hover:border-amber-200 hover:text-amber-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-amber-800 dark:hover:text-amber-300'"
+          : 'hover:border-amber-200 hover:text-amber-600 dark:hover:border-amber-800 dark:hover:text-amber-300'"
         @click="toggleBookmark"
       >
         <span class="text-base leading-none">{{ bookmarked ? '★' : '☆' }}</span>
@@ -172,14 +172,14 @@ watch(
       <button
         type="button"
         aria-label="举报"
-        class="inline-flex min-h-10 items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:border-red-200 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-red-800 dark:hover:text-red-300"
+        class="ui-button min-h-10 px-4 py-2 hover:border-red-200 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-300"
         @click="openReportDialog"
       >
         <span class="text-base leading-none">⚑</span>
         <span>举报</span>
       </button>
-      <span v-if="message" class="text-sm text-gray-500 dark:text-gray-400">{{ message }}</span>
-      <span v-if="bookmarkMessage" class="text-sm text-gray-500 dark:text-gray-400">{{ bookmarkMessage }}</span>
+      <span v-if="message" class="ui-muted text-sm" role="status">{{ message }}</span>
+      <span v-if="bookmarkMessage" class="ui-muted text-sm" role="status">{{ bookmarkMessage }}</span>
       <span v-if="reportMessage" class="text-sm text-amber-700 dark:text-amber-300" role="alert">{{ reportMessage }}</span>
     </div>
     <ReportDialog
@@ -190,5 +190,5 @@ watch(
       :is-logged-in="isLoggedIn"
       @update:model-value="reportDialogOpen = $event"
     />
-  </div>
+  </section>
 </template>

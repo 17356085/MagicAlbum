@@ -27,7 +27,8 @@ class SectionsControllerPaginationTest {
                 .list(null, 0, 100)
                 .getBody();
 
-        assertThat(body).containsEntry("page", 1).containsEntry("size", 100);
+        assertThat(body.page()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(100);
         verify(sectionService).list(isNull(), eq(0), eq(100));
     }
 }

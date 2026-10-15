@@ -1,8 +1,8 @@
 package com.example.demo.moderation.repo;
 
 import com.example.demo.moderation.entity.ContentReport;
-import com.example.demo.moderation.entity.ReportStatus;
-import com.example.demo.moderation.entity.ReportTargetType;
+import com.example.demo.moderation.model.ReportStatus;
+import com.example.demo.moderation.model.ReportTargetType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;

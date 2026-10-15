@@ -1,74 +1,79 @@
 <template>
-  <form class="space-y-3 px-5 py-3" @submit.prevent="onSubmitRegister">
-    <div class="flex items-center gap-2.5 text-[10px] uppercase tracking-[0.18em] text-gray-400 dark:text-gray-500">
+  <form class="space-y-4 p-4 sm:p-5" @submit.prevent="onSubmitRegister">
+    <div class="ui-muted flex items-center gap-2.5 text-[10px] uppercase tracking-[0.18em]">
       <span class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
       <span>Register</span>
       <span class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
     </div>
 
     <div>
-      <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">用户名</label>
+      <label for="auth-register-username" class="mb-1 block text-sm font-medium">用户名</label>
       <input
         v-model.trim="form.username"
+        id="auth-register-username"
         @blur="validateUsername"
         type="text"
         placeholder="请输入用户名"
-        class="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 text-sm shadow-sm outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-cyan-400 dark:focus:bg-gray-900 dark:focus:ring-cyan-500/20"
+        class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
       />
       <p v-if="errors.username" class="mt-1 text-xs text-red-600">{{ errors.username }}</p>
     </div>
 
     <div class="grid gap-3 md:grid-cols-2">
       <div>
-        <label class="mb-1 block text-[13px] font-medium text-gray-700 dark:text-gray-200">手机号</label>
+        <label for="auth-register-phone" class="mb-1 block text-sm font-medium">手机号</label>
         <input
           v-model.trim="form.phone"
+          id="auth-register-phone"
           type="tel"
           placeholder="请输入手机号"
-          class="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 text-sm shadow-sm outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-cyan-400 dark:focus:bg-gray-900 dark:focus:ring-cyan-500/20"
+          class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
         />
         <p v-if="errors.phone" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
       </div>
 
       <div>
-        <label class="mb-1 block text-[13px] font-medium text-gray-700 dark:text-gray-200">邮箱</label>
+        <label for="auth-register-email" class="mb-1 block text-sm font-medium">邮箱</label>
         <input
           v-model.trim="form.email"
+          id="auth-register-email"
           type="email"
           placeholder="name@example.com"
-          class="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 text-sm shadow-sm outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-cyan-400 dark:focus:bg-gray-900 dark:focus:ring-cyan-500/20"
+          class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
         />
         <p v-if="errors.email" class="mt-1 text-xs text-red-600">{{ errors.email }}</p>
       </div>
 
       <div>
-        <label class="mb-1 block text-[13px] font-medium text-gray-700 dark:text-gray-200">密码</label>
+        <label for="auth-register-password" class="mb-1 block text-sm font-medium">密码</label>
         <input
           v-model="form.password"
+          id="auth-register-password"
           type="password"
           autocomplete="new-password"
           placeholder="不少于 8 位"
-          class="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 text-sm shadow-sm outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-cyan-400 dark:focus:bg-gray-900 dark:focus:ring-cyan-500/20"
+          class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
         />
         <p v-if="errors.password" class="mt-1 text-xs text-red-600">{{ errors.password }}</p>
       </div>
 
       <div>
-        <label class="mb-1 block text-[13px] font-medium text-gray-700 dark:text-gray-200">确认密码</label>
+        <label for="auth-register-confirm-password" class="mb-1 block text-sm font-medium">确认密码</label>
         <input
           v-model="form.confirmPassword"
+          id="auth-register-confirm-password"
           type="password"
           autocomplete="new-password"
           placeholder="再次输入密码"
-          class="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 text-sm shadow-sm outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-cyan-400 dark:focus:bg-gray-900 dark:focus:ring-cyan-500/20"
+          class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
         />
         <p v-if="errors.confirmPassword" class="mt-1 text-xs text-red-600">{{ errors.confirmPassword }}</p>
       </div>
     </div>
 
-    <div class="rounded-xl bg-sky-50/70 px-3.5 py-2 text-[11px] text-gray-500 dark:bg-gray-800/80 dark:text-gray-400">
+    <div class="border border-gray-200 bg-[var(--ui-subtle)] px-3.5 py-2 text-xs ui-muted dark:border-gray-700">
       已有账号？
-      <button type="button" class="text-brandDay-600 hover:underline dark:text-accentCyan-400" @click="emit('switch-login')">返回登录</button>
+      <button type="button" class="text-[var(--ui-accent)] hover:underline" @click="emit('switch-login')">返回登录</button>
     </div>
 
     <AuthVerifyBlock v-if="verifyEnabled && showVerify" ref="verifyBlockRef" scene="register" />
@@ -76,7 +81,7 @@
     <div class="flex items-center justify-end pt-0.5">
       <button
         type="submit"
-        class="rounded-xl bg-sky-500 px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-600 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-sky-100 dark:bg-cyan-500 dark:hover:bg-cyan-600 dark:focus:ring-cyan-500/20"
+        class="ui-button-primary disabled:opacity-60"
         :disabled="submitting"
       >
         {{ submitting ? '提交中…' : '注册' }}

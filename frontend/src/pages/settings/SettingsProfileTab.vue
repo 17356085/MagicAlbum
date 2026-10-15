@@ -243,18 +243,18 @@ onMounted(() => {
 
 <template>
   <div class="space-y-5">
-    <div v-if="profileLoadError" role="alert" aria-live="assertive" class="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300 sm:flex-row sm:items-center sm:justify-between">
+    <div v-if="profileLoadError" role="alert" aria-live="assertive" class="ui-error flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
       <span>{{ profileLoadError }}</span>
-      <button type="button" class="self-start rounded border border-red-300 px-2.5 py-1 font-medium hover:bg-red-100 disabled:opacity-60 dark:border-red-800 dark:hover:bg-red-900/40 sm:self-auto" :disabled="profileLoading" @click="loadProfile">
+      <button type="button" class="ui-button self-start px-3 py-1.5 text-xs sm:self-auto" :disabled="profileLoading" @click="loadProfile">
         {{ profileLoading ? '重试中...' : '重试' }}
       </button>
     </div>
 
-    <div v-if="profileLoading && !profileLoaded" class="text-xs text-gray-500 dark:text-gray-400">正在加载资料...</div>
+    <div v-if="profileLoading && !profileLoaded" class="ui-muted text-sm" role="status" aria-live="polite">正在加载资料...</div>
 
-    <section>
+    <section class="space-y-4 border-b border-gray-200 pb-6 dark:border-gray-700">
       <fieldset :disabled="!profileLoaded || profileLoading" class="space-y-4">
-        <legend class="text-sm font-semibold text-gray-900 dark:text-gray-50">基本资料</legend>
+        <legend class="text-base font-semibold">基本资料</legend>
         <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex items-center gap-4">
             <template v-if="avatarPreviewUrl">
@@ -270,7 +270,7 @@ onMounted(() => {
               <div v-if="avatarUploading" role="status" aria-live="polite" class="mt-2 text-xs text-gray-600 dark:text-gray-300">上传中 {{ avatarProgress }}%</div>
             </div>
           </div>
-          <label for="settings-profile-avatar" class="inline-flex cursor-pointer items-center justify-center rounded-md border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700">
+          <label for="settings-profile-avatar" class="ui-button inline-flex cursor-pointer px-3 py-2 text-xs">
             更换头像
             <input id="settings-profile-avatar" type="file" accept="image/*" class="hidden" @change="onAvatarSelected" />
           </label>
@@ -278,20 +278,20 @@ onMounted(() => {
         <p v-if="avatarUploadError" id="settings-profile-avatar-error" role="alert" aria-live="assertive" class="text-xs text-red-600 dark:text-red-400">{{ avatarUploadError }}</p>
 
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <label for="settings-profile-nickname" class="text-xs font-medium text-gray-700 dark:text-gray-200">昵称
-            <input id="settings-profile-nickname" v-model="profile.nickname" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="昵称" />
+          <label for="settings-profile-nickname" class="text-sm font-medium">昵称
+            <input id="settings-profile-nickname" v-model="profile.nickname" class="ui-field mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="昵称" />
           </label>
-          <label for="settings-profile-homepage" class="text-xs font-medium text-gray-700 dark:text-gray-200">主页链接
-            <input id="settings-profile-homepage" v-model="profile.homepageUrl" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="https://..." />
+          <label for="settings-profile-homepage" class="text-sm font-medium">主页链接
+            <input id="settings-profile-homepage" v-model="profile.homepageUrl" class="ui-field mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="https://..." />
           </label>
-          <label for="settings-profile-location" class="text-xs font-medium text-gray-700 dark:text-gray-200">所在地
-            <input id="settings-profile-location" v-model="profile.location" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="城市" />
+          <label for="settings-profile-location" class="text-sm font-medium">所在地
+            <input id="settings-profile-location" v-model="profile.location" class="ui-field mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="城市" />
           </label>
         </div>
-        <div class="text-xs">
-          <div class="font-medium text-gray-700 dark:text-gray-200">个人简介</div>
+        <div class="text-sm">
+          <div class="font-medium">个人简介</div>
           <div class="mt-1 flex items-center justify-between gap-2">
-            <span class="text-xs text-gray-500 dark:text-gray-400">字数：{{ String(profile.bio || '').length }}/{{ bioMax }}</span>
+              <span class="ui-muted text-xs">字数：{{ String(profile.bio || '').length }}/{{ bioMax }}</span>
           </div>
           <MarkdownTextareaEditor
             v-model="profile.bio"
@@ -309,10 +309,10 @@ onMounted(() => {
         </div>
       </fieldset>
       <div class="mt-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
-        <span v-if="profileSaveMessage" role="status" aria-live="polite" :class="['text-xs', profileSaveError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ profileSaveMessage }}</span>
+        <span v-if="profileSaveMessage" role="status" aria-live="polite" :class="['text-xs sm:mr-auto', profileSaveError ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300']">{{ profileSaveMessage }}</span>
         <button
           type="button"
-          class="rounded-md bg-brandDay-600 px-4 py-2 text-xs font-medium text-white shadow-sm transition-shadow duration-200 hover:bg-brandDay-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 disabled:opacity-60 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
+          class="ui-button-primary"
           :disabled="profileSaving || !profileLoaded || profileLoading"
           @click="saveProfile"
         >
@@ -321,9 +321,9 @@ onMounted(() => {
       </div>
     </section>
 
-    <section>
-      <label for="settings-profile-dynamic-background" class="flex items-center justify-between gap-4">
-        <span class="text-sm font-semibold text-gray-900 dark:text-gray-50">动态背景效果</span>
+    <section class="pt-1">
+      <label for="settings-profile-dynamic-background" class="flex items-center justify-between gap-4 text-sm">
+        <span class="font-semibold">动态背景效果</span>
         <input id="settings-profile-dynamic-background" type="checkbox" :checked="dynamicBackgroundEnabled" @change="onDynamicBackgroundChange" />
       </label>
     </section>

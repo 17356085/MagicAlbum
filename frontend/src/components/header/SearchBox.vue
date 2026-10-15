@@ -1,5 +1,5 @@
 <template>
-  <div ref="searchRoot" class="relative flex shrink-0 items-center md:mx-6 md:flex-1">
+  <div ref="searchRoot" class="relative flex shrink-0 items-center md:mx-4 md:flex-1">
     <button
       type="button"
       class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded p-1.5 text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:text-gray-200 dark:hover:bg-gray-700 dark:focus:ring-accentCyan-400 md:hidden"
@@ -24,18 +24,18 @@
       ]"
     >
       <div class="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
-        <div class="inline-flex w-full rounded-md border border-gray-300 bg-white p-0.5 text-xs dark:border-gray-700 dark:bg-gray-800 md:w-auto">
+        <div class="inline-flex w-full rounded-lg bg-gray-50 p-1 text-xs dark:border-gray-700 dark:bg-gray-800 md:w-auto">
           <button
             type="button"
             class="flex-1 rounded px-3 py-1 whitespace-nowrap md:flex-none md:px-4"
-            :class="searchType === 'threads' ? 'bg-brand-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
+            :class="searchType === 'threads' ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/40 dark:text-brandNight-200' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
             :aria-pressed="searchType === 'threads'"
             @click="emit('update:search-type', 'threads')"
           >搜帖子</button>
           <button
             type="button"
             class="flex-1 rounded px-3 py-1 whitespace-nowrap md:flex-none md:px-4"
-            :class="searchType === 'users' ? 'bg-brand-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
+            :class="searchType === 'users' ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/40 dark:text-brandNight-200' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
             :aria-pressed="searchType === 'users'"
             @click="emit('update:search-type', 'users')"
           >搜用户</button>
@@ -45,9 +45,9 @@
           <input
             ref="searchInput"
             :value="searchQuery"
-            type="text"
+            type="text" aria-label="搜索关键词"
             :placeholder="searchType === 'users' ? '搜索用户名/昵称' : '搜索帖子标题或内容'"
-            class="w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-2 pr-10 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            class="ui-field pr-12 text-sm"
             @input="onSearchInput"
             @keydown="onInputKeydown"
             @focus="emit('input-focus')"
@@ -55,7 +55,7 @@
           />
           <button
             type="button"
-            class="absolute right-1 top-1/2 -translate-y-1/2 rounded bg-brandDay-600 p-2 text-white hover:bg-brandDay-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 motion-safe:transition-colors motion-safe:transition-transform motion-safe:duration-150 active:scale-95 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
+            class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded bg-brandDay-600 p-2 text-white hover:bg-brandDay-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 motion-safe:transition-colors motion-safe:transition-transform motion-safe:duration-150 active:scale-95 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
             aria-label="搜索"
             title="搜索"
             @click="emitSearch"
@@ -73,7 +73,7 @@
             <div class="border-b px-3 py-2 text-xs font-medium dark:border-gray-700">匹配的用户</div>
             <div v-if="suggestLoading" class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">加载中...</div>
             <div v-else-if="suggestError" class="px-3 py-2 text-xs text-red-600">{{ suggestError }}</div>
-            <ul v-else class="max-h-64 overflow-auto p-1 text-sm">
+          <ul v-else class="ui-scroll max-h-64 overflow-auto p-1 text-sm">
               <li v-if="!visibleSuggestions.length" class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">无匹配</li>
               <li
                 v-for="(u, idx) in visibleSuggestions.slice(0, 5)"

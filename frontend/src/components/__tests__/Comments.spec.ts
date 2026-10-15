@@ -5,6 +5,7 @@ import Comments from '../Comments.vue'
 import { createPost, listPosts } from '@/api/posts'
 import { uploadImage } from '@/api/uploads'
 import { useAuthStore } from '@/stores/auth'
+import type { Post } from '@/types'
 
 vi.mock('@/api/posts', () => ({
   listPosts: vi.fn(),
@@ -48,12 +49,12 @@ describe('Comments image upload feedback', () => {
     localStorage.clear()
     setActivePinia(createPinia())
     useAuthStore().applyAuthState({ accessToken: 'real-token' })
-    listPostsMock.mockResolvedValue([])
+    listPostsMock.mockResolvedValue({ items: [], page: 1, size: 20, total: 0 })
   })
 
   it('uses one in-flight submit, disables the button, and rolls back while preserving input on failure', async () => {
     let rejectCreate!: (reason?: unknown) => void
-    createPostMock.mockReturnValueOnce(new Promise<any>((_resolve, reject) => {
+    createPostMock.mockReturnValueOnce(new Promise<Post>((_resolve, reject) => {
       rejectCreate = reject
     }))
 

@@ -8,6 +8,8 @@
 **/.tlo
 **/.playwright-browsers
 **/.pytest_cache
+**/.venv
+**/venv
 **/__pycache__
 **/.env
 **/.env.*
@@ -16,4 +18,17 @@
 .tmp
 docs
 test-artifacts
+/outputs
+/.agents
+/.claude
+/.impeccable
+/.auto-claude
+/.idea
+/.vscode
+/.run
+/.codex
+/.trae
+**/uploads
+**/build
+**/.idea
 *.log

@@ -1,4 +1,5 @@
 import api from './client'
+import { decodePageResponse } from './pagination'
 import type { CreatePostPayload, Id, PageResult, Post, PostLikeState, UpdatePostPayload } from '@/types'
 
 interface ListPostsQuery {
@@ -10,10 +11,10 @@ interface ListPostsQuery {
 export async function listPosts(
   threadId: Id,
   { page = 1, size = 20, sort = 'time' }: ListPostsQuery = {},
-): Promise<PageResult<Post> | Post[]> {
+): Promise<PageResult<Post>> {
   const params = { page, size, sort }
   const { data } = await api.get(`/threads/${threadId}/posts`, { params })
-  return data
+  return decodePageResponse<Post>(data, { page, size, endpoint: `/threads/${threadId}/posts` })
 }
 
 export async function createPost(threadId: Id, payload: CreatePostPayload): Promise<Post> {

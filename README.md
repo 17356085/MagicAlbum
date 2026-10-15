@@ -1,4 +1,4 @@
-# BlueAlbum
+# 同频 · BlueAlbum
 
 BlueAlbum 是一个 Vue 3 + Spring Boot 的论坛项目，可在本机体验注册登录、分区浏览、发帖与评论、关注动态、收藏、站内通知，以及基础的举报审核。当前交付目标是**本地开发与试运行**；仓库中的本地认证、Mock AI 和端口配置不能直接作为公网部署方案。
 
@@ -28,6 +28,12 @@ cd ..
 
 启动成功后打开 <http://127.0.0.1:5173>。`Test-Local.ps1` 会执行本地接口冒烟检查，**会创建测试账号、帖子和评论**；它不是只读检查。前端通过网关 `http://127.0.0.1:9000` 访问 API，数据库、Redis、RabbitMQ 由独立的本地 Compose 配置提供。
 
+`Start-Local.ps1` 会先等待 MySQL、Redis、RabbitMQ 等本地依赖健康，再在默认构建完成后按以下顺序启动应用：`notification-service`（8081）→ `backend`（8080）→ `gateway`（9000）→ Vite 前端（5173）。三个 Java 服务要先通过各自的 `/actuator/health`，前端要先能访问 `/`，脚本才会继续；这样核心后端启动时通知服务的 V3 幂等迁移和 HTTP 端点已经就绪。`-NoBuild` 只跳过 Maven 构建，仍会执行这套启动顺序和健康检查。
+
+运行目录中的 `runtime.env` 首次不存在时由脚本生成随机凭证；已有文件只读取，不会重写其中的密钥。为兼容旧文件，脚本只在进程内补齐缺失的 `RABBITMQ_MANAGEMENT_PORT=25673` 和 `VITE_AUTH_VERIFY_MODE=off`，不会把默认值写回文件。启动前会检查必需键、数据库／用户标识符格式、回环地址、通知服务 URL、端口范围与重复端口，以及凭证的基本格式；失败时不会停止已有进程。脚本会在结束或失败清理时恢复调用进程原有的相关环境变量。
+
+应用进程的 PID 和启动时间会写入 `test-artifacts/local-runtime/processes.json`；停机时还会核对进程命令行是否包含本仓库工作区路径。`Stop-Local.ps1` 只有在这三项归属检查都匹配时才会停止进程；快照无效、PID 已被其他进程复用或命令行不属于本仓库时，会保留该进程并报告错误。停机仍保留数据库卷、本地上传文件和 `runtime.env`，不要手动删除正在使用的运行状态。
+
 ```powershell
 ./scripts/Stop-Local.ps1
 # 代码未变且已构建过时，可在下次启动时跳过 Java 构建
@@ -46,6 +52,17 @@ cd ..
 | 服务健康检查失败 | 查看 `test-artifacts/local-runtime/` 中对应服务的 `.log` 和 `.err.log`，以及 `build.log`。 |
 
 如果启动失败，先查看 `test-artifacts/local-runtime/` 中相应服务日志，再核对端口、Docker Desktop 和私有环境变量。此目录只留在本机，不应提交。
+
+### 独立通知投递验证
+
+通知可靠投递有独立的运行时验证脚本，不依赖正在运行的本地栈。先使用 PowerShell 7.4 或更高版本、JDK 21 或更高版本和 Docker，并在仓库根目录完成一次 Maven 构建：
+
+```powershell
+mvn -B package
+pwsh -File ./scripts/Test-NotificationRuntime.ps1 -JavaHome 'C:\path\to\jdk-21'
+```
+
+脚本默认使用临时 MySQL／Redis 容器、临时宿主机端口（核心 19080、通知 19081、网关 19090），并在 `outputs/notification-runtime/` 留下检查结果和日志。它只记录并清理自己创建的容器、Java 进程和临时凭证文件；不会使用或清理 `test-artifacts/local-runtime/`。该验证覆盖通知服务 V3、核心 Outbox 迁移、接收端停机后的重试、幂等重放和收件人隔离，但不等同于完整前端 UI 验收或生产迁移验收。
 
 ## 管理员与审核
 
@@ -84,10 +101,12 @@ backend/               论坛核心 API（8080）
 gateway/               前端 API 网关（9000）
 notification-service/  站内通知服务（8081）
 frontend/              Vue 前端（5173）
-scripts/               Windows 本地启动、停止和冒烟检查
+scripts/               Windows 本地运行、数据库辅助命令与仓库检查
 tests/                 Python API 与浏览器测试
 perf/                  压测实验材料；不代表已达到性能目标
-docs/                  本机文档与历史资料（不随 Git 仓库发布）
+docs/engineering/      目录及编码规范（随仓库交付）
+docs/ 其他目录          本机文档与历史资料（默认不跟踪）
+outputs/               本机审查结果、截图及文件归档（默认不跟踪）
 ```
 
 修改代码后可按需运行：
@@ -95,6 +114,7 @@ docs/                  本机文档与历史资料（不随 Git 仓库发布）
 ```powershell
 mvn -B package
 cd frontend
+pnpm lint
 pnpm type-check
 pnpm test
 pnpm build
@@ -107,8 +127,15 @@ Python 接口和浏览器测试需要单独准备测试环境及账号，见 [`t
 - [前端说明](./frontend/README.md)：依赖、代理与前端检查。
 - [Python 测试](./tests/README.md)：接口及浏览器测试环境。
 - [性能实验](./perf/README.md)：隔离压测配置和结果解释；历史数字不是当前性能承诺。
+- [通知投递与运维](./docs/engineering/notification-delivery.md)：Outbox、重试、租约、凭证与迁移边界。
+- [目录与文件归属](./docs/engineering/repository-layout.md)：共享工程目录及运行产物边界。
+- [产品开发与技术演进报告](./docs/engineering/development-roadmap.md)：后续里程碑、微服务边界、Go 媒体处理、搜索、观测及验收计划；属于建议方案。
+- [分阶段推进记录](./docs/engineering/stage-progress.md)：M0–M4 实施状态和下一阶段的验收要求。
+- [M0 完整容器验收](./docs/engineering/m0-runtime-verification.md)：隔离浏览器旅程、重启持久化、数据库与图片恢复，以及 CI 入口。
 - 论坛核心 API 在 `backend/`，入口统一为 `/api/v1`；浏览器经 `gateway/` 转发。具体请求与权限以 Controller、Security 配置和测试为准。
 
-`docs/` 中的设计、历史记录及个人材料仅保留在本机，不会随本次 Git 提交发布。克隆用户运行本项目以本文、各模块配置和上述开发资料为准。
+开发和目录调整遵循 [CONTRIBUTING](./CONTRIBUTING.md)。运行 `node scripts/Check-Repository.mjs` 可检查目录、包声明、本地导入和工程文档链接。
+
+`docs/engineering/` 为共享工程手册；`docs/` 中的其他设计、历史记录及个人材料仅保留在本机。克隆用户运行本项目以本文、各模块配置和上述开发资料为准。
 
 当前仓库没有可核实的独立 `LICENSE` 文件，因此本页不宣称开源许可证；再分发或商用前请先确认授权。

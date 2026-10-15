@@ -3,6 +3,9 @@ WORKDIR /workspace
 
 COPY pom.xml /workspace/pom.xml
 COPY notification-service/pom.xml /workspace/notification-service/pom.xml
+COPY backend/pom.xml /workspace/backend/pom.xml
+COPY gateway/pom.xml /workspace/gateway/pom.xml
+COPY config /workspace/config
 
 RUN mvn -q -e -pl notification-service -am dependency:go-offline
 

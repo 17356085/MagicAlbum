@@ -51,13 +51,12 @@ export const useAuthStore = defineStore('auth', () => {
     emitAuthChanged(!!token.value)
   }
 
-  function clearAuthState({ clearDraft = false }: { clearDraft?: boolean } = {}): void {
+  // Keep the option for caller compatibility; browser drafts are independent
+  // of auth cleanup and must survive logout for account-scoped recovery.
+  function clearAuthState(_options: { clearDraft?: boolean } = {}): void {
     token.value = ''
     user.value = null
     clearPersistedAuthState()
-    if (clearDraft) {
-      try { localStorage.removeItem('thread-draft-v1') } catch (_) {}
-    }
     emitAuthChanged(false)
   }
 
@@ -115,7 +114,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout(): void {
-    clearAuthState({ clearDraft: true })
+    clearAuthState()
   }
 
   function updateCurrentUser(patch: Partial<User>): void {

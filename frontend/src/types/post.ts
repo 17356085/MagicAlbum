@@ -11,9 +11,9 @@ export interface Post {
   authorNickname?: string
   authorAvatarUrl?: string
   replyToPostId?: Id | null
-  parentAuthorId?: Id
-  parentAuthorUsername?: string
-  parentAuthorNickname?: string
+  parentAuthorId?: Id | null
+  parentAuthorUsername?: string | null
+  parentAuthorNickname?: string | null
   createdAt?: string
   updatedAt?: string
   likeCount?: number

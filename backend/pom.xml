@@ -27,6 +27,7 @@
         <url/>
     </scm>
     <properties>
+        <java.checkstyle.config>${project.basedir}/../config/checkstyle.xml</java.checkstyle.config>
         <java.version>21</java.version>
         <jjwt.version>0.12.5</jjwt.version>
         <!-- 全局禁用 AOT 与测试 AOT，避免在 Windows 环境下触发删除目录异常 -->
@@ -221,7 +222,7 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>4.0.1</version>
+                <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
                     <mainClass>com.example.demo.Demo1Application</mainClass>

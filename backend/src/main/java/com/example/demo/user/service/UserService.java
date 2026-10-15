@@ -75,7 +75,7 @@ public class UserService {
     }
 
     public Page<UserSummaryDto> list(String q, int page, int size, String fields) {
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 20));
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 20));
         String keyword = (q == null || q.isBlank()) ? null : q.trim();
         boolean includeNickname = fields != null && fields.toLowerCase().contains("nickname");
         Page<User> p = includeNickname ? userRepository.searchWithNickname(keyword, pr)

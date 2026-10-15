@@ -56,55 +56,44 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-    <div class="border-b border-gray-100 px-5 py-4 dark:border-gray-700">
-      <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">我的收藏</h1>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">收藏过的帖子会保存在你的账户中。</p>
-    </div>
-
-    <div class="space-y-3 p-5">
-      <div v-if="loading" role="status" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-        正在加载收藏...
+  <section class="ui-page">
+    <header class="ui-page-header">
+      <div>
+        <h1 class="ui-title">我的收藏</h1>
+        <p class="ui-description">收藏过的帖子会保存在你的账户中。</p>
       </div>
+    </header>
 
-      <div v-else-if="error" role="alert" class="rounded-lg border border-red-100 bg-red-50 px-4 py-5 text-center text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+    <section class="ui-panel overflow-hidden">
+      <div v-if="loading" role="status" class="ui-empty">正在加载收藏...</div>
+
+      <div v-else-if="error" role="alert" class="ui-error m-4">
         <p>{{ error }}</p>
-        <button
-          type="button"
-          class="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium hover:bg-red-100 dark:border-red-800 dark:hover:bg-red-900/40"
-          @click="retry"
-        >
-          重试
-        </button>
+        <button type="button" class="ui-button mt-3" @click="retry">重试</button>
       </div>
 
-      <div v-else-if="bookmarks.items.length === 0" class="rounded-lg border border-dashed border-gray-200 px-4 py-10 text-center text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">
-        暂无收藏
+      <div v-else-if="bookmarks.items.length === 0" class="ui-empty">
+        <h2>暂无收藏</h2>
+        <p>收藏帖子后，它们会出现在这里。</p>
       </div>
 
-      <ul v-else class="space-y-3">
-        <li
-          v-for="item in bookmarks.items"
-          :key="String(item.threadId)"
-          class="group rounded-lg border border-gray-100 bg-white px-4 py-3 shadow-sm transition-colors hover:border-brandDay-200 hover:bg-brandDay-50/30 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700 dark:hover:bg-brandNight-950/20"
-        >
+      <ul v-else>
+        <li v-for="item in bookmarks.items" :key="String(item.threadId)" class="ui-list-row">
           <router-link :to="`/threads/${item.threadId}`" class="block min-w-0">
-            <h2 class="line-clamp-2 text-base font-semibold leading-6 text-gray-900 group-hover:text-brandDay-600 dark:text-gray-100 dark:group-hover:text-brandNight-300">
+            <h2 class="line-clamp-2 text-base font-semibold leading-6 text-[var(--ui-ink)] hover:text-[var(--ui-accent)]">
               {{ item.title }}
             </h2>
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-              <span class="rounded bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                {{ item.sectionName || '未分区' }}
-              </span>
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ui-muted)]">
+              <span class="ui-tag">{{ item.sectionName || '未分区' }}</span>
               <span>收藏于 {{ formatBookmarkedAt(item.bookmarkedAt) }}</span>
             </div>
           </router-link>
         </li>
       </ul>
-    </div>
 
-    <div v-if="!loading && !error && bookmarks.items.length > 0" class="border-t border-gray-100 px-5 py-4 dark:border-gray-700">
-      <Pagination :page="page" :size="bookmarks.size || size" :total="bookmarks.total" @update:page="setPage" />
-    </div>
+      <div v-if="!loading && !error && bookmarks.items.length > 0" class="border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
+        <Pagination :page="page" :size="bookmarks.size || size" :total="bookmarks.total" @update:page="setPage" />
+      </div>
+    </section>
   </section>
 </template>

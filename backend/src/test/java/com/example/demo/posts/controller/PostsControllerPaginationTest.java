@@ -37,7 +37,8 @@ class PostsControllerPaginationTest {
                 .listByThread(7L, "time", 0, 100)
                 .getBody();
 
-        assertThat(body).containsEntry("page", 1).containsEntry("size", 50);
+        assertThat(body.page()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(50);
         verify(postService).listByThread(eq(7L), nullable(Long.class), eq("time"), eq(0), eq(100));
     }
 }

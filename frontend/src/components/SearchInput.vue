@@ -1,21 +1,23 @@
 <template>
-  <div class="flex items-center gap-2">
+  <div class="flex min-w-0 items-center gap-2">
     <input
       v-model="localValue"
       type="text"
+      aria-label="搜索"
       :placeholder="placeholder"
-      class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:focus:border-accentCyan-500 dark:focus:ring-accentCyan-500"
+      class="ui-field min-w-0 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
       @keyup.enter="emitSearch"
     />
     <button
-      class="inline-flex items-center rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md"
+      type="button"
+      class="ui-button-primary shrink-0 px-3 py-2 text-sm"
       @click="emitSearch"
     >
       搜索
     </button>
   </div>
-  <div v-if="showReset && localValue" class="mt-1">
-    <button class="text-xs text-gray-500 hover:text-gray-700" @click="reset">清除搜索</button>
+  <div v-if="showReset && localValue" class="mt-2">
+    <button type="button" class="ui-button px-2.5 py-1 text-xs" @click="reset">清除搜索</button>
   </div>
   </template>
 

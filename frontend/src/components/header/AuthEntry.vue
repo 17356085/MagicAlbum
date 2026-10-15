@@ -1,6 +1,6 @@
 <template>
   <button
-    class="rounded px-3 py-1 hover:bg-gray-100 dark:hover:bg-gray-700 inline-flex items-center"
+    class="inline-flex h-10 items-center gap-2 rounded-lg px-2 hover:bg-gray-100 dark:hover:bg-gray-700 md:px-3"
     aria-label="登录"
     title="登录"
     @click="$emit('open-login')"
@@ -11,7 +11,7 @@
       <path d="M19 8.75h3" stroke-width="1.8" stroke-linecap="round" />
       <path d="M20.5 7.25v3" stroke-width="1.8" stroke-linecap="round" />
     </svg>
-    <span class="sr-only">登录</span>
+    <span class="hidden text-sm font-medium md:inline">登录</span>
   </button>
 </template>
 

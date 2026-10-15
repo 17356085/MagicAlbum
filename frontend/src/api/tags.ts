@@ -1,5 +1,6 @@
 import api from './client'
-import type { Id, TagStats } from '@/types'
+import { decodePageResponse } from './pagination'
+import type { Id, PageResult, TagStats } from '@/types'
 
 interface ListPopularTagsQuery {
   sectionId?: Id | null
@@ -13,9 +14,13 @@ interface ListTagsQuery {
   size?: number
 }
 
-interface TagsResponse {
+export interface TagsResponse extends PageResult<TagStats> {
+  sectionId?: Id | null
+}
+
+interface PopularTagsResponse {
   items?: TagStats[]
-  page?: number
+  sectionId?: Id | null
   size?: number
   total?: number
 }
@@ -35,7 +40,7 @@ export async function listPopularTags({
 }: ListPopularTagsQuery = {}): Promise<TagStats[]> {
   const params: Record<string, string | number> = { size }
   if (sectionId) params.sectionId = sectionId
-  const { data } = await api.get<TagsResponse>('/tags/popular', { params })
+  const { data } = await api.get<PopularTagsResponse>('/tags/popular', { params })
   return normalizeTags(data?.items)
 }
 
@@ -48,11 +53,10 @@ export async function listTags({
   const params: Record<string, string | number> = { page, size }
   if (q && q.trim()) params.q = q.trim()
   if (sectionId) params.sectionId = sectionId
-  const { data } = await api.get<TagsResponse>('/tags', { params })
+  const { data } = await api.get<unknown>('/tags', { params })
+  const decoded = decodePageResponse<TagStats, { sectionId?: Id | null }>(data, { page, size, endpoint: '/tags' })
   return {
-    items: normalizeTags(data?.items),
-    page: Number(data?.page ?? page),
-    size: Number(data?.size ?? size),
-    total: Number(data?.total ?? data?.items?.length ?? 0),
+    ...decoded,
+    items: normalizeTags(decoded.items),
   }
 }

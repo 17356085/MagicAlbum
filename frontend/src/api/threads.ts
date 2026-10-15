@@ -1,4 +1,5 @@
 import api from './client'
+import { decodePageResponse } from './pagination'
 import type { CreateThreadPayload, Id, PageResult, Thread, ThreadLikeState } from '@/types'
 
 interface ListThreadsQuery {
@@ -15,7 +16,7 @@ interface ListThreadRankingQuery {
   size?: number
 }
 
-function normalizeThread(raw: Thread & { authorAvatar?: string }): Thread {
+export function normalizeThread(raw: Thread & { authorAvatar?: string }): Thread {
   if (!raw) return raw
   return {
     ...raw,
@@ -23,18 +24,11 @@ function normalizeThread(raw: Thread & { authorAvatar?: string }): Thread {
   }
 }
 
-function normalizeThreadResult(data: PageResult<Thread> | Thread[], page: number, size: number): PageResult<Thread> | Thread[] {
-  if (Array.isArray(data)) {
-    return data.map((item) => normalizeThread(item as Thread & { authorAvatar?: string }))
-  }
-  if (!data || !Array.isArray(data.items)) {
-    return data
-  }
+function normalizeThreadResult(data: unknown, page: number, size: number, endpoint: string): PageResult<Thread> {
+  const decoded = decodePageResponse<Thread & { authorAvatar?: string }>(data, { page, size, endpoint })
   return {
-    ...data,
-    page: Number(data.page ?? page),
-    size: Number(data.size ?? size),
-    items: data.items.map((item) => normalizeThread(item as Thread & { authorAvatar?: string })),
+    ...decoded,
+    items: decoded.items.map((item) => normalizeThread(item)),
   }
 }
 
@@ -49,7 +43,7 @@ export async function listThreads({
   sectionId,
   page = 1,
   size = 20,
-}: ListThreadsQuery = {}): Promise<PageResult<Thread> | Thread[]> {
+}: ListThreadsQuery = {}): Promise<PageResult<Thread>> {
   const params: Record<string, string | number> = {}
   if (q && q.trim()) params.q = q.trim()
   if (tag && tag.trim()) params.tag = tag.trim()
@@ -57,7 +51,7 @@ export async function listThreads({
   params.page = page
   params.size = size
   const { data } = await api.get('/threads', { params })
-  return normalizeThreadResult(data, page, size)
+  return normalizeThreadResult(data, page, size, '/threads')
 }
 
 export async function getThread(id: Id): Promise<Thread> {
@@ -69,11 +63,11 @@ export async function listThreadRanking({
   sectionId,
   page = 1,
   size = 20,
-}: ListThreadRankingQuery = {}): Promise<PageResult<Thread> | Thread[]> {
+}: ListThreadRankingQuery = {}): Promise<PageResult<Thread>> {
   const params: Record<string, string | number> = { page, size }
   if (sectionId) params.sectionId = sectionId
   const { data } = await api.get('/threads/ranking', { params })
-  return normalizeThreadResult(data, page, size)
+  return normalizeThreadResult(data, page, size, '/threads/ranking')
 }
 
 export async function getThreadLikeState(id: Id): Promise<ThreadLikeState> {

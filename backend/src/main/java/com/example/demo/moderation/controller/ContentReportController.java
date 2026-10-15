@@ -6,7 +6,7 @@ import com.example.demo.moderation.dto.ReportPageResponse;
 import com.example.demo.moderation.dto.ReportResponse;
 import com.example.demo.moderation.dto.ReportResolutionResponse;
 import com.example.demo.moderation.dto.ResolveReportRequest;
-import com.example.demo.moderation.entity.ReportStatus;
+import com.example.demo.moderation.model.ReportStatus;
 import com.example.demo.moderation.service.ContentReportService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;

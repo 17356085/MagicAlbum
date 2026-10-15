@@ -1,7 +1,7 @@
 """
 页头 Page Object
 
-组件: HeaderBangumi.vue, BrandBar, SearchBox, AuthEntry, UserMenu
+组件: AppHeader.vue, BrandBar, SearchBox, AuthEntry, UserMenu
 功能: 品牌栏、搜索框、登录入口、用户菜单
 """
 

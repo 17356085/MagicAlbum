@@ -14,6 +14,10 @@
     <name>bluealbum-gateway</name>
     <description>BlueAlbum Spring Cloud Gateway</description>
 
+    <properties>
+        <java.checkstyle.config>${project.basedir}/../config/checkstyle.xml</java.checkstyle.config>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -55,7 +59,7 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>4.0.1</version>
+                <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
                     <mainClass>com.example.gateway.BlueAlbumGatewayApplication</mainClass>

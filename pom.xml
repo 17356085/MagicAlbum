@@ -21,6 +21,8 @@
     <!-- 全局属性（对子模块生效） -->
     <properties>
         <java.version>21</java.version>
+        <spring-boot.plugin.version>4.0.1</spring-boot.plugin.version>
+        <java.checkstyle.config>${project.basedir}/config/checkstyle.xml</java.checkstyle.config>
         <jjwt.version>0.12.5</jjwt.version>
         <spring-cloud.version>2025.1.0</spring-cloud.version>
         <spring-cloud-alibaba.version>2025.1.0.0</spring-cloud-alibaba.version>
@@ -57,13 +59,33 @@
 
     <!-- 统一插件版本与执行配置，定义在父 POM 的 pluginManagement 中 -->
     <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.6.0</version>
+                <configuration>
+                    <configLocation>${java.checkstyle.config}</configLocation>
+                    <includeTestSourceDirectory>false</includeTestSourceDirectory>
+                    <consoleOutput>true</consoleOutput>
+                    <failOnViolation>true</failOnViolation>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>java-standards</id>
+                        <phase>validate</phase>
+                        <goals><goal>check</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
         <pluginManagement>
             <plugins>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
-                    <version>4.0.0</version>
-                    <!-- 全局禁用所有 spring-boot-maven-plugin 目标的执行（包括直接调用） -->
+                    <version>${spring-boot.plugin.version}</version>
+                    <!-- 默认禁用插件；应用模块显式开启打包并配置入口类。 -->
                     <configuration>
                         <skip>true</skip>
                     </configuration>

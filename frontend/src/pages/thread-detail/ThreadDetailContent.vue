@@ -70,13 +70,13 @@ watch(contentMarkdownHtml, async () => {
 </script>
 
 <template>
-  <div class="p-5 sm:p-8">
+  <section class="border-b border-[var(--ui-border)] px-5 py-7 sm:px-8 sm:py-9">
     <div
       ref="contentRef"
-      class="prose prose-lg max-w-none prose-a:text-brandDay-600 prose-headings:font-bold prose-img:rounded-xl prose-img:shadow-sm dark:prose-a:text-brandNight-400 dark:prose-invert"
+      class="prose prose-base mx-auto max-w-[70ch] leading-7 prose-a:text-[var(--ui-accent)] prose-headings:font-bold prose-img:rounded-lg dark:prose-invert"
       v-html="contentMarkdownHtml"
     />
-  </div>
+  </section>
 </template>
 
 <style scoped>

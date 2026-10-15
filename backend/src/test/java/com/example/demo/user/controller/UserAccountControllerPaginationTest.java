@@ -28,7 +28,8 @@ class UserAccountControllerPaginationTest {
                 .listUsers(null, 0, 100, null)
                 .getBody();
 
-        assertThat(body).containsEntry("page", 1).containsEntry("size", 20);
+        assertThat(body.page()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(20);
         verify(userService).list(isNull(), eq(0), eq(100), isNull());
     }
 }

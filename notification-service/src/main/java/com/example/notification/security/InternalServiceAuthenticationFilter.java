@@ -85,6 +85,14 @@ public final class InternalServiceAuthenticationFilter extends OncePerRequestFil
                     "Internal service credential is a placeholder; configure a unique secret"
             );
         }
+        // Length rejects weak configuration mistakes; it cannot measure random entropy.
+        if (!normalized.equals(credential) || normalized.length() < 32 || normalized.length() > 256
+                || normalized.chars().anyMatch(c -> c < 33 || c > 126)
+                || normalized.chars().distinct().count() < 8) {
+            throw new IllegalStateException(
+                    "Internal service credential must contain 32-256 printable ASCII characters without spaces; generate it from 32 random bytes"
+            );
+        }
         return normalized.getBytes(StandardCharsets.UTF_8);
     }
 

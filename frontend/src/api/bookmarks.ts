@@ -1,4 +1,5 @@
 import api from './client'
+import { decodePageResponse } from './pagination'
 import type { Id, PageResult } from '@/types'
 
 export interface ThreadBookmarkState {
@@ -36,10 +37,5 @@ export async function unbookmarkThread(id: Id): Promise<ThreadBookmarkState> {
 
 export async function listBookmarks({ page = 1, size = 10 }: ListBookmarksQuery = {}): Promise<BookmarkPage> {
   const { data } = await api.get('/users/me/bookmarks', { params: { page, size } })
-  return {
-    items: Array.isArray(data?.items) ? data.items : [],
-    page: Number(data?.page ?? page),
-    size: Number(data?.size ?? size),
-    total: Number(data?.total ?? 0),
-  }
+  return decodePageResponse<BookmarkItem>(data, { page, size, endpoint: '/users/me/bookmarks' })
 }

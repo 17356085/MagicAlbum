@@ -23,6 +23,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -58,6 +59,16 @@ class ApiSecurityIT {
     }
 
     @Test
+    void minimum_integer_pagination_inputs_are_normalized_without_overflow() throws Exception {
+        mockMvc.perform(get("/api/v1/threads")
+                        .param("page", String.valueOf(Integer.MIN_VALUE))
+                        .param("size", String.valueOf(Integer.MIN_VALUE)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.size").value(1));
+    }
+
+    @Test
     void protected_endpoints_should_reject_unauthenticated_requests() throws Exception {
         mockMvc.perform(post("/api/v1/threads")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -83,6 +94,49 @@ class ApiSecurityIT {
         mockMvc.perform(get("/api/v1/users/me")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void outbox_management_requires_authentication_and_persisted_admin_identity() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/notification-outbox"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/admin/notification-outbox")
+                        .header("Authorization", "Bearer " + token)
+                        .header("X-User-Id", "1"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/admin/notification-outbox/1/retry")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void malformed_numeric_path_parameter_should_return_stable_bad_request_body() throws Exception {
+        mockMvc.perform(get("/api/v1/threads/not-a-number"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("请求参数类型不合法"));
+    }
+
+    @Test
+    void malformed_enum_path_parameter_should_return_stable_bad_request_body() throws Exception {
+        mockMvc.perform(get("/api/v1/auth/oauth/callback/not-a-provider"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("请求参数类型不合法"));
+    }
+
+    @Test
+    void malformed_json_and_missing_required_query_are_bad_requests() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{broken"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("请求参数不合法"));
+        mockMvc.perform(get("/api/v1/auth/oauth/authorize"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("请求参数不合法"));
     }
 
     @Test

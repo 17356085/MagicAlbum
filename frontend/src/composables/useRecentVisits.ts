@@ -44,6 +44,10 @@ function readRaw(): RecentVisit[] {
 
 function writeRaw(list: RecentVisit[]): void {
   try { localStorage.setItem(storageKey(), JSON.stringify(list)) } catch (_) {}
+  notifyUpdated()
+}
+
+function notifyUpdated(): void {
   // 触发事件，便于侧栏刷新
   try { window.dispatchEvent(new CustomEvent('recent-visits-updated')) } catch (_) {}
 }
@@ -73,7 +77,7 @@ export function addVisit({
     const samePath = String(normalizePath(it.path || '')) === String(basePath)
     return !(sameId || (!id && samePath))
   })
-  filtered.unshift({ path: basePath, name, title, id, sectionId, sectionName, ts })
+  filtered.unshift({ path: basePath, name, title, id: id ?? undefined, sectionId, sectionName, ts })
   // 过滤过期项与限制长度
   const recent = filtered.filter(it => (ts - Number(it.ts || 0)) <= MAX_AGE_MS).slice(0, MAX_ITEMS)
   writeRaw(recent)
@@ -94,7 +98,7 @@ export function getAllRecentVisits(): RecentVisit[] {
 
 export function clearAllRecentVisits(): void {
   try { localStorage.removeItem(storageKey()) } catch (_) {}
-  writeRaw([])
+  notifyUpdated()
 }
 
 export function removeRecentVisit(target: RecentVisit): void {

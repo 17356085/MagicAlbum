@@ -5,7 +5,7 @@ import { listSections } from '@/api/sections'
 import { listThreadRanking } from '@/api/threads'
 import { getSingleQueryValue } from '@/utils/router'
 import { normalizeImageUrl } from '@/utils/image'
-import type { Id, PageResult, Section, Thread } from '@/types'
+import type { Id, Section, Thread } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,13 +25,6 @@ const totalPages = computed(() => Math.max(1, Math.ceil(Number(total.value || 0)
 const topOne = computed(() => items.value[0] || null)
 const topNext = computed(() => items.value.slice(1, 3))
 const restItems = computed(() => items.value.slice(3))
-
-function normalizeResult(data: PageResult<Thread> | Thread[]): PageResult<Thread> {
-  if (Array.isArray(data)) {
-    return { items: data, page: page.value, size: size.value, total: data.length }
-  }
-  return data || { items: [], page: page.value, size: size.value, total: 0 }
-}
 
 function readQuery(): void {
   const sidRaw = route.query.sectionId ? getSingleQueryValue(route.query.sectionId) : ''
@@ -67,7 +60,7 @@ async function loadSections(): Promise<void> {
   sectionsLoading.value = true
   try {
     const data = await listSections({ size: 50 })
-    sections.value = Array.isArray(data) ? data : (data.items || [])
+    sections.value = data.items
   } catch (_) {
     sections.value = []
   } finally {
@@ -85,11 +78,10 @@ async function loadRanking(): Promise<void> {
       page: page.value,
       size: size.value,
     })
-    const normalized = normalizeResult(data)
-    items.value = normalized.items || []
-    total.value = Number(normalized.total || 0)
-    page.value = Number(normalized.page || page.value)
-    size.value = Number(normalized.size || size.value)
+    items.value = data.items
+    total.value = data.total
+    page.value = data.page
+    size.value = data.size
   } catch (_) {
     error.value = '加载排行榜失败'
   } finally {
@@ -100,10 +92,10 @@ async function loadRanking(): Promise<void> {
 function excerpt(thread: Thread): string {
   const text = String(thread.content || thread.contentMd || '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^\)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-\[\]]/g, '')
+    .replace(/[#>*_`~\-[\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
   return text.length > 120 ? `${text.slice(0, 120)}...` : text
@@ -161,14 +153,21 @@ watch(page, (val) => {
 </script>
 
 <template>
-  <div class="space-y-4">
-    <div v-if="sectionsLoading || loading" class="text-gray-600 dark:text-gray-300">正在加载...</div>
-    <div v-else-if="error" class="text-red-600">{{ error }}</div>
-    <div v-else-if="items.length === 0" class="rounded-lg border border-gray-100 bg-white p-6 text-center text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
-      <div class="mb-4 flex gap-2 overflow-x-auto">
+  <section class="ui-page space-y-4">
+    <header class="ui-page-header">
+      <div>
+        <h1 class="ui-title">排行榜</h1>
+        <p class="ui-description">看看社区里正在获得回应和关注的帖子。</p>
+      </div>
+    </header>
+    <div v-if="sectionsLoading || loading" class="ui-panel ui-empty" role="status">正在加载...</div>
+    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
+    <div v-else-if="items.length === 0" class="ui-panel p-6 text-center text-[var(--ui-muted)]">
+      <div class="mb-4 flex gap-2 overflow-x-auto ui-scroll pb-2">
         <button
-          class="shrink-0 rounded-md px-3 py-1.5 text-sm transition-colors"
-          :class="!sectionId ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/30 dark:text-brandNight-300' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-100'"
+          type="button"
+          class="ui-button shrink-0"
+          :class="!sectionId ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
           @click="changeSection(null)"
         >
           全区
@@ -176,8 +175,9 @@ watch(page, (val) => {
         <button
           v-for="section in sections"
           :key="section.id"
-          class="shrink-0 rounded-md px-3 py-1.5 text-sm transition-colors"
-          :class="String(sectionId || '') === String(section.id) ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/30 dark:text-brandNight-300' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-100'"
+          type="button"
+          class="ui-button shrink-0"
+          :class="String(sectionId || '') === String(section.id) ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
           @click="changeSection(section.id)"
         >
           {{ section.name }}
@@ -188,13 +188,14 @@ watch(page, (val) => {
     <div v-else class="space-y-4">
       <div
         v-if="topOne"
-        class="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
+        class="ui-panel overflow-hidden"
       >
         <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-          <div class="flex gap-2 overflow-x-auto">
+          <div class="flex gap-2 overflow-x-auto ui-scroll pb-2">
             <button
-              class="shrink-0 rounded-md px-3 py-1.5 text-sm transition-colors"
-              :class="!sectionId ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/30 dark:text-brandNight-300' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-100'"
+              type="button"
+              class="ui-button shrink-0"
+              :class="!sectionId ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
               @click="changeSection(null)"
             >
               全区
@@ -202,8 +203,9 @@ watch(page, (val) => {
             <button
               v-for="section in sections"
               :key="section.id"
-              class="shrink-0 rounded-md px-3 py-1.5 text-sm transition-colors"
-              :class="String(sectionId || '') === String(section.id) ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/30 dark:text-brandNight-300' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-100'"
+              type="button"
+              class="ui-button shrink-0"
+              :class="String(sectionId || '') === String(section.id) ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
               @click="changeSection(section.id)"
             >
               {{ section.name }}
@@ -212,7 +214,7 @@ watch(page, (val) => {
         </div>
 
         <div
-          class="group block cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/40"
+          class="group block cursor-pointer transition-colors hover:bg-[var(--ui-subtle)]"
           role="link"
           tabindex="0"
           @click="openThread(topOne.id)"
@@ -273,7 +275,7 @@ watch(page, (val) => {
         <div
           v-for="(thread, index) in topNext"
           :key="thread.id"
-          class="group cursor-pointer overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm transition-colors hover:border-brandDay-200 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-brandNight-700"
+          class="ui-panel group cursor-pointer overflow-hidden"
           role="link"
           tabindex="0"
           @click="openThread(thread.id)"
@@ -323,9 +325,9 @@ watch(page, (val) => {
         </div>
       </div>
 
-      <div v-if="restItems.length" class="overflow-hidden rounded-lg border border-gray-100 bg-white dark:border-gray-700 dark:bg-gray-800">
-        <ul class="divide-y divide-gray-100 dark:divide-gray-700">
-          <li v-for="(thread, index) in restItems" :key="thread.id" class="p-4 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/40">
+      <div v-if="restItems.length" class="ui-panel overflow-hidden">
+        <ul>
+          <li v-for="(thread, index) in restItems" :key="thread.id" class="ui-list-row">
             <router-link :to="`/threads/${thread.id}`" class="flex gap-4">
               <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border text-base font-bold text-gray-500 dark:border-gray-700 dark:text-gray-300">
                 {{ rankAt(index + 3) }}
@@ -359,27 +361,30 @@ watch(page, (val) => {
             </router-link>
           </li>
         </ul>
-        <div class="flex items-center justify-between border-t border-gray-100 px-5 py-4 dark:border-gray-700">
-          <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ total }} 条 · 每页 {{ size }} 条</div>
+        <div class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
           <div class="flex items-center gap-2">
             <button
-              class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
+              type="button"
+              class="ui-button"
               :disabled="loading || page <= 1"
               @click="setPage(page - 1)"
             >
               上一页
             </button>
-            <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
+            <span class="text-sm text-[var(--ui-muted)]">第</span>
             <input
               v-model="inputPage"
-              class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
+              class="ui-field w-16 text-center"
+              aria-label="页码"
               inputmode="numeric"
               @keyup.enter="goToInputPage"
               @blur="goToInputPage"
             />
-            <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
+            <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
             <button
-              class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200"
+              type="button"
+              class="ui-button"
               :disabled="loading || page >= totalPages"
               @click="setPage(page + 1)"
             >
@@ -389,5 +394,5 @@ watch(page, (val) => {
         </div>
       </div>
     </div>
-  </div>
+  </section>
 </template>

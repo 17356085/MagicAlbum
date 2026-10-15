@@ -7,8 +7,8 @@ services:
     ports:
       - "127.0.0.1:${DB_PORT:-13306}:3306"
     environment:
-      MYSQL_DATABASE: bluealbum_local
-      MYSQL_USER: bluealbum
+      MYSQL_DATABASE: ${DB_NAME:?Run scripts/Start-Local.ps1 first}
+      MYSQL_USER: ${DB_USER:?Run scripts/Start-Local.ps1 first}
       MYSQL_PASSWORD: ${DB_PASSWORD:?Run scripts/Start-Local.ps1 first}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Run scripts/Start-Local.ps1 first}
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
@@ -39,9 +39,9 @@ services:
     image: rabbitmq:management
     ports:
       - "127.0.0.1:${SPRING_RABBITMQ_PORT:-15673}:5672"
-      - "127.0.0.1:25673:15672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-25673}:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: bluealbum
+      RABBITMQ_DEFAULT_USER: ${SPRING_RABBITMQ_USERNAME:?Run scripts/Start-Local.ps1 first}
       RABBITMQ_DEFAULT_PASS: ${SPRING_RABBITMQ_PASSWORD:?Run scripts/Start-Local.ps1 first}
     volumes:
       - local_rabbitmq:/var/lib/rabbitmq

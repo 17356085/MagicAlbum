@@ -1,5 +1,6 @@
 package com.example.demo.threads.controller;
 
+import com.example.demo.common.PageResponse;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.UpdateThreadRequest;
@@ -11,7 +12,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -33,7 +42,7 @@ public class ThreadsController {
     }
 
     @GetMapping
-    public ResponseEntity<java.util.Map<String, Object>> list(
+    public ResponseEntity<PageResponse<ThreadDto>> list(
             @RequestParam(value = "q", required = false) String q,
             @RequestParam(value = "tag", required = false) String tag,
             @RequestParam(value = "sectionId", required = false) Long sectionId,
@@ -41,41 +50,26 @@ public class ThreadsController {
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
         Page<ThreadDto> p = threadService.list(q, tag, sectionId, page, size);
-        java.util.Map<String, Object> body = new java.util.HashMap<>();
-        body.put("items", p.getContent());
-        body.put("page", p.getNumber() + 1);
-        body.put("size", p.getSize());
-        body.put("total", p.getTotalElements());
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(PageResponse.from(p));
     }
 
     @GetMapping("/following")
-    public ResponseEntity<java.util.Map<String, Object>> following(
+    public ResponseEntity<PageResponse<ThreadDto>> following(
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "10") int size
     ) {
         Page<ThreadDto> result = threadService.listFollowing(getUserId(), page, size);
-        java.util.Map<String, Object> body = new java.util.HashMap<>();
-        body.put("items", result.getContent());
-        body.put("page", result.getNumber() + 1);
-        body.put("size", result.getSize());
-        body.put("total", result.getTotalElements());
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(PageResponse.from(result));
     }
 
     @GetMapping("/ranking")
-    public ResponseEntity<java.util.Map<String, Object>> ranking(
+    public ResponseEntity<PageResponse<ThreadDto>> ranking(
             @RequestParam(value = "sectionId", required = false) Long sectionId,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
         Page<ThreadDto> p = threadService.ranking(sectionId, page, size);
-        java.util.Map<String, Object> body = new java.util.HashMap<>();
-        body.put("items", p.getContent());
-        body.put("page", p.getNumber() + 1);
-        body.put("size", p.getSize());
-        body.put("total", p.getTotalElements());
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(PageResponse.from(p));
     }
 
     @GetMapping("/{id}")

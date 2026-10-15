@@ -11,11 +11,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,7 +103,10 @@ class PostServiceCacheTest {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
         when(userRepository.existsById(1L)).thenReturn(true);
-        when(redisTemplate.keys("cache:posts:thread:7:*")).thenReturn(Set.of("cache:posts:thread:7:1:20"));
+        Cursor<String> cursor = mock(Cursor.class);
+        when(redisTemplate.scan(any(ScanOptions.class))).thenReturn(cursor);
+        when(cursor.hasNext()).thenReturn(true, false);
+        when(cursor.next()).thenReturn("cache:posts:thread:7:1:20");
 
         Post saved = new Post();
         saved.setId(10L);
@@ -128,6 +132,9 @@ class PostServiceCacheTest {
 
         service.create(1L, 7L, req);
 
-        verify(redisTemplate, times(1)).delete(Set.of("cache:posts:thread:7:1:20"));
+        verify(redisTemplate, times(1)).delete(List.of("cache:posts:thread:7:1:20"));
+        verify(redisTemplate).scan(org.mockito.ArgumentMatchers.argThat(options ->
+                "cache:posts:thread:7:*".equals(options.getPattern())));
+        verify(cursor).close();
     }
 }

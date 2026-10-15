@@ -77,10 +77,15 @@ frontend-only check.
 Run these commands from `frontend/`:
 
 ```sh
+pnpm lint
 pnpm run type-check
 pnpm test
 pnpm run build
 ```
+
+`pnpm lint` checks Vue templates, JavaScript and TypeScript using ESLint. It is a
+separate check from type checking and compilation; the shared alias configuration
+for Vite and Vitest is in `config/paths.ts`.
 
 `pnpm test` runs the Vitest suite once. `pnpm run build` performs a Vite
 production build check; it intentionally fails when `VITE_USE_API_MOCK=true` is

@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
 import MarkdownIt from 'markdown-it'
+import type { RendererRule } from 'markdown-it'
 import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import { normalizeImageUrl } from '@/utils/image'
@@ -31,23 +32,21 @@ function renderHighlightedCode(md: MarkdownIt, str: string, lang: string): strin
 }
 
 function installImageRule(md: MarkdownIt): void {
-  const defaultImageRule = md.renderer.rules.image || function(tokens, idx, options, env, self) {
-    return self.renderToken(tokens, idx, options)
-  }
+  const defaultImageRule: RendererRule =
+    md.renderer.rules.image ?? ((tokens, idx, options, _env, self) => {
+      return self.renderToken(tokens, idx, options)
+    })
 
-  md.renderer.rules.image = function(tokens, idx, options, env, self) {
+  md.renderer.rules.image = (tokens, idx, options, env, self) => {
     const token = tokens[idx]
-    const loadingIdx = token.attrIndex('loading')
-    if (loadingIdx < 0) token.attrPush(['loading', 'lazy'])
+    if (token.attrGet('loading') === null) token.attrSet('loading', 'lazy')
 
-    const classIdx = token.attrIndex('class')
-    if (classIdx < 0) token.attrPush(['class', 'max-w-full h-auto'])
-    else token.attrs[classIdx][1] += ' max-w-full h-auto'
+    const className = token.attrGet('class')
+    if (className === null) token.attrSet('class', 'max-w-full h-auto')
+    else token.attrSet('class', `${className} max-w-full h-auto`)
 
-    const srcIdx = token.attrIndex('src')
-    if (srcIdx >= 0) {
-      token.attrs[srcIdx][1] = normalizeImageUrl(token.attrs[srcIdx][1])
-    }
+    const src = token.attrGet('src')
+    if (src !== null) token.attrSet('src', normalizeImageUrl(src))
 
     return defaultImageRule(tokens, idx, options, env, self)
   }
@@ -68,7 +67,7 @@ export function createMarkdownRenderer(options: MarkdownRendererOptions = {}): M
   const md = new MarkdownIt(markdownOptions)
 
   if (options.highlight !== false) {
-    md.options.highlight = (str, lang) => renderHighlightedCode(md, str, lang)
+    md.options.highlight = (str: string, lang: string) => renderHighlightedCode(md, str, lang)
   }
 
   try {

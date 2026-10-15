@@ -1,6 +1,6 @@
 package com.example.demo.moderation.dto;
 
-import com.example.demo.moderation.entity.ReportAction;
+import com.example.demo.moderation.model.ReportAction;
 import jakarta.validation.constraints.NotNull;
 
 public class ResolveReportRequest {

@@ -2,6 +2,7 @@ package com.example.notification.controller;
 
 import com.example.notification.dto.CreateNotificationRequest;
 import com.example.notification.dto.NotificationDto;
+import com.example.notification.dto.NotificationPageResponse;
 import com.example.notification.service.NotificationService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -22,8 +23,6 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 
-import java.util.Map;
-
 @RestController
 @RequestMapping("/api/v1/notifications")
 @Validated
@@ -35,14 +34,14 @@ public class NotificationsController {
     }
 
     @GetMapping
-    public ResponseEntity<Map<String, Object>> list(
+    public ResponseEntity<NotificationPageResponse> list(
             @AuthenticationPrincipal Long userId,
             @RequestParam(value = "type", required = false) @Size(max = 40) String type,
             @RequestParam(value = "unread", required = false) Boolean unread,
             @RequestParam(value = "page", defaultValue = "1") @Min(1) int page,
             @RequestParam(value = "size", defaultValue = "20") @Min(1) @Max(100) int size
     ) {
-        Map<String, Object> body = notificationService.list(requireUserId(userId), type, unread, page, size);
+        NotificationPageResponse body = notificationService.list(requireUserId(userId), type, unread, page, size);
         return ResponseEntity.ok(body);
     }
 

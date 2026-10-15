@@ -1,8 +1,8 @@
 package com.example.demo.moderation.dto;
 
-import com.example.demo.moderation.entity.ReportReason;
-import com.example.demo.moderation.entity.ReportStatus;
-import com.example.demo.moderation.entity.ReportTargetType;
+import com.example.demo.moderation.model.ReportReason;
+import com.example.demo.moderation.model.ReportStatus;
+import com.example.demo.moderation.model.ReportTargetType;
 
 import java.time.Instant;
 

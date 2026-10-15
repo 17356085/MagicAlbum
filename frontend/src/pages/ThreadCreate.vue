@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { isAxiosError } from 'axios'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { WatchStopHandle } from 'vue'
 import { listSections } from '@/api/sections'
 import { createThread } from '@/api/threads'
 import { uploadImage } from '@/api/uploads'
@@ -25,21 +27,50 @@ interface ThreadCreateForm {
   tags: string
 }
 
-const form = ref<ThreadCreateForm>({
-  sectionId: '',
-  title: '',
-  content: '',
-  tags: '',
-})
+function emptyForm(): ThreadCreateForm {
+  return { sectionId: '', title: '', content: '', tags: '' }
+}
+
+const form = ref<ThreadCreateForm>(emptyForm())
 
 const isUploading = ref(false)
 const uploadProgress = ref(0)
 
-// 草稿存储键与提示信息
+function messageFrom(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || !('message' in value)) return undefined
+  const message = value.message
+  return typeof message === 'string' ? message : undefined
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError(error)) {
+    return messageFrom(error.response?.data) || error.message || fallback
+  }
+  if (typeof error === 'object' && error !== null) {
+    const response = 'response' in error ? error.response : undefined
+    if (typeof response === 'object' && response !== null && 'data' in response) {
+      return messageFrom(response.data) || messageFrom(error) || fallback
+    }
+    return messageFrom(error) || fallback
+  }
+  return fallback
+}
+
+// 保留无归属的旧键 thread-draft-v1；新草稿使用带稳定账号后缀的键。
 const DRAFT_KEY = 'thread-draft-v1'
+const userIdentity = computed(() => {
+  const currentUser = authStore.user
+  const rawId = currentUser?.id ?? currentUser?.userId
+  return rawId == null ? '' : String(rawId).trim()
+})
+const draftKey = computed(() => {
+  if (!isLoggedIn.value) return `${DRAFT_KEY}:guest`
+  // 登录态尚未补齐稳定用户 ID 时禁用本地读写，避免共享 pending 槽位。
+  return userIdentity.value ? `${DRAFT_KEY}:${userIdentity.value}` : ''
+})
 const draftMessage = ref('')
 // 通用草稿：面向整个 form 对象，防抖自动保存
-const { draftHasData, saveDraft, restoreDraft, clearDraft, startAutoSave, stopAutoSave } = useDraft(DRAFT_KEY, {
+const { draftHasData, saveDraft, restoreDraft, clearDraft, refreshDraft, startAutoSave, stopAutoSave } = useDraft(draftKey, {
   sourceRef: form,
   autoSaveMs: 800,
   serialize: (val) => JSON.stringify({
@@ -52,6 +83,78 @@ const { draftHasData, saveDraft, restoreDraft, clearDraft, startAutoSave, stopAu
   deserialize: (raw) => JSON.parse(raw),
   restoreMode: 'fill-empty',
 })
+
+let stopAuthWatch: WatchStopHandle | null = null
+let draftMessageTimer: ReturnType<typeof setTimeout> | null = null
+let mounted = false
+let submissionSequence = 0
+let activeSubmissionId: number | null = null
+
+interface AuthContextSnapshot {
+  draftKey: string
+  identity: string
+  loggedIn: boolean
+  token: string
+}
+
+function getAuthContextSnapshot(): AuthContextSnapshot {
+  return {
+    draftKey: draftKey.value,
+    identity: userIdentity.value,
+    loggedIn: isLoggedIn.value,
+    token: token.value,
+  }
+}
+
+function showDraftMessage(message: string): void {
+  if (draftMessageTimer) clearTimeout(draftMessageTimer)
+  draftMessage.value = message
+  draftMessageTimer = setTimeout(() => {
+    draftMessageTimer = null
+    draftMessage.value = ''
+  }, 1500)
+}
+
+function clearDraftMessageTimer(): void {
+  if (draftMessageTimer) {
+    clearTimeout(draftMessageTimer)
+    draftMessageTimer = null
+  }
+}
+
+function isCurrentSubmission(submissionId: number, context: AuthContextSnapshot): boolean {
+  const current = getAuthContextSnapshot()
+  return mounted && activeSubmissionId === submissionId &&
+    current.draftKey === context.draftKey &&
+    current.identity === context.identity &&
+    current.loggedIn === context.loggedIn &&
+    current.token === context.token
+}
+
+function restoreActiveDraft(): void {
+  refreshDraft()
+  if (draftHasData.value) {
+    restoreDraft()
+    showDraftMessage('已恢复草稿')
+  }
+}
+
+function switchDraftContext(): void {
+  // Stop the old watcher before clearing the form; otherwise the reset itself
+  // would be scheduled as the previous account's draft.
+  stopAutoSave()
+  activeSubmissionId = null
+  submissionSequence += 1
+  submitting.value = false
+  form.value = emptyForm()
+  error.value = ''
+  success.value = ''
+  createdThreadId.value = null
+  clearDraftMessageTimer()
+  draftMessage.value = ''
+  restoreActiveDraft()
+  startAutoSave()
+}
 
 function requestLogin(source = 'thread-create'): void {
   try {
@@ -67,8 +170,8 @@ async function uploadThreadImage(file: File): Promise<string> {
       uploadProgress.value = p
     })
     return String(url || path || '')
-  } catch (e: any) {
-    error.value = e?.response?.data?.message || e?.message || '图片上传失败'
+  } catch (e: unknown) {
+    error.value = errorMessage(e, '图片上传失败')
     return ''
   } finally {
     isUploading.value = false
@@ -80,7 +183,7 @@ async function loadSections(): Promise<void> {
   loading.value = true
   try {
     const data = await listSections({ size: 100 })
-    sections.value = Array.isArray(data) ? data : (data.items || [])
+    sections.value = data.items
   } catch (_) {
     // 保持空列表即可
   } finally {
@@ -107,6 +210,9 @@ async function submit(): Promise<void> {
     error.value = '当前为模拟令牌，请退出并用真实账号登录'
     return
   }
+  const submissionContext = getAuthContextSnapshot()
+  const submissionId = ++submissionSequence
+  activeSubmissionId = submissionId
   submitting.value = true
   try {
     const sectionId = form.value.sectionId
@@ -122,17 +228,23 @@ async function submit(): Promise<void> {
       window.dispatchEvent(new CustomEvent('threads-updated', { detail: { reason: 'created', threadId: created?.id, sectionId, tags } }))
       window.dispatchEvent(new CustomEvent('thread-tags-updated', { detail: { reason: 'created', threadId: created?.id, sectionId, tags } }))
     } catch (_) {}
+    if (!isCurrentSubmission(submissionId, submissionContext)) return
     success.value = '发布成功'
     createdThreadId.value = created?.id ?? null
-    // 发布成功后清除草稿
+    // 发布成功后清除提交时账号的草稿。停掉 watcher 再清空表单，
+    // 避免重置动作被自动保存成一个空草稿。
+    stopAutoSave()
     clearDraft()
-    // 成功后重置所有输入：分区、标题、内容
-    form.value = { sectionId: '', title: '', content: '', tags: '' }
-  } catch (e: any) {
-    const msg = e?.response?.data?.message || e?.message || '发布失败，请稍后重试'
-    error.value = msg
+    form.value = emptyForm()
+    startAutoSave()
+  } catch (e: unknown) {
+    if (!isCurrentSubmission(submissionId, submissionContext)) return
+    error.value = errorMessage(e, '发布失败，请稍后重试')
   } finally {
-    submitting.value = false
+    if (activeSubmissionId === submissionId) {
+      activeSubmissionId = null
+      submitting.value = false
+    }
   }
 }
 
@@ -150,14 +262,12 @@ function parseTags(raw: string): string[] {
 // 手动按钮：在页面上给予提示，但逻辑已由 composable 处理
 function onSaveDraft(): void {
   saveDraft()
-  draftMessage.value = '草稿已保存到本机浏览器'
-  setTimeout(() => { draftMessage.value = '' }, 1500)
+  showDraftMessage('草稿已保存到本机浏览器')
 }
 
 function onClearDraft(): void {
   clearDraft()
-  draftMessage.value = '已清除草稿'
-  setTimeout(() => { draftMessage.value = '' }, 1500)
+  showDraftMessage('已清除草稿')
 }
 
 function onLoginClick(): void {
@@ -169,68 +279,87 @@ function onLoginClick(): void {
 async function beautifyContent(): Promise<void> {
   try {
     form.value.content = await beautifyMarkdown(form.value.content)
-    draftMessage.value = '已美化内容'
-    setTimeout(() => { draftMessage.value = '' }, 1500)
+    showDraftMessage('已美化内容')
   } catch (_) {
-    draftMessage.value = '美化失败'
-    setTimeout(() => { draftMessage.value = '' }, 1500)
+    showDraftMessage('美化失败')
   }
 }
 
 onMounted(() => {
+  mounted = true
   loadSections()
   // 草稿检测与自动恢复
-  if (draftHasData.value && !form.value.title && !form.value.content) {
-    restoreDraft()
-    draftMessage.value = '已恢复草稿'
-    setTimeout(() => { draftMessage.value = '' }, 1500)
-  }
+  restoreActiveDraft()
   startAutoSave()
+  stopAuthWatch = watch(
+    () => getAuthContextSnapshot(),
+    (next, previous) => {
+      const identityChanged = next.draftKey !== previous.draftKey || next.loggedIn !== previous.loggedIn
+      const unknownIdentityTokenChanged = !next.identity && !previous.identity && next.token !== previous.token
+      if (identityChanged || unknownIdentityTokenChanged) switchDraftContext()
+    },
+  )
 })
 
 onUnmounted(() => {
+  mounted = false
+  activeSubmissionId = null
+  submissionSequence += 1
+  if (stopAuthWatch) {
+    stopAuthWatch()
+    stopAuthWatch = null
+  }
   stopAutoSave()
+  clearDraftMessageTimer()
 })
 
 // 自动保存交由 composable 管理
 </script>
 
 <template>
-  <div>
-    <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700">
-      <h1 class="text-2xl font-semibold mb-4">发帖</h1>
+  <div class="ui-page">
+    <header class="ui-page-header">
+      <div class="min-w-0">
+        <h1 class="ui-title">发帖</h1>
+        <p class="ui-description">选择分区，写下标题和正文，再发布到社区。</p>
+      </div>
+    </header>
+
+    <div class="ui-panel p-4 sm:p-6">
 
       <div class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">分区</label>
-          <select v-model="form.sectionId" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400">
+          <label for="thread-create-section" class="mb-1 block text-sm font-medium">分区</label>
+          <select id="thread-create-section" v-model="form.sectionId" :disabled="loading" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
             <option value="" disabled>请选择分区</option>
             <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
+          <p v-if="loading" class="ui-muted mt-1 text-xs" role="status" aria-live="polite">正在加载分区...</p>
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">标题</label>
-          <input v-model="form.title" type="text" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" placeholder="请输入标题" />
+          <label for="thread-create-title" class="mb-1 block text-sm font-medium">标题</label>
+          <input id="thread-create-title" v-model="form.title" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">标签</label>
+          <label for="thread-create-tags" class="mb-1 block text-sm font-medium">标签</label>
           <input
+            id="thread-create-tags"
             v-model="form.tags"
             type="text"
-            class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400"
+            class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="用空格或逗号分隔，最多 5 个"
           />
           <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
-            <span v-for="tag in parsedTags" :key="tag" class="rounded-md bg-brandDay-50 px-2.5 py-1 text-xs font-medium text-brandDay-600 dark:bg-brandNight-900/30 dark:text-brandNight-300">
+            <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
               #{{ tag }}
             </span>
           </div>
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1 dark:text-gray-200">内容（支持 Markdown）</label>
+          <label class="mb-1 block text-sm font-medium">内容（支持 Markdown）</label>
           <MarkdownTextareaEditor
             v-model="form.content"
             :rows="16"
@@ -242,33 +371,33 @@ onUnmounted(() => {
           />
         </div>
 
-        <div class="flex items-center gap-2">
-          <button type="button" class="rounded border px-3 py-1 text-sm dark:border-gray-700 dark:text-gray-200" @click="onSaveDraft">保存到本机</button>
-          <button type="button" class="rounded border px-3 py-1 text-sm dark:border-gray-700 dark:text-gray-200" @click="beautifyContent">美化内容</button>
-          <button :disabled="submitting" class="inline-flex items-center rounded bg-brandDay-600 dark:bg-brandNight-600 px-4 py-2 text-sm font-medium text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:cursor-not-allowed disabled:opacity-50 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400" @click="submit">
+        <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 sm:flex-row sm:flex-wrap sm:items-center">
+          <button type="button" class="ui-button" @click="onSaveDraft">保存到本机</button>
+          <button type="button" class="ui-button" @click="beautifyContent">美化内容</button>
+          <button :disabled="submitting" class="ui-button-primary" @click="submit">
             {{ submitting ? '发布中...' : '发布' }}
           </button>
-          <div v-if="!isLoggedIn" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <div v-if="!isLoggedIn" class="flex flex-wrap items-center gap-2 text-sm ui-muted">
             <span>请先登录后再发帖</span>
             <button
               type="button"
-              class="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-700"
+              class="ui-button px-2.5 py-1 text-xs"
               @click="onLoginClick"
             >
               立即登录
             </button>
           </div>
-          <span v-if="success" class="text-sm text-green-600 dark:text-green-400">{{ success }}</span>
+          <span v-if="success" class="text-sm text-emerald-700 dark:text-emerald-300" role="status" aria-live="polite">{{ success }}</span>
           <router-link
             v-if="createdThreadId != null"
             :to="`/threads/${createdThreadId}`"
-            class="text-sm text-brandDay-600 underline hover:text-brandDay-700 dark:text-brandNight-300 dark:hover:text-brandNight-200"
+            class="text-sm text-[var(--ui-accent)] underline hover:opacity-80"
           >
             查看帖子
           </router-link>
-          <span v-if="error" class="text-sm text-red-600 dark:text-red-400">{{ error }}</span>
-          <span v-if="draftMessage" class="text-xs text-gray-500 dark:text-gray-400">{{ draftMessage }}</span>
-          <button v-if="draftHasData" type="button" class="text-xs text-gray-500 underline decoration-dotted" @click="onClearDraft">清除草稿</button>
+          <span v-if="error" class="ui-error py-2 text-sm" role="alert" aria-live="assertive">{{ error }}</span>
+          <span v-if="draftMessage" class="ui-muted text-xs" role="status" aria-live="polite">{{ draftMessage }}</span>
+          <button v-if="draftHasData" type="button" class="ui-button px-2.5 py-1 text-xs" @click="onClearDraft">清除草稿</button>
         </div>
       </div>
     </div>

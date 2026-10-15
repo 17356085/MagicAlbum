@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue'
+import { isRef, ref, watch } from 'vue'
 import type { Ref, WatchStopHandle } from 'vue'
 
 type DraftRestoreMode = 'fill-empty' | 'replace'
@@ -20,6 +20,8 @@ interface UseDraftOptions<T> {
   deserialize?: (raw: string) => T
   restoreMode?: DraftRestoreMode
 }
+
+type DraftStorageKey = string | Ref<string> | (() => string)
 
 // 标准化美化 Markdown：统一列表符号、启用围栏、紧凑列表等
 export async function beautifyMarkdown(src: string | null | undefined, options: BeautifyMarkdownOptions = {}): Promise<string> {
@@ -51,7 +53,7 @@ export async function beautifyMarkdown(src: string | null | undefined, options: 
 }
 
 // 通用草稿管理：本地存储 + 自动保存（防抖） + 恢复
-export function useDraft<T>(key: string, {
+export function useDraft<T>(key: DraftStorageKey, {
   sourceRef,
   autoSaveMs = 800,
   serialize = (val) => JSON.stringify(val ?? ''),
@@ -62,6 +64,15 @@ export function useDraft<T>(key: string, {
   let stopWatch: WatchStopHandle | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
 
+  const resolveKey = (): string => {
+    try {
+      const value = typeof key === 'function' ? key() : (isRef(key) ? key.value : key)
+      return String(value || '').trim()
+    } catch (_) {
+      return ''
+    }
+  }
+
   const isEmpty = (v: unknown) => (
     v === null || v === undefined ||
     (typeof v === 'string' && v.trim() === '') ||
@@ -69,21 +80,33 @@ export function useDraft<T>(key: string, {
   )
 
   const refreshHasData = (): void => {
-    try { draftHasData.value = !!localStorage.getItem(key) } catch (_) { draftHasData.value = false }
+    const storageKey = resolveKey()
+    if (!storageKey) {
+      draftHasData.value = false
+      return
+    }
+    try { draftHasData.value = !!localStorage.getItem(storageKey) } catch (_) { draftHasData.value = false }
   }
 
-  const saveDraft = (payload?: T): void => {
+  const saveToKey = (storageKey: string, payload?: T): void => {
+    if (!storageKey) return
     try {
       const val = payload !== undefined ? payload : (sourceRef ? sourceRef.value : undefined)
       const raw = serialize(val)
-      localStorage.setItem(key, raw)
+      localStorage.setItem(storageKey, raw)
       refreshHasData()
     } catch (_) {}
   }
 
+  const saveDraft = (payload?: T): void => {
+    saveToKey(resolveKey(), payload)
+  }
+
   const loadDraft = (): T | null => {
+    const storageKey = resolveKey()
+    if (!storageKey) return null
     try {
-      const raw = localStorage.getItem(key)
+      const raw = localStorage.getItem(storageKey)
       if (!raw) return null
       return deserialize(raw)
     } catch (_) {
@@ -112,9 +135,22 @@ export function useDraft<T>(key: string, {
     return data
   }
 
+  const clearTimer = (): void => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+  }
+
   const clearDraft = (): void => {
+    clearTimer()
+    const storageKey = resolveKey()
+    if (!storageKey) {
+      draftHasData.value = false
+      return
+    }
     try {
-      localStorage.removeItem(key)
+      localStorage.removeItem(storageKey)
       refreshHasData()
     } catch (_) {}
   }
@@ -123,14 +159,21 @@ export function useDraft<T>(key: string, {
     if (!sourceRef) return
     stopAutoSave()
     stopWatch = watch(sourceRef, (val) => {
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(() => saveDraft(val), autoSaveMs)
+      clearTimer()
+      const scheduledKey = resolveKey()
+      timer = setTimeout(() => {
+        timer = null
+        // A key can change while the debounce is waiting. Do not let an old
+        // account's payload land in the new account's storage slot.
+        if (resolveKey() !== scheduledKey) return
+        saveToKey(scheduledKey, val)
+      }, autoSaveMs)
     }, { deep: true })
   }
 
   const stopAutoSave = (): void => {
     if (stopWatch) { try { stopWatch() } catch (_) {} ; stopWatch = null }
-    if (timer) { clearTimeout(timer); timer = null }
+    clearTimer()
   }
 
   // 初始化草稿存在状态
@@ -142,6 +185,7 @@ export function useDraft<T>(key: string, {
     loadDraft,
     restoreDraft,
     clearDraft,
+    refreshDraft: refreshHasData,
     startAutoSave,
     stopAutoSave,
   }

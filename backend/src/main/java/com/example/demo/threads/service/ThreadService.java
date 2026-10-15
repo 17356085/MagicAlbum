@@ -24,7 +24,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.slf4j.Logger;
@@ -35,16 +34,11 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Duration;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class ThreadService {
     private static final Logger log = LoggerFactory.getLogger(ThreadService.class);
-    private static final Duration THREAD_LIST_CACHE_TTL = Duration.ofMinutes(2);
-    private static final Duration THREAD_DETAIL_CACHE_TTL = Duration.ofMinutes(5);
 
     private final ThreadRepository threadRepository;
     private final ThreadLikeRepository threadLikeRepository;
@@ -55,8 +49,8 @@ public class ThreadService {
     private final boolean mpThreadsEnabled;
     private final RabbitTemplate rabbitTemplate;
     private final boolean rabbitEnabled;
-    private final StringRedisTemplate redisTemplate;
-    private final ObjectMapper objectMapper;
+    private final ThreadCache cache;
+    private final ThreadDtoMapper dtoMapper;
     private final NotificationClient notificationClient;
     private final TagService tagService;
 
@@ -116,10 +110,10 @@ public class ThreadService {
         this.mpThreadsEnabled = mpThreadsEnabled;
         this.rabbitTemplate = rabbitTemplateProvider.getIfAvailable();
         this.rabbitEnabled = rabbitEnabled;
-        this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper == null ? defaultObjectMapper() : objectMapper;
+        this.cache = new ThreadCache(redisTemplate, objectMapper == null ? defaultObjectMapper() : objectMapper);
         this.notificationClient = notificationClient;
         this.tagService = tagService;
+        this.dtoMapper = new ThreadDtoMapper(threadRepository, threadLikeRepository, tagService);
     }
 
     ThreadService(ThreadRepository threadRepository,
@@ -158,10 +152,10 @@ public class ThreadService {
         Thread saved = threadRepository.save(t);
         replaceTags(saved.getId(), req.getTags());
 
-        ThreadDto dto = toDto(saved);
+        ThreadDto dto = dtoMapper.toDto(saved);
         dto.setTags(normalizeTags(req.getTags()));
         afterCommit(() -> {
-            evictThreadListCache();
+            cache.evictLists();
             publishSummaryGeneration(saved.getId());
         });
         return dto;
@@ -193,30 +187,31 @@ public class ThreadService {
 
     public Page<ThreadDto> list(String q, String tag, Long sectionId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 10);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
+        String normalizedQuery = normalizeQuery(q);
         String normalizedTag = (tag == null || tag.isBlank()) ? null : tag.trim();
-        String cacheKey = threadListCacheKey(q, normalizedTag, sectionId, page, limit);
-        CachedThreadPage cached = readThreadListCache(cacheKey, pageIndex, limit);
+        String cacheKey = threadListCacheKey(normalizedQuery, normalizedTag, sectionId, page, limit);
+        ThreadCache.CachedThreadPage cached = cache.readList(cacheKey);
         if (cached != null) {
             return new PageImpl<>(cached.items(), PageRequest.of(pageIndex, limit), cached.total());
         }
         if (normalizedTag == null && mpThreadsEnabled && threadReadServiceMp != null) {
-            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Thread> mpPage = threadReadServiceMp.searchNewest(q, sectionId, page, limit);
-            java.util.List<ThreadDto> items = toDtosFromEntities(mpPage.getRecords());
+            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Thread> mpPage = threadReadServiceMp.searchNewest(normalizedQuery, sectionId, page, limit);
+            java.util.List<ThreadDto> items = dtoMapper.toDtosFromEntities(mpPage.getRecords());
             Page<ThreadDto> pageResult = new org.springframework.data.domain.PageImpl<>(items, PageRequest.of(pageIndex, limit), mpPage.getTotal());
-            writeThreadListCache(cacheKey, new CachedThreadPage(items, mpPage.getTotal()));
+            cache.writeList(cacheKey, new ThreadCache.CachedThreadPage(items, mpPage.getTotal()));
             return pageResult;
         }
         PageRequest pr = PageRequest.of(pageIndex, limit);
         Page<ThreadQueryView> p = threadRepository.searchNewestView(
-                (q == null || q.isBlank()) ? null : q,
+                normalizedQuery,
                 normalizedTag,
                 sectionId,
                 pr
         );
-        List<ThreadDto> items = p.getContent().stream().map(this::toDto).toList();
+        List<ThreadDto> items = p.getContent().stream().map(dtoMapper::toDto).toList();
         Page<ThreadDto> pageResult = new org.springframework.data.domain.PageImpl<>(items, p.getPageable(), p.getTotalElements());
-        writeThreadListCache(cacheKey, new CachedThreadPage(items, p.getTotalElements()));
+        cache.writeList(cacheKey, new ThreadCache.CachedThreadPage(items, p.getTotalElements()));
         return pageResult;
     }
 
@@ -227,24 +222,24 @@ public class ThreadService {
     @Transactional(readOnly = true)
     public Page<ThreadDto> listFollowing(Long userId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 20);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
         Page<com.example.demo.threads.dto.ThreadFeedView> result = threadRepository.findFollowingFeed(
                 userId, PageRequest.of(pageIndex, limit));
-        return new PageImpl<>(result.getContent().stream().map(this::toFeedDto).toList(),
+        return new PageImpl<>(result.getContent().stream().map(dtoMapper::toFeedDto).toList(),
                 result.getPageable(), result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
     public Page<ThreadDto> ranking(Long sectionId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 20);
-        int pageIndex = Math.max(page - 1, 0);
+        int pageIndex = Math.max(page, 1) - 1;
         Page<ThreadRankingView> p = threadRepository.rankingView(sectionId, PageRequest.of(pageIndex, limit));
-        List<ThreadDto> items = p.getContent().stream().map(this::toDto).toList();
+        List<ThreadDto> items = p.getContent().stream().map(dtoMapper::toDto).toList();
         return new PageImpl<>(items, p.getPageable(), p.getTotalElements());
     }
 
     public Page<ThreadDto> listByAuthor(Long authorId, String sort, int page, int size) {
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 10));
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 10));
         Page<ThreadQueryView> p;
         String s = (sort == null || sort.isBlank()) ? "updatedAt" : sort;
         if ("createdAt".equalsIgnoreCase(s)) {
@@ -252,11 +247,11 @@ public class ThreadService {
         } else {
             p = threadRepository.findByAuthorNewestView(authorId, pr);
         }
-        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
+        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(dtoMapper::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
     public Page<ThreadDto> listByAuthor(Long authorId, String q, Long sectionId, String sort, int page, int size) {
-        PageRequest pr = PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 10));
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 10));
         String s = (sort == null || sort.isBlank()) ? "updatedAt" : sort;
         String query = (q == null || q.isBlank()) ? null : q.trim();
         Long sid = sectionId;
@@ -266,79 +261,7 @@ public class ThreadService {
         } else {
             p = threadRepository.searchByAuthorUpdatedDescView(authorId, query, sid, pr);
         }
-        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
-    }
-
-    private ThreadDto toDto(Thread t) {
-        if (t == null) return null;
-        List<ThreadDto> items = toDtosFromEntities(List.of(t));
-        return items.isEmpty() ? null : items.get(0);
-    }
-
-    private List<ThreadDto> toDtosFromEntities(List<Thread> threads) {
-        if (threads == null || threads.isEmpty()) return List.of();
-        List<Long> ids = threads.stream().map(Thread::getId).toList();
-        Map<Long, ThreadQueryView> viewMap = new HashMap<>();
-        for (ThreadQueryView view : threadRepository.findViewsByIdIn(ids)) {
-            viewMap.put(view.getId(), view);
-        }
-        return ids.stream()
-                .map(viewMap::get)
-                .filter(java.util.Objects::nonNull)
-                .map(this::toDto)
-                .toList();
-    }
-
-    private ThreadDto toDto(ThreadQueryView view) {
-        ThreadDto dto = toBaseDto(view);
-        dto.setLikeCount(countLikes(view.getId()));
-        dto.setTags(getThreadTags(view.getId()));
-        return dto;
-    }
-
-    private ThreadDto toFeedDto(com.example.demo.threads.dto.ThreadFeedView view) {
-        ThreadDto dto = toBaseDto(view);
-        dto.setReplyCount(view.getReplyCount() == null ? 0 : view.getReplyCount());
-        dto.setLikeCount(view.getLikeCount() == null ? 0 : view.getLikeCount());
-        return dto;
-    }
-
-    private ThreadDto toBaseDto(ThreadQueryView view) {
-        ThreadDto dto = new ThreadDto();
-        dto.setId(view.getId());
-        dto.setSectionId(view.getSectionId());
-        dto.setSectionName(view.getSectionName());
-        dto.setAuthorId(view.getAuthorId());
-        dto.setAuthorUsername(view.getAuthorUsername());
-        dto.setAuthorNickname(view.getAuthorNickname());
-        dto.setAuthorAvatar(view.getAuthorAvatar());
-        dto.setTitle(view.getTitle());
-        dto.setContent(view.getContent());
-        dto.setStatus(view.getStatus());
-        dto.setCreatedAt(view.getCreatedAt());
-        dto.setUpdatedAt(view.getUpdatedAt());
-        return dto;
-    }
-
-    private ThreadDto toDto(ThreadRankingView view) {
-        ThreadDto dto = new ThreadDto();
-        dto.setId(view.getId());
-        dto.setSectionId(view.getSectionId());
-        dto.setSectionName(view.getSectionName());
-        dto.setAuthorId(view.getAuthorId());
-        dto.setAuthorUsername(view.getAuthorUsername());
-        dto.setAuthorNickname(view.getAuthorNickname());
-        dto.setAuthorAvatar(view.getAuthorAvatar());
-        dto.setTitle(view.getTitle());
-        dto.setContent(view.getContent());
-        dto.setStatus(view.getStatus());
-        dto.setCreatedAt(view.getCreatedAt());
-        dto.setUpdatedAt(view.getUpdatedAt());
-        dto.setReplyCount(view.getReplyCount() == null ? 0 : view.getReplyCount());
-        dto.setLikeCount(view.getLikeCount() == null ? 0 : view.getLikeCount());
-        dto.setHotScore(view.getHotScore() == null ? 0 : view.getHotScore());
-        dto.setTags(getThreadTags(view.getId()));
-        return dto;
+        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(dtoMapper::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
     @Transactional
@@ -353,11 +276,10 @@ public class ThreadService {
             like.setThreadId(threadId);
             like.setUserId(userId);
             threadLikeRepository.save(like);
-            evictThreadListCache();
-            evictThreadDetailCache(threadId);
+            evictThreadCachesAfterCommit(threadId);
             sendLikeNotification(userId, thread);
         }
-        return new ThreadLikeResponse(threadId, true, countLikes(threadId));
+        return new ThreadLikeResponse(threadId, true, dtoMapper.countLikes(threadId));
     }
 
     @Transactional
@@ -368,10 +290,9 @@ public class ThreadService {
         findNormalThread(threadId);
         if (threadLikeRepository.existsByThreadIdAndUserId(threadId, userId)) {
             threadLikeRepository.deleteByThreadIdAndUserId(threadId, userId);
-            evictThreadListCache();
-            evictThreadDetailCache(threadId);
+            evictThreadCachesAfterCommit(threadId);
         }
-        return new ThreadLikeResponse(threadId, false, countLikes(threadId));
+        return new ThreadLikeResponse(threadId, false, dtoMapper.countLikes(threadId));
     }
 
     @Transactional(readOnly = true)
@@ -383,14 +304,14 @@ public class ThreadService {
         return new ThreadLikeResponse(
                 threadId,
                 threadLikeRepository.existsByThreadIdAndUserId(threadId, userId),
-                countLikes(threadId)
+                dtoMapper.countLikes(threadId)
         );
     }
 
     public ThreadDto getById(Long id) {
         // A moderation decision must take effect even if a detail response was cached earlier.
         Thread t = findNormalThread(id);
-        ThreadDto cached = readThreadDetailCache(id);
+        ThreadDto cached = cache.readDetail(id);
         if (cached != null) {
             return cached;
         }
@@ -399,11 +320,11 @@ public class ThreadService {
         if (view.getStatus() == null || !"NORMAL".equals(view.getStatus())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
-        ThreadDto dto = toDto(view);
+        ThreadDto dto = dtoMapper.toDto(view);
         // 服务端渲染并缓存 HTML，减轻前端开销
         String html = markdownRenderService.renderWithCache(t.getId(), t.getUpdatedAt(), t.getContentMd());
         dto.setContentHtml(html);
-        writeThreadDetailCache(id, dto);
+        cache.writeDetail(id, dto);
         return dto;
     }
 
@@ -414,17 +335,6 @@ public class ThreadService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
         return thread;
-    }
-
-    private long countLikes(Long threadId) {
-        if (threadLikeRepository == null || threadId == null) {
-            return 0;
-        }
-        try {
-            return threadLikeRepository.countByThreadId(threadId);
-        } catch (DataAccessException e) {
-            return 0;
-        }
     }
 
     private void sendLikeNotification(Long actorId, Thread thread) {
@@ -498,14 +408,14 @@ public class ThreadService {
         if (req.getTags() != null) {
             replaceTags(saved.getId(), req.getTags());
         }
-        ThreadDto dto = toDto(saved);
+        ThreadDto dto = dtoMapper.toDto(saved);
         String html = markdownRenderService.renderWithCache(saved.getId(), saved.getUpdatedAt(), saved.getContentMd());
         dto.setContentHtml(html);
-        evictThreadListCache();
-        evictThreadDetailCache(threadId);
+        evictThreadCachesAfterCommit(threadId);
         return dto;
     }
 
+    @Transactional
     public void delete(Long userId, Long threadId) {
         Thread t = threadRepository.findById(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
@@ -514,8 +424,7 @@ public class ThreadService {
         }
         t.setStatus("DELETED");
         threadRepository.save(t);
-        evictThreadListCache();
-        evictThreadDetailCache(threadId);
+        evictThreadCachesAfterCommit(threadId);
     }
 
     @Transactional
@@ -523,102 +432,12 @@ public class ThreadService {
         Thread thread = findNormalThread(threadId);
         thread.setStatus("HIDDEN");
         threadRepository.save(thread);
-        evictThreadListCache();
-        evictThreadDetailCache(threadId);
-    }
-
-    private CachedThreadPage readThreadListCache(String key, int pageIndex, int limit) {
-        if (redisTemplate == null) {
-            return null;
-        }
-        try {
-            String json = redisTemplate.opsForValue().get(key);
-            if (json == null || json.isBlank()) {
-                return null;
-            }
-            return objectMapper.readValue(json, CachedThreadPage.class);
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private void writeThreadListCache(String key, CachedThreadPage payload) {
-        if (redisTemplate == null || payload == null) {
-            return;
-        }
-        try {
-            redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(payload), THREAD_LIST_CACHE_TTL);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void evictThreadListCache() {
-        if (redisTemplate == null) {
-            return;
-        }
-        try {
-            java.util.Set<String> keys = redisTemplate.keys(RedisKeys.threadsListPattern());
-            if (keys != null && !keys.isEmpty()) {
-                redisTemplate.delete(keys);
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private ThreadDto readThreadDetailCache(Long threadId) {
-        if (redisTemplate == null || threadId == null) {
-            return null;
-        }
-        try {
-            String json = redisTemplate.opsForValue().get(threadDetailCacheKey(threadId));
-            if (json == null || json.isBlank()) {
-                return null;
-            }
-            ThreadDto dto = objectMapper.readValue(json, ThreadDto.class);
-            if (dto == null || dto.getAuthorId() == null) {
-                redisTemplate.delete(threadDetailCacheKey(threadId));
-                return null;
-            }
-            return dto;
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private void writeThreadDetailCache(Long threadId, ThreadDto dto) {
-        if (redisTemplate == null || threadId == null || dto == null) {
-            return;
-        }
-        try {
-            redisTemplate.opsForValue().set(threadDetailCacheKey(threadId), objectMapper.writeValueAsString(dto), THREAD_DETAIL_CACHE_TTL);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void evictThreadDetailCache(Long threadId) {
-        if (redisTemplate == null || threadId == null) {
-            return;
-        }
-        try {
-            redisTemplate.delete(threadDetailCacheKey(threadId));
-        } catch (Exception ignored) {
-        }
+        evictThreadCachesAfterCommit(threadId);
     }
 
     private void replaceTags(Long threadId, List<String> tags) {
         if (tagService != null) {
             tagService.replaceThreadTags(threadId, tags);
-        }
-    }
-
-    private List<String> getThreadTags(Long threadId) {
-        if (tagService == null) {
-            return List.of();
-        }
-        try {
-            return tagService.getNamesByThreadId(threadId);
-        } catch (DataAccessException e) {
-            return List.of();
         }
     }
 
@@ -629,16 +448,19 @@ public class ThreadService {
         return tagService.normalizeTags(tags);
     }
 
-    private String threadListCacheKey(String q, Long sectionId, int page, int limit) {
-        return RedisKeys.threadsList(q, sectionId, page, limit);
-    }
-
     private String threadListCacheKey(String q, String tag, Long sectionId, int page, int limit) {
         return RedisKeys.threadsList(q, tag, sectionId, page, limit);
     }
 
-    private String threadDetailCacheKey(Long threadId) {
-        return RedisKeys.threadDetail(threadId);
+    private String normalizeQuery(String q) {
+        return q == null || q.isBlank() ? null : q.trim();
+    }
+
+    private void evictThreadCachesAfterCommit(Long threadId) {
+        afterCommit(() -> {
+            cache.evictLists();
+            cache.evictDetail(threadId);
+        });
     }
 
     private static ObjectMapper defaultObjectMapper() {
@@ -650,6 +472,4 @@ public class ThreadService {
         return mapper == null ? defaultObjectMapper() : mapper;
     }
 
-    private record CachedThreadPage(List<ThreadDto> items, long total) {
-    }
 }

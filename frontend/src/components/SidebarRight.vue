@@ -50,7 +50,7 @@
     </div>
     <div class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
       <div class="border-b px-3 py-2 text-sm font-medium dark:border-gray-700 dark:text-gray-100">公告</div>
-      <div class="p-3 text-xs text-gray-700 dark:text-gray-200">欢迎体验 MagicAlbum beta，功能持续完善中。</div>
+      <div class="p-3 text-xs text-gray-700 dark:text-gray-200">欢迎体验 {{ SITE_NAME }}，功能持续完善中。</div>
     </div>
   </aside>
 </template>
@@ -60,6 +60,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { listPopularTags } from '@/api/tags'
 import type { TagStats } from '@/types'
+import { SITE_NAME } from '@/config/brand'
 
 const popularTags = ref<TagStats[]>([])
 const tagsLoading = ref(true)

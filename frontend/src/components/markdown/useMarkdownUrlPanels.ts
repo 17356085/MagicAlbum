@@ -1,5 +1,5 @@
 import { nextTick, ref } from 'vue'
-import { createMarkdownImage, createMarkdownLink, insertText } from '@/utils/markdownEditor'
+import { createMarkdownImage, createMarkdownLink, replaceSelection } from '@/utils/markdownEditor'
 
 interface Selection {
   start: number
@@ -78,7 +78,7 @@ export function useMarkdownUrlPanels({
       linkError.value = '链接地址格式无效，请输入 http:// 或 https:// 开头的地址'
       return
     }
-    const result = insertText(getValue(), createMarkdownLink(url, label), pendingSelection.value)
+    const result = replaceSelection(getValue(), createMarkdownLink(url, label), pendingSelection.value)
     showLinkPanel.value = false
     linkError.value = ''
     applyResult(result.value, result.selection.start, result.selection.end)
@@ -113,7 +113,7 @@ export function useMarkdownUrlPanels({
       imageError.value = '图片地址格式无效，请输入 http:// 或 https:// 开头的地址'
       return
     }
-    const result = insertText(getValue(), createMarkdownImage(url, alt), pendingSelection.value)
+    const result = replaceSelection(getValue(), createMarkdownImage(url, alt), pendingSelection.value)
     showImagePanel.value = false
     imageError.value = ''
     applyResult(result.value, result.selection.start, result.selection.end)
@@ -130,7 +130,7 @@ export function useMarkdownUrlPanels({
       const url = await uploadImage(file)
       if (!url) return
       imageUrl.value = url
-      const result = insertText(
+      const result = replaceSelection(
         getValue(),
         createMarkdownImage(url, String(imageAlt.value || '').trim() || 'image'),
         pendingSelection.value,

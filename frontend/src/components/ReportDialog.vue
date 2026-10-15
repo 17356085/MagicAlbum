@@ -126,13 +126,13 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       v-if="modelValue"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      class="ui-dialog-layer fixed inset-0 flex items-center justify-center bg-black/40 p-4"
       data-report-dialog-backdrop
       @click.self="close"
     >
       <section
         ref="dialogRef"
-        class="relative w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+        class="ui-panel ui-scroll relative w-full max-w-md p-6 max-h-[calc(100dvh-2rem)] overflow-y-auto"
         role="dialog"
         aria-modal="true"
         aria-labelledby="report-dialog-title"
@@ -142,11 +142,11 @@ onBeforeUnmount(() => {
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 id="report-dialog-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">举报内容</h2>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">请选择举报原因，我们会尽快处理。</p>
+            <p class="mt-1 text-sm text-gray-500 dark:ui-muted">请选择举报原因，我们会尽快处理。</p>
           </div>
           <button
             type="button"
-            class="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            class="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:ui-muted dark:hover:bg-gray-800 dark:hover:text-gray-200"
             aria-label="关闭举报对话框"
             @click="close"
           >
@@ -160,7 +160,7 @@ onBeforeUnmount(() => {
             <select
               id="report-reason"
               v-model="reason"
-              class="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              class="ui-field mt-2 text-sm"
               :disabled="isSubmitting || submitted"
             >
               <option value="SPAM">垃圾广告或灌水</option>
@@ -170,17 +170,17 @@ onBeforeUnmount(() => {
           </div>
 
           <div>
-            <label for="report-detail" class="block text-sm font-medium text-gray-700 dark:text-gray-200">补充说明 <span class="font-normal text-gray-400">（可选）</span></label>
+            <label for="report-detail" class="block text-sm font-medium text-gray-700 dark:text-gray-200">补充说明 <span class="font-normal ui-muted">（可选）</span></label>
             <textarea
               id="report-detail"
               v-model="detail"
               maxlength="500"
               rows="4"
-              class="mt-1 w-full resize-y rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              class="ui-field mt-2 resize-y text-sm"
               placeholder="请简要说明问题"
               :disabled="isSubmitting || submitted"
             />
-            <div class="mt-1 text-right text-xs text-gray-400">{{ detail.length }}/500</div>
+            <div class="mt-1 text-right text-xs ui-muted">{{ detail.length }}/500</div>
           </div>
 
           <p v-if="errorMessage" class="text-sm text-red-600 dark:text-red-300" role="alert">{{ errorMessage }}</p>
@@ -190,14 +190,14 @@ onBeforeUnmount(() => {
           <div class="flex justify-end gap-2">
             <button
               type="button"
-              class="rounded-md px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:text-gray-300 dark:hover:bg-gray-800"
+              class="ui-button"
               @click="close"
             >
               取消
             </button>
             <button
               type="submit"
-              class="rounded-md bg-brandDay-600 px-4 py-2 text-sm font-medium text-white hover:bg-brandDay-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
+              class="ui-button-primary disabled:opacity-60"
               :disabled="isSubmitting || submitted || !isLoggedIn"
               :aria-busy="isSubmitting"
             >

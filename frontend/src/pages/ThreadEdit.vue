@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAxiosError } from 'axios'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listSections } from '@/api/sections'
@@ -32,12 +33,32 @@ const success = ref('')
 const sections = ref<Section[]>([])
 const form = ref<ThreadEditForm>({ sectionId: '', title: '', content: '', tags: '' })
 
+function messageFrom(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || !('message' in value)) return undefined
+  const message = value.message
+  return typeof message === 'string' ? message : undefined
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError(error)) {
+    return messageFrom(error.response?.data) || error.message || fallback
+  }
+  if (typeof error === 'object' && error !== null) {
+    const response = 'response' in error ? error.response : undefined
+    if (typeof response === 'object' && response !== null && 'data' in response) {
+      return messageFrom(response.data) || messageFrom(error) || fallback
+    }
+    return messageFrom(error) || fallback
+  }
+  return fallback
+}
+
 const threadId = computed<Id>(() => String(route.params.id || ''))
 
 async function loadSections(): Promise<void> {
   try {
     const data = await listSections({ size: 100 })
-    sections.value = Array.isArray(data) ? data : (data.items || [])
+    sections.value = data.items
   } catch (_) {
     sections.value = []
   }
@@ -69,8 +90,8 @@ async function uploadThreadImage(file: File): Promise<string> {
       uploadProgress.value = progress
     })
     return String(url || path || '')
-  } catch (e: any) {
-    error.value = e?.response?.data?.message || e?.message || '图片上传失败'
+  } catch (e: unknown) {
+    error.value = errorMessage(e, '图片上传失败')
     return ''
   } finally {
     isUploading.value = false
@@ -113,8 +134,8 @@ async function submit(): Promise<void> {
     setTimeout(() => {
       router.push(`/threads/${threadId.value}`)
     }, 400)
-  } catch (e: any) {
-    error.value = e?.response?.data?.message || e?.message || '保存失败'
+  } catch (e: unknown) {
+    error.value = errorMessage(e, '保存失败')
   } finally {
     submitting.value = false
   }
@@ -141,49 +162,51 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-    <div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+  <div class="ui-page">
+    <header class="ui-page-header">
       <div>
-        <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">编辑帖子</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">修改标题、分区和正文内容</p>
+        <h1 class="ui-title">编辑帖子</h1>
+        <p class="ui-description">修改标题、分区和正文内容。</p>
       </div>
-      <button class="rounded border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700" @click="cancel">
+      <button class="ui-button" @click="cancel">
         返回我的帖子
       </button>
-    </div>
+    </header>
 
-    <div v-if="loading" class="py-10 text-center text-sm text-gray-500">正在加载...</div>
-    <div v-else class="space-y-4">
+    <div class="ui-panel p-4 sm:p-6">
+      <div v-if="loading" class="ui-muted ui-empty" role="status" aria-live="polite">正在加载帖子...</div>
+      <div v-else class="space-y-4">
       <div>
-        <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">分区</label>
-        <select v-model="form.sectionId" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
+        <label for="thread-edit-section" class="mb-1 block text-sm font-medium">分区</label>
+        <select id="thread-edit-section" v-model="form.sectionId" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
           <option value="">保持原分区</option>
           <option v-for="section in sections" :key="section.id" :value="section.id">{{ section.name }}</option>
         </select>
       </div>
 
       <div>
-        <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">标题</label>
-        <input v-model="form.title" type="text" class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100" placeholder="请输入标题" />
+        <label for="thread-edit-title" class="mb-1 block text-sm font-medium">标题</label>
+        <input id="thread-edit-title" v-model="form.title" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
       </div>
 
       <div>
-        <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">标签</label>
+        <label for="thread-edit-tags" class="mb-1 block text-sm font-medium">标签</label>
         <input
+          id="thread-edit-tags"
           v-model="form.tags"
           type="text"
-          class="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-brandDay-600 focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+          class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
           placeholder="用空格或逗号分隔，最多 5 个"
         />
         <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
-          <span v-for="tag in parsedTags" :key="tag" class="rounded-md bg-brandDay-50 px-2.5 py-1 text-xs font-medium text-brandDay-600 dark:bg-brandNight-900/30 dark:text-brandNight-300">
+          <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
             #{{ tag }}
           </span>
         </div>
       </div>
 
       <div>
-        <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">内容（支持 Markdown）</label>
+        <label class="mb-1 block text-sm font-medium">内容（支持 Markdown）</label>
         <MarkdownTextareaEditor
           v-model="form.content"
           :rows="16"
@@ -195,15 +218,16 @@ onMounted(async () => {
         />
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <button type="button" class="rounded border px-3 py-1.5 text-sm dark:border-gray-700 dark:text-gray-200" @click="beautifyContent">美化内容</button>
-        <button :disabled="submitting" class="rounded bg-brandDay-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brandDay-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brandNight-600 dark:hover:bg-brandNight-700" @click="submit">
+      <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 sm:flex-row sm:flex-wrap sm:items-center">
+        <button type="button" class="ui-button" @click="beautifyContent">美化内容</button>
+        <button :disabled="submitting" class="ui-button-primary" @click="submit">
           {{ submitting ? '保存中...' : '保存修改' }}
         </button>
-        <button type="button" class="rounded border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700" @click="cancel">取消</button>
-        <span v-if="success" class="text-sm text-green-600 dark:text-green-400">{{ success }}</span>
-        <span v-if="error" class="text-sm text-red-600 dark:text-red-400">{{ error }}</span>
+        <button type="button" class="ui-button" @click="cancel">取消</button>
+        <span v-if="success" class="text-sm text-emerald-700 dark:text-emerald-300" role="status" aria-live="polite">{{ success }}</span>
+        <span v-if="error" class="ui-error py-2 text-sm" role="alert" aria-live="assertive">{{ error }}</span>
       </div>
+    </div>
     </div>
   </div>
 </template>

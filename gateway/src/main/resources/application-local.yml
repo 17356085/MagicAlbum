@@ -39,6 +39,12 @@ spring:
               uri: http://127.0.0.1:8081
               predicates:
                 - Path=/api/v1/notifications/**
+            - id: bluealbum-ai-api
+              uri: http://127.0.0.1:8080
+              predicates:
+                - Path=/api/v1/ai/**
+              metadata:
+                response-timeout: 120000
             - id: bluealbum-monolith-api
               uri: http://127.0.0.1:8080
               predicates:

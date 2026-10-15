@@ -35,18 +35,25 @@ watch(
 </script>
 
 <template>
-  <div>
-    <div v-if="loading" class="text-gray-600">正在加载...</div>
-    <div v-else>
-      <div v-if="error" class="text-red-600 mb-3">{{ error }}</div>
-      <div v-else-if="!thread" class="text-gray-600">未找到帖子</div>
-      <div v-else class="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm dark:bg-gray-800 dark:border-gray-700">
-        <ThreadDetailHeader :thread="thread" :display-author-avatar-url="displayAuthorAvatarUrl" @back="safeBack" />
-        <ThreadDetailSummary :thread-id="thread.id" />
-        <ThreadDetailContent :thread="thread" />
-        <ThreadDetailActions :thread="thread" @updated="updateThread" />
+  <div class="ui-page mx-auto max-w-4xl">
+    <div v-if="loading" class="ui-panel ui-empty" role="status" aria-live="polite">
+      <h1>正在加载...</h1>
+      <div class="mx-auto mt-4 max-w-2xl space-y-3 text-left" aria-hidden="true">
+        <div class="ui-skeleton h-6 w-3/4" />
+        <div class="ui-skeleton h-4 w-full" />
+        <div class="ui-skeleton h-4 w-5/6" />
       </div>
     </div>
+    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
+    <div v-else-if="!thread" class="ui-panel ui-empty">
+      <h1>未找到帖子</h1>
+    </div>
+    <article v-else class="ui-panel overflow-hidden">
+      <ThreadDetailHeader :thread="thread" :display-author-avatar-url="displayAuthorAvatarUrl" @back="safeBack" />
+      <ThreadDetailSummary :thread-id="thread.id" />
+      <ThreadDetailContent :thread="thread" />
+      <ThreadDetailActions :thread="thread" @updated="updateThread" />
+    </article>
     <Comments v-if="thread?.id" :thread-id="Number(thread.id)" :scroll-to-post-id="anchorPostId" />
   </div>
 </template>

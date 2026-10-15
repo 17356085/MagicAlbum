@@ -15,7 +15,11 @@ import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.beans.factory.annotation.Value;
+import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * @author 17356
@@ -23,6 +27,25 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+
+    private static final String DEFAULT_ALLOWED_ORIGINS =
+            "http://localhost:5073,http://localhost:5173,http://localhost:5174," +
+                    "http://127.0.0.1:5073,http://127.0.0.1:5173,http://127.0.0.1:5174";
+
+    private static final Pattern VALID_ORIGIN = Pattern.compile(
+            "^(https?)://((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*"
+                    + "[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?|\\[[0-9A-Fa-f:.]+\\])"
+                    + "(?::([1-9][0-9]{0,4}))?$");
+
+    @Value("${app.cors.allowed-origins:" + DEFAULT_ALLOWED_ORIGINS + "}")
+    private String configuredAllowedOrigins = DEFAULT_ALLOWED_ORIGINS;
+
+    public SecurityConfig() {
+    }
+
+    SecurityConfig(String allowedOrigins) {
+        this.configuredAllowedOrigins = allowedOrigins;
+    }
 
     @Bean
     public UserDetailsService userDetailsService() {
@@ -84,17 +107,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        // 允许本地开发前端来源（Trae/IDEA dev server）
-        // 注意：localhost 与 127.0.0.1 对浏览器而言是不同的 Origin，Vite dev server 绑定 127.0.0.1，
-        // 因此两者都需要加入白名单，否则会出现跨域 403
-        config.setAllowedOrigins(List.of(
-                "http://localhost:5073",
-                "http://localhost:5173",
-                "http://localhost:5174",
-                "http://127.0.0.1:5073",
-                "http://127.0.0.1:5173",
-                "http://127.0.0.1:5174"
-        ));
+        config.setAllowedOrigins(parseAllowedOrigins(configuredAllowedOrigins));
         // 允许常见方法
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         // 允许请求头（Authorization 用于携带 JWT；Content-Type 用于 JSON）
@@ -107,5 +120,29 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;
+    }
+
+    private static List<String> parseAllowedOrigins(String rawOrigins) {
+        if (rawOrigins == null || rawOrigins.isBlank()) {
+            throw new IllegalStateException("app.cors.allowed-origins must contain at least one origin");
+        }
+        return Arrays.stream(rawOrigins.split(",", -1))
+                .map(String::trim)
+                .map(SecurityConfig::validateOrigin)
+                .toList();
+    }
+
+    private static String validateOrigin(String origin) {
+        Matcher matcher = VALID_ORIGIN.matcher(origin);
+        if (!matcher.matches()) {
+            throw new IllegalStateException(
+                    "app.cors.allowed-origins contains an invalid HTTP origin: " + origin);
+        }
+        String portValue = matcher.group(3);
+        if (portValue != null && Integer.parseInt(portValue) > 65535) {
+            throw new IllegalStateException(
+                    "app.cors.allowed-origins contains an invalid port: " + origin);
+        }
+        return origin;
     }
 }

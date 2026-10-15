@@ -177,77 +177,77 @@ onMounted(() => { void reloadProfile() })
 
 <template>
   <div class="space-y-5">
-    <div v-if="accountLoadError" role="alert" aria-live="assertive" class="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300 sm:flex-row sm:items-center sm:justify-between">
+    <div v-if="accountLoadError" role="alert" aria-live="assertive" class="ui-error flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
       <span>{{ accountLoadError }}</span>
-      <button type="button" class="self-start rounded border border-red-300 px-2.5 py-1 font-medium hover:bg-red-100 disabled:opacity-60 dark:border-red-800 dark:hover:bg-red-900/40 sm:self-auto" :disabled="accountLoading" @click="reloadProfile">
+      <button type="button" class="ui-button self-start px-3 py-1.5 text-xs sm:self-auto" :disabled="accountLoading" @click="reloadProfile">
         {{ accountLoading ? '重试中...' : '重试' }}
       </button>
     </div>
-    <div v-if="accountLoading && !accountLoaded" class="text-xs text-gray-500 dark:text-gray-400">正在加载账户信息...</div>
+    <div v-if="accountLoading && !accountLoaded" class="ui-muted text-sm" role="status" aria-live="polite">正在加载账户信息...</div>
 
-    <section>
+    <section class="space-y-4 border-b border-gray-200 pb-6 dark:border-gray-700">
       <fieldset :disabled="!accountLoaded || accountLoading" class="space-y-3">
-        <legend class="text-sm font-semibold text-gray-900 dark:text-gray-50">账户信息</legend>
+        <legend class="text-base font-semibold">账户信息</legend>
         <div>
-          <label for="settings-account-username" class="mb-1 block">账户名</label>
+          <label for="settings-account-username" class="mb-1 block text-sm font-medium">账户名</label>
           <input id="settings-account-username" v-model.trim="profile.username" type="text" placeholder="3-20 位字母、数字或下划线"
                  :aria-invalid="errors.username ? 'true' : 'false'" :aria-describedby="errors.username ? 'settings-account-username-error' : undefined"
-                 class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" />
-          <p v-if="errors.username" id="settings-account-username-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600">{{ errors.username }}</p>
+                 class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
+          <p v-if="errors.username" id="settings-account-username-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.username }}</p>
         </div>
         <div>
-          <label for="settings-account-phone" class="mb-1 block">手机号</label>
+          <label for="settings-account-phone" class="mb-1 block text-sm font-medium">手机号</label>
           <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" placeholder="国内 11 位或含国家码"
                  :aria-invalid="errors.phone ? 'true' : 'false'" :aria-describedby="errors.phone ? 'settings-account-phone-error' : undefined"
-                 class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" />
-          <p v-if="errors.phone" id="settings-account-phone-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
+                 class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
+          <p v-if="errors.phone" id="settings-account-phone-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.phone }}</p>
         </div>
         <div>
-          <label for="settings-account-email" class="mb-1 block">电子邮箱</label>
+          <label for="settings-account-email" class="mb-1 block text-sm font-medium">电子邮箱</label>
           <input id="settings-account-email" v-model.trim="profile.email" type="email" placeholder="name@example.com"
                  :aria-invalid="errors.email ? 'true' : 'false'" :aria-describedby="errors.email ? 'settings-account-email-error' : undefined"
-                 class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" />
-          <p v-if="errors.email" id="settings-account-email-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600">{{ errors.email }}</p>
+                 class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
+          <p v-if="errors.email" id="settings-account-email-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.email }}</p>
         </div>
 
-        <div class="pt-2 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
-          <span v-if="profileMessage" role="status" aria-live="polite" :class="['sm:mr-auto text-xs', profileMessageError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ profileMessage }}</span>
-          <button type="button" class="rounded-md px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="reloadProfile">重置</button>
-          <button type="button" class="rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+        <div class="flex flex-col items-stretch gap-2 pt-2 sm:flex-row sm:items-center sm:justify-end">
+          <span v-if="profileMessage" role="status" aria-live="polite" :class="['text-xs sm:mr-auto', profileMessageError ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300']">{{ profileMessage }}</span>
+          <button type="button" class="ui-button" @click="reloadProfile">重置</button>
+          <button type="button" class="ui-button-primary"
                   :disabled="savingProfile || !accountLoaded || accountLoading" @click="onSaveProfile">{{ savingProfile ? '保存中…' : '保存修改' }}</button>
         </div>
       </fieldset>
     </section>
 
-    <section>
+    <section class="space-y-4">
       <fieldset :disabled="!accountLoaded || accountLoading" class="space-y-3">
-        <legend class="text-sm font-semibold text-gray-900 dark:text-gray-50">修改密码</legend>
+        <legend class="text-base font-semibold">修改密码</legend>
         <div>
-          <label for="settings-account-current-password" class="mb-1 block">当前密码</label>
+          <label for="settings-account-current-password" class="mb-1 block text-sm font-medium">当前密码</label>
           <input id="settings-account-current-password" v-model="pwd.current" type="password" autocomplete="current-password" placeholder="请输入当前密码"
                  :aria-invalid="errors.currentPassword ? 'true' : 'false'" :aria-describedby="errors.currentPassword ? 'settings-account-current-password-error' : undefined"
-                 class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" />
-          <p v-if="errors.currentPassword" id="settings-account-current-password-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600">{{ errors.currentPassword }}</p>
+                 class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
+          <p v-if="errors.currentPassword" id="settings-account-current-password-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.currentPassword }}</p>
         </div>
         <div>
-          <label for="settings-account-new-password" class="mb-1 block">新密码</label>
+          <label for="settings-account-new-password" class="mb-1 block text-sm font-medium">新密码</label>
           <input id="settings-account-new-password" v-model="pwd.next" type="password" autocomplete="new-password" placeholder="至少 8 位且含大小写字母和数字"
                  :aria-invalid="errors.newPassword ? 'true' : 'false'" :aria-describedby="errors.newPassword ? 'settings-account-new-password-error' : undefined"
-                 class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" />
-          <p v-if="errors.newPassword" id="settings-account-new-password-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600">{{ errors.newPassword }}</p>
+                 class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
+          <p v-if="errors.newPassword" id="settings-account-new-password-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.newPassword }}</p>
         </div>
         <div>
-          <label for="settings-account-confirm-password" class="mb-1 block">确认新密码</label>
+          <label for="settings-account-confirm-password" class="mb-1 block text-sm font-medium">确认新密码</label>
           <input id="settings-account-confirm-password" v-model="pwd.confirm" type="password" autocomplete="new-password" placeholder="再次输入新密码"
                  :aria-invalid="errors.confirmPassword ? 'true' : 'false'" :aria-describedby="errors.confirmPassword ? 'settings-account-confirm-password-error' : undefined"
-                 class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:border-brandDay-600 focus:ring-brandDay-600 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 dark:focus:border-accentCyan-400 dark:focus:ring-accentCyan-400" />
-          <p v-if="errors.confirmPassword" id="settings-account-confirm-password-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600">{{ errors.confirmPassword }}</p>
+                 class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
+          <p v-if="errors.confirmPassword" id="settings-account-confirm-password-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.confirmPassword }}</p>
         </div>
 
-        <div class="pt-2 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
-          <span v-if="passwordMessage" role="status" aria-live="polite" :class="['sm:mr-auto text-xs', passwordMessageError ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400']">{{ passwordMessage }}</span>
-          <button type="button" class="rounded-md px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" @click="resetPwdForm">清空</button>
-          <button type="button" class="rounded-md bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-sm text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-400"
+        <div class="flex flex-col items-stretch gap-2 pt-2 sm:flex-row sm:items-center sm:justify-end">
+          <span v-if="passwordMessage" role="status" aria-live="polite" :class="['text-xs sm:mr-auto', passwordMessageError ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300']">{{ passwordMessage }}</span>
+          <button type="button" class="ui-button" @click="resetPwdForm">清空</button>
+          <button type="button" class="ui-button-primary"
                   :disabled="savingPassword || !accountLoaded || accountLoading" @click="onChangePassword">{{ savingPassword ? '修改中…' : '修改密码' }}</button>
         </div>
       </fieldset>

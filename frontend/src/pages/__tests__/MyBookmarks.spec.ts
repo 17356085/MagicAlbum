@@ -1,8 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import MyBookmarks from '../MyBookmarks.vue'
-import { listBookmarks } from '@/api/bookmarks'
-
 const listBookmarksMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/bookmarks', () => ({

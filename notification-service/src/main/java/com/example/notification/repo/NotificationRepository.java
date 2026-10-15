@@ -19,7 +19,7 @@ import java.util.Optional;
 @Repository
 public class NotificationRepository {
     private static final String SELECT_COLUMNS =
-            "id, user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at";
+            "id, user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at, idempotency_key";
 
     private static final RowMapper<Notification> ROW_MAPPER = (rs, rowNum) -> {
         Notification notification = new Notification();
@@ -33,6 +33,7 @@ public class NotificationRepository {
         notification.setTargetType(rs.getString("target_type"));
         notification.setRead(rs.getBoolean("read_flag"));
         notification.setCreatedAt(rs.getTimestamp("created_at").toInstant());
+        notification.setIdempotencyKey(rs.getString("idempotency_key"));
         return notification;
     };
 
@@ -42,7 +43,7 @@ public class NotificationRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public NotificationPage find(Long userId, String type, Boolean unread, int offset, int limit) {
+    public NotificationPage find(Long userId, String type, Boolean unread, long offset, int limit) {
         QueryParts query = buildQuery(userId, type, unread);
         List<Object> listArgs = new ArrayList<>(query.args());
         listArgs.add(limit);
@@ -77,14 +78,26 @@ public class NotificationRepository {
         jdbcTemplate.update("UPDATE notifications SET read_flag = TRUE WHERE id = ? AND user_id = ?", id, userId);
     }
 
+    public Optional<Notification> findByIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return Optional.empty();
+        }
+        List<Notification> matches = jdbcTemplate.query(
+                "SELECT " + SELECT_COLUMNS + " FROM notifications WHERE idempotency_key = ?",
+                ROW_MAPPER,
+                idempotencyKey
+        );
+        return matches.stream().findFirst();
+    }
+
     public Notification save(Notification notification) {
         Instant createdAt = notification.getCreatedAt() == null ? Instant.now() : notification.getCreatedAt();
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
                     "INSERT INTO notifications "
-                            + "(user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            + "(user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at, idempotency_key) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     Statement.RETURN_GENERATED_KEYS
             );
             ps.setLong(1, notification.getUserId());
@@ -104,6 +117,11 @@ public class NotificationRepository {
             ps.setString(7, notification.getTargetType());
             ps.setBoolean(8, notification.isRead());
             ps.setTimestamp(9, Timestamp.from(createdAt));
+            if (notification.getIdempotencyKey() == null) {
+                ps.setNull(10, Types.VARCHAR);
+            } else {
+                ps.setString(10, notification.getIdempotencyKey());
+            }
             return ps;
         }, keyHolder);
 

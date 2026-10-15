@@ -1,117 +1,91 @@
 <template>
-  <div class="px-0">
-    <div v-if="loading" class="text-center text-gray-500">加载中...</div>
-    <div v-else-if="error" class="text-center text-red-500">{{ error }}</div>
-    <div v-else class="space-y-6 rounded-xl border border-gray-200 bg-white/90 p-6 shadow-sm dark:bg-gray-800/80 dark:border-gray-700">
-      <!-- 返回按钮：单独一行显示在卡片顶部 -->
-      <div>
-<button @click="safeBack()" class="inline-flex items-center p-1 rounded text-brandDay-600 dark:text-brandNight-400 hover:bg-brandDay-50 dark:hover:bg-gray-700" aria-label="返回上一页" title="返回上一页">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
-            <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
-          </svg>
-        </button>
-      </div>
-      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div class="flex items-center gap-4">
-        
-          <template v-if="profile.avatarUrl">
-            <img :src="normalizeImageUrl(profile.avatarUrl)" alt="头像" class="w-20 h-20 rounded-full object-cover" />
-          </template>
-          <template v-else>
-            <div class="w-20 h-20 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-2xl text-gray-600 dark:text-gray-300">
-              {{ String(profile.nickname || profile.username || 'U').slice(0,1).toUpperCase() }}
+  <section class="ui-page">
+    <div v-if="loading" class="ui-panel ui-empty" role="status">加载中...</div>
+    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
+    <section v-else class="ui-panel space-y-6 p-4 sm:p-6">
+      <header class="ui-page-header mb-0">
+        <div class="flex min-w-0 items-start gap-4">
+          <button type="button" class="ui-button shrink-0 px-3" @click="safeBack()" aria-label="返回上一页" title="返回上一页">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
+              <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
+            </svg>
+          </button>
+          <div class="flex min-w-0 items-center gap-4">
+            <template v-if="profile.avatarUrl">
+              <img :src="normalizeImageUrl(profile.avatarUrl)" alt="头像" class="h-20 w-20 shrink-0 rounded-full border-4 border-[var(--ui-subtle)] object-cover" />
+            </template>
+            <template v-else>
+              <div class="flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-[var(--ui-subtle)] text-2xl text-[var(--ui-muted)]">
+                {{ String(profile.nickname || profile.username || 'U').slice(0,1).toUpperCase() }}
+              </div>
+            </template>
+            <div class="min-w-0">
+              <h1 class="ui-title truncate">{{ profile.nickname || profile.username || '未命名用户' }}</h1>
+              <p v-if="profile.username" class="ui-description">{{ profile.username }}</p>
+              <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <router-link :to="{ name: 'user-followers', params: { id: userId } }" class="ui-tag">粉丝 {{ Number(profile.followerCount || 0) }}</router-link>
+                <router-link :to="{ name: 'user-following', params: { id: userId } }" class="ui-tag">关注 {{ Number(profile.followingCount || 0) }}</router-link>
+                <span v-if="!isMe && profile.followingMe" class="ui-tag">关注了你</span>
+              </div>
+              <div v-if="profile.homepageUrl" class="mt-2 truncate text-sm text-[var(--ui-accent)]">
+                <span class="mr-1 text-[var(--ui-muted)]">主页链接：</span><a :href="profile.homepageUrl" target="_blank" rel="noopener">{{ profile.homepageUrl }}</a>
+              </div>
+              <div v-if="profile.location" class="mt-1 text-sm text-[var(--ui-muted)]">所在地：{{ profile.location }}</div>
             </div>
-          </template>
-          <div>
-            <div class="text-xl font-semibold">{{ profile.nickname || profile.username || '未命名用户' }}</div>
-            <div v-if="profile.username" class="text-sm text-gray-600 dark:text-gray-300 mt-0.5">{{ profile.username }}</div>
-            <div class="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-              <router-link
-                :to="{ name: 'user-followers', params: { id: userId } }"
-                class="rounded px-2 py-1 transition-colors hover:bg-gray-100 hover:text-brandDay-600 dark:hover:bg-gray-700 dark:hover:text-brandNight-300"
-              >
-                粉丝 {{ Number(profile.followerCount || 0) }}
-              </router-link>
-              <router-link
-                :to="{ name: 'user-following', params: { id: userId } }"
-                class="rounded px-2 py-1 transition-colors hover:bg-gray-100 hover:text-brandDay-600 dark:hover:bg-gray-700 dark:hover:text-brandNight-300"
-              >
-                关注 {{ Number(profile.followingCount || 0) }}
-              </router-link>
-              <span v-if="!isMe && profile.followingMe" class="rounded bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-gray-700 dark:text-gray-200">关注了你</span>
-            </div>
-  <div v-if="profile.homepageUrl" class="text-sm text-brandDay-600 dark:text-brandNight-400 mt-1">
-              <span class="mr-1 text-gray-600 dark:text-gray-300">主页链接：</span>
-              <a :href="profile.homepageUrl" target="_blank" rel="noopener">{{ profile.homepageUrl }}</a>
-            </div>
-            <div v-if="profile.location" class="text-sm text-gray-600 dark:text-gray-300 mt-1">所在地：{{ profile.location }}</div>
           </div>
         </div>
-        <div class="flex items-center gap-2 self-start md:self-center">
-          <router-link v-if="isMe" to="/settings" class="rounded bg-brandDay-600 dark:bg-brandNight-600 px-3 py-2 text-xs text-white hover:bg-brandDay-700 dark:hover:bg-brandNight-700 motion-safe:transition-shadow motion-safe:duration-200 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:focus:ring-accentCyan-500">编辑资料</router-link>
-          <button
-            v-else
-            class="rounded px-4 py-2 text-xs font-medium shadow-sm motion-safe:transition-shadow motion-safe:duration-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brandDay-600 disabled:opacity-60 dark:focus:ring-accentCyan-500"
-            :class="profile.followedByMe ? 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700' : 'bg-brandDay-600 text-white hover:bg-brandDay-700 dark:bg-brandNight-600 dark:hover:bg-brandNight-700'"
-            :disabled="followSaving"
-            @click="toggleFollow"
-          >
+        <div class="flex shrink-0 items-center gap-2 self-start">
+          <router-link v-if="isMe" to="/settings" class="ui-button-primary">编辑资料</router-link>
+          <button v-else type="button" class="ui-button" :class="profile.followedByMe ? 'text-[var(--ui-muted)]' : 'ui-button-primary'" :disabled="followSaving" @click="toggleFollow">
             {{ followSaving ? '处理中...' : (profile.followedByMe ? '已关注' : '关注') }}
           </button>
         </div>
-      </div>
+      </header>
 
-      <div>
-        <div class="text-sm text-gray-500 mb-1">个人介绍</div>
+      <section class="border-t border-[var(--ui-border)] pt-5">
+        <h2 class="text-sm font-semibold text-[var(--ui-muted)]">个人介绍</h2>
         <template v-if="profile.bio && String(profile.bio).trim()">
-          <div class="prose max-w-none dark:prose-invert text-gray-800 dark:text-gray-200" v-html="renderBioMarkdownHtml(profile.bio)"></div>
+          <div class="prose mt-2 max-w-none text-[var(--ui-ink)] dark:prose-invert" v-html="renderBioMarkdownHtml(profile.bio)"></div>
         </template>
         <template v-else>
-          <div class="text-gray-800 dark:text-gray-200">这个人很神秘，什么都没有写。</div>
+          <p class="mt-2 text-[var(--ui-muted)]">这个人很神秘，什么都没有写。</p>
         </template>
-        <div v-if="followError" class="mt-3 text-xs text-red-600">{{ followError }}</div>
-      </div>
+        <div v-if="followError" class="ui-error mt-3" role="alert">{{ followError }}</div>
+      </section>
 
-      <!-- Ta 的主题帖列表（每页10条，分页） -->
-      <div class="pt-4">
-        <div class="text-sm text-gray-500 mb-2">Ta的帖子</div>
-        <div v-if="threadsLoading" class="text-gray-600 dark:text-gray-300">正在加载...</div>
+      <section class="border-t border-[var(--ui-border)] pt-5">
+        <h2 class="mb-2 text-sm font-semibold text-[var(--ui-muted)]">Ta的帖子</h2>
+        <div v-if="threadsLoading" class="ui-empty" role="status">正在加载...</div>
         <template v-else>
-          <div v-if="threadsError" class="text-red-600 mb-3">{{ threadsError }}</div>
+          <div v-if="threadsError" class="ui-error mb-3" role="alert">{{ threadsError }}</div>
           <template v-if="threads.items && threads.items.length">
-            <ul class="space-y-2">
-              <li v-for="t in threads.items" :key="t.id" class="rounded-md border border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700">
-                <router-link :to="`/threads/${t.id}`" class="block p-3">
-                  <div class="flex items-center justify-between">
-                    <div class="font-medium">{{ t.title }}</div>
-                    <span class="text-xs text-gray-400">#{{ t.id }}</span>
+            <ul>
+              <li v-for="t in threads.items" :key="t.id" class="ui-list-row">
+                <router-link :to="`/threads/${t.id}`" class="block">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="font-medium text-[var(--ui-ink)]">{{ t.title }}</div>
+                    <span class="text-xs text-[var(--ui-muted)]">#{{ t.id }}</span>
                   </div>
-                  <div class="mt-1 text-xs text-gray-500">更新于：{{ formatRelativeTime(t.updatedAt || t.createdAt) }}</div>
+                  <div class="mt-1 text-xs text-[var(--ui-muted)]">更新于：{{ formatRelativeTime(t.updatedAt || t.createdAt) }}</div>
                 </router-link>
               </li>
             </ul>
           </template>
-          <div v-else class="text-gray-600 dark:text-gray-300">暂无帖子</div>
-          <div class="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 dark:border-gray-700">
-            <div class="text-xs text-gray-500 dark:text-gray-400">共 {{ threads.total || 0 }} 条 · 每页 {{ size }} 条</div>
-            <div class="flex items-center gap-2">
-              <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page<=1" @click="prevPage">上一页</button>
-              <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
-              <input
-                v-model="inputPage"
-                class="w-16 rounded border bg-white px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-brandDay-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:ring-accentCyan-400"
-                inputmode="numeric"
-                @keyup.enter="goToInputPage"
-                @blur="goToInputPage"
-              />
-              <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
-              <button class="rounded border px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700 dark:text-gray-200" :disabled="page>=totalPages" @click="nextPage">下一页</button>
+          <div v-else class="ui-empty px-0 py-8" role="status"><h2>暂无帖子</h2></div>
+          <div class="mt-3 flex flex-col gap-3 border-t border-[var(--ui-border)] pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div class="text-xs text-[var(--ui-muted)]">共 {{ threads.total || 0 }} 条 · 每页 {{ size }} 条</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" class="ui-button" :disabled="page<=1" @click="prevPage">上一页</button>
+              <span class="text-sm text-[var(--ui-muted)]">第</span>
+              <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+              <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+              <button type="button" class="ui-button" :disabled="page>=totalPages" @click="nextPage">下一页</button>
             </div>
           </div>
         </template>
-      </div>
-    </div>
-  </div>
+      </section>
+    </section>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -220,9 +194,7 @@ async function loadThreads(): Promise<void> {
   threadsError.value = ''
   try {
     const data = await listUserThreads(userId.value, { page: page.value, size: size.value })
-    threads.value = Array.isArray(data)
-      ? { items: data, page: page.value, size: size.value, total: data.length }
-      : (data || createEmptyThreads(page.value, size.value))
+    threads.value = data
   } catch (e: unknown) {
     threadsError.value = e instanceof Error ? e.message : '加载帖子失败'
   } finally {

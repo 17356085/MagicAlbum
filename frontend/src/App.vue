@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import HeaderBangumi from '@/components/HeaderBangumi.vue'
+import AppHeader from '@/components/AppHeader.vue'
 import SidebarLeft from '@/components/SidebarLeft.vue'
 import AiChat from '@/components/AiChat.vue'
 import { useUIStore } from '@/stores/ui'
 import { storeToRefs } from 'pinia'
+import { SITE_NAME } from '@/config/brand'
 
 interface SnowParticle {
   x: number
@@ -44,10 +45,23 @@ function onAuthStateChanged(): void {
 const isDark = ref(false)
 function updateIsDark(): void {
   const hasDarkClass = document.documentElement.classList.contains('dark')
-  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-  isDark.value = hasDarkClass || prefersDark
+  isDark.value = hasDarkClass
 }
 let themeObserver: MutationObserver | null = null
+let mounted = false
+const mediaListenerCleanups: Array<() => void> = []
+
+function listenToMedia(query: string, handler: () => void): void {
+  if (!window.matchMedia) return
+  const media = window.matchMedia(query)
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', handler)
+    mediaListenerCleanups.push(() => media.removeEventListener('change', handler))
+  } else if (typeof media.addListener === 'function') {
+    media.addListener(handler)
+    mediaListenerCleanups.push(() => media.removeListener(handler))
+  }
+}
 
 // 减少动效偏好
 const prefersReducedMotion = ref(false)
@@ -60,6 +74,9 @@ const snowCanvas = ref<HTMLCanvasElement | null>(null)
 let snowCtx: CanvasRenderingContext2D | null = null
 let snowParticles: SnowParticle[] = []
 let snowRAF: number | null = null
+let snowIdle: number | null = null
+let snowTimeout: number | null = null
+let snowStartGeneration = 0
 let snowLastTime = 0
 const snowTargetFPS = 28
 const snowFrameInterval = 1000 / snowTargetFPS
@@ -120,7 +137,7 @@ function drawSnow(ts: number): void {
   snowRAF = requestAnimationFrame(drawSnow)
 }
 function startSnow(): void {
-  if (prefersReducedMotion.value) return
+  if (!mounted || !dynamicBackgroundEnabled.value || isDark.value || prefersReducedMotion.value || snowRAF !== null) return
   const canvas = snowCanvas.value
   if (!canvas) return
   const dpr = window.devicePixelRatio || 1
@@ -134,7 +151,8 @@ function startSnow(): void {
   snowRAF = requestAnimationFrame(drawSnow)
 }
 function stopSnow(): void {
-  try { if (snowRAF) cancelAnimationFrame(snowRAF) } catch {}
+  cancelScheduledSnow()
+  try { if (snowRAF !== null) cancelAnimationFrame(snowRAF) } catch {}
   snowRAF = null
   snowCtx = null
   snowParticles = []
@@ -142,38 +160,43 @@ function stopSnow(): void {
 function refreshSnow(): void { stopSnow(); startSnow() }
 
 function scheduleStartSnow(): void {
-  const idleWindow = window as Window & typeof globalThis & {
-    requestIdleCallback?: (callback: IdleRequestCallback) => number
+  cancelScheduledSnow()
+  const generation = snowStartGeneration
+  const start = () => {
+    if (generation !== snowStartGeneration) return
+    snowIdle = null
+    snowTimeout = null
+    startSnow()
   }
-  if (typeof idleWindow.requestIdleCallback === 'function') {
-    try { idleWindow.requestIdleCallback(() => startSnow()) } catch { setTimeout(startSnow, 200) }
-  } else { setTimeout(startSnow, 200) }
+  if (typeof window.requestIdleCallback === 'function' && typeof window.cancelIdleCallback === 'function') {
+    try { snowIdle = window.requestIdleCallback(start); return } catch {}
+  }
+  snowTimeout = window.setTimeout(start, 200)
+}
+
+function cancelScheduledSnow(): void {
+  snowStartGeneration += 1
+  if (snowIdle !== null) window.cancelIdleCallback(snowIdle)
+  if (snowTimeout !== null) window.clearTimeout(snowTimeout)
+  snowIdle = null
+  snowTimeout = null
 }
 
 function onResize(): void { if (snowCtx) refreshSnow() }
 
 // 依据开关与主题决定是否启用下雪
-watch([dynamicBackgroundEnabled, isDark], () => {
-  if (dynamicBackgroundEnabled.value && !isDark.value) scheduleStartSnow()
+watch([dynamicBackgroundEnabled, isDark, prefersReducedMotion], () => {
+  if (dynamicBackgroundEnabled.value && !isDark.value && !prefersReducedMotion.value) scheduleStartSnow()
   else stopSnow()
-})
+}, { flush: 'post' })
 
 onMounted(() => {
+  mounted = true
   updateIsDark(); updateReducedMotion()
   // 监听系统动效偏好变化
-  if (window.matchMedia) {
-    const rmq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const rmHandler = () => updateReducedMotion()
-    if (typeof rmq.addEventListener === 'function') rmq.addEventListener('change', rmHandler)
-    else if (typeof rmq.addListener === 'function') rmq.addListener(rmHandler)
-  }
+  listenToMedia('(prefers-reduced-motion: reduce)', updateReducedMotion)
   // 监听暗色模式变化
-  if (window.matchMedia) {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = () => updateIsDark()
-    if (typeof mq.addEventListener === 'function') mq.addEventListener('change', handler)
-    else if (typeof mq.addListener === 'function') mq.addListener(handler)
-  }
+  listenToMedia('(prefers-color-scheme: dark)', updateIsDark)
   themeObserver = new MutationObserver(updateIsDark)
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   // 初始根据状态启用下雪
@@ -182,8 +205,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  mounted = false
   window.removeEventListener('resize', onResize)
   stopSnow()
+  mediaListenerCleanups.splice(0).forEach(cleanup => cleanup())
   if (themeObserver) { try { themeObserver.disconnect() } catch {}; themeObserver = null }
 })
 // Night：星光 Canvas（更自然、非规则稀疏的点点微光）
@@ -234,7 +259,7 @@ function drawStars(ts: number): void {
   starsRAF = requestAnimationFrame(drawStars)
 }
 function startStars(): void {
-  if (prefersReducedMotion.value) return
+  if (!mounted || !dynamicBackgroundEnabled.value || !isDark.value || prefersReducedMotion.value || starsRAF !== null) return
   const canvas = starsCanvas.value
   if (!canvas) return
   const dpr = window.devicePixelRatio || 1
@@ -248,7 +273,7 @@ function startStars(): void {
   starsRAF = requestAnimationFrame(drawStars)
 }
 function stopStars(): void {
-  try { if (starsRAF) cancelAnimationFrame(starsRAF) } catch {}
+  try { if (starsRAF !== null) cancelAnimationFrame(starsRAF) } catch {}
   starsRAF = null
   starsCtx = null
   stars = []
@@ -256,10 +281,10 @@ function stopStars(): void {
 function refreshStars(): void { stopStars(); startStars() }
 
 // 启停逻辑：夜间且启用开关时展示星光
-watch([dynamicBackgroundEnabled, isDark], () => {
-  if (dynamicBackgroundEnabled.value && isDark.value) startStars()
+watch([dynamicBackgroundEnabled, isDark, prefersReducedMotion], () => {
+  if (dynamicBackgroundEnabled.value && isDark.value && !prefersReducedMotion.value) startStars()
   else stopStars()
-})
+}, { flush: 'post' })
 
 // 复用 resize 钩子
 function onResizeStars(): void { if (starsCtx) refreshStars() }
@@ -275,26 +300,26 @@ onUnmounted(() => {
 
 </script>
 <template>
-  <div class="relative flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-gradient-to-b from-brandDay-100 to-brandDay-200 pt-24 dark:from-brandNight-900 dark:to-black dark:text-gray-100 md:pt-16 motion-safe:transition-colors motion-safe:duration-300 motion-reduce:transition-none">
+  <div class="community-app relative flex min-h-screen min-w-0 flex-col pt-28 dark:text-gray-100 md:pt-20">
+    <a href="#main-content" class="skip-link">跳到主要内容</a>
     <!-- Day/Night 背景质感层：Day 为雪、Night 为星光；可选轻微闪烁 -->
     <div :class="[
       'pointer-events-none absolute inset-0 z-0 motion-safe:transition-opacity motion-safe:duration-300',
       isDark ? 'stars-overlay' : 'snow-overlay',
-      'opacity-60', 'dark:opacity-60',
-      (!dynamicBackgroundEnabled && isDark && !prefersReducedMotion) ? 'twinkle' : ''
+      'opacity-20',
     ]"></div>
     <!-- Day 模式可选下雪 Canvas：仅在启用开关且非减少动效时运行 -->
     <canvas v-show="dynamicBackgroundEnabled && !isDark && !prefersReducedMotion" ref="snowCanvas" class="pointer-events-none absolute inset-0 z-0"></canvas>
     <canvas v-show="dynamicBackgroundEnabled && isDark && !prefersReducedMotion" ref="starsCanvas" class="pointer-events-none absolute inset-0 z-0"></canvas>
     <!-- 内容层：置于背景纹理之上，占满剩余空间 -->
-    <div class="relative z-10 flex-1">
-      <HeaderBangumi />
+    <div class="relative flex-1">
+      <AppHeader />
 
-    <main class="mx-auto grid w-full min-w-0 max-w-7xl grid-cols-1 items-start gap-6 px-4 py-6 lg:grid-cols-12">
-      <div class="sidebar-scroll hidden min-w-0 pr-1 lg:sticky lg:top-[calc(4rem+1.5rem)] lg:col-span-3 lg:block lg:max-h-[calc(100vh-4rem-1.5rem)] lg:overflow-y-auto">
+    <main id="main-content" tabindex="-1" class="community-layout mx-auto grid w-full min-w-0 max-w-7xl grid-cols-1 items-start gap-8 px-4 py-6 sm:px-6 md:py-8">
+      <div tabindex="0" aria-label="社区侧栏" class="community-sidebar-scroll ui-scroll hidden min-w-0 lg:sticky lg:top-24 lg:block lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
         <SidebarLeft />
       </div>
-      <div class="min-w-0 lg:col-span-9">
+      <div class="min-w-0">
         <div class="space-y-4">
           <router-view :key="`${$route.fullPath}:${authRenderKey}`" />
         </div>
@@ -302,17 +327,27 @@ onUnmounted(() => {
     </main>
     </div>
     <!-- 页脚置于外层 flex 列容器中，通过 mt-auto 固定在底部 -->
-    <footer class="mt-auto border-t border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700 w-full motion-safe:transition-colors motion-safe:duration-300 motion-reduce:transition-none">
-      <div class="mx-auto max-w-7xl px-4 py-6 text-xs text-gray-500 dark:text-gray-400">© 2025 MagicAlbum · 设计参考 bangumi.tv</div>
+    <footer class="community-footer mt-auto w-full">
+      <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-6 py-6 text-xs ui-muted"><span>© {{ new Date().getFullYear() }} {{ SITE_NAME }}</span><span>分享所爱，遇见同好。</span></div>
     </footer>
     <AiChat ref="aiChatRef" />
   </div>
 </template>
 
 <style scoped>
-/* 左侧栏独立滚动但隐藏滚动条（仍可滚动） */
-.sidebar-scroll { scrollbar-width: none; -ms-overflow-style: none; }
-.sidebar-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.community-app { background: var(--ui-bg); color: var(--ui-ink); }
+.community-footer { border-top: 1px solid var(--ui-border); }
+.skip-link { position: fixed; top: 8px; left: 16px; z-index: var(--ui-z-skip-link); transform: translateY(-150%); padding: 8px 16px; border-radius: 8px; color: var(--ui-surface); background: var(--ui-ink); }
+.skip-link:focus { transform: translateY(0); }
+@media (min-width: 1024px) { .community-layout { grid-template-columns: 220px minmax(0, 1fr); } }
+.community-sidebar-scroll { padding-inline-end: 8px; }
+.community-sidebar-scroll:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
+@media (forced-colors: active) {
+  .community-sidebar-scroll:focus-visible { outline-color: Highlight; }
+}
 </style>
 <style scoped>
 /* Day 模式：白雪质感（细小白点叠加，保持轻盈与低对比） */

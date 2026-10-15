@@ -1,5 +1,6 @@
 package com.example.demo.user.controller;
 
+import com.example.demo.common.PageResponse;
 import com.example.demo.user.dto.BasicInfoUpdateRequest;
 import com.example.demo.user.dto.ChangePasswordRequest;
 import com.example.demo.user.dto.RegisterRequest;
@@ -21,7 +22,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
 import java.util.Map;
 
 @RestController
@@ -43,19 +43,14 @@ public class UserAccountController extends AbstractUserControllerSupport {
     }
 
     @GetMapping
-    public ResponseEntity<Map<String, Object>> listUsers(
+    public ResponseEntity<PageResponse<UserSummaryDto>> listUsers(
             @RequestParam(value = "q", required = false) String q,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size,
             @RequestParam(value = "fields", required = false) String fields
     ) {
         Page<UserSummaryDto> pageData = userService.list(q, page, size, fields);
-        Map<String, Object> body = new HashMap<>();
-        body.put("items", pageData.getContent());
-        body.put("page", pageData.getNumber() + 1);
-        body.put("size", pageData.getSize());
-        body.put("total", pageData.getTotalElements());
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(PageResponse.from(pageData));
     }
 
     @PostMapping("/register")

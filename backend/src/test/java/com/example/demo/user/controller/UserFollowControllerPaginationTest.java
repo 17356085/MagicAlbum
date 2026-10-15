@@ -25,7 +25,8 @@ class UserFollowControllerPaginationTest {
                 .followers(9L, 0, 100)
                 .getBody();
 
-        assertThat(body).containsEntry("page", 1).containsEntry("size", 50);
+        assertThat(body.page()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(50);
         verify(userFollowService).listFollowers(eq(9L), eq(0), eq(100));
     }
 
@@ -39,7 +40,8 @@ class UserFollowControllerPaginationTest {
                 .following(9L, 0, 100)
                 .getBody();
 
-        assertThat(body).containsEntry("page", 1).containsEntry("size", 50);
+        assertThat(body.page()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(50);
         verify(userFollowService).listFollowing(eq(9L), eq(0), eq(100));
     }
 }

@@ -59,7 +59,7 @@ describe('SidebarLeft admin visibility', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
-    mocks.listSections.mockResolvedValue({ items: [] })
+    mocks.listSections.mockResolvedValue({ items: [], page: 1, size: 20, total: 0 })
     mocks.listPopularTags.mockResolvedValue([])
     mocks.listTags.mockResolvedValue({ items: [], page: 1, size: 18, total: 0 })
     mocks.listFollowingFeed.mockResolvedValue({ items: [], page: 1, size: 4, total: 0 })
