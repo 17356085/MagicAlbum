@@ -1,4 +1,4 @@
-import client from './client'
+import client, { handleCurrentTokenUnauthorized } from './client'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { Id } from '@/types'
 import type { AxiosResponse } from 'axios'
@@ -92,6 +92,7 @@ export function createChatStream(
         signal: controller.signal,
       })
       if (!response.ok) {
+        if (response.status === 401) handleCurrentTokenUnauthorized(token)
         throw new Error('AI 请求失败')
       }
 

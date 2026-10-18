@@ -142,7 +142,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { useAuthStore } from '@/stores/auth'
+import { isAuthOperationSuperseded, useAuthStore } from '@/stores/auth'
 import AuthVerifyBlock from '@/components/auth/AuthVerifyBlock.vue'
 import { isAuthVerifyEnabled, toVerifyPayload } from '@/services/authVerify'
 import { startEmailCodeLogin, startPhoneCodeLogin } from '@/api/auth'
@@ -202,6 +202,11 @@ const codeSession = reactive<{ session: string; maskedAddress: string }>({
   session: '',
   maskedAddress: '',
 })
+let authStoreInstance: ReturnType<typeof useAuthStore> | null = null
+
+function getAuthStore(): ReturnType<typeof useAuthStore> {
+  return authStoreInstance || (authStoreInstance = useAuthStore())
+}
 
 const modeLabel = computed(() => {
   if (mode.value === 'phone-password') return 'Phone Login'
@@ -324,7 +329,7 @@ async function onSubmitLogin(): Promise<void> {
 
   submitting.value = true
   try {
-    const authStore = useAuthStore()
+    const authStore = getAuthStore()
     if (mode.value === 'email-code') {
       if (!codeSession.session) {
         emit('notify', '请先获取邮箱验证码')
@@ -360,7 +365,7 @@ async function onSubmitLogin(): Promise<void> {
     verifyBlockRef.value?.reset()
     showVerify.value = false
   } catch (error: unknown) {
-    emit('notify', getLoginErrorMessage(error))
+    if (!isAuthOperationSuperseded(error)) emit('notify', getLoginErrorMessage(error))
   } finally {
     submitting.value = false
   }
@@ -477,5 +482,6 @@ function clearCountdown(): void {
 
 onBeforeUnmount(() => {
   clearCountdown()
+  authStoreInstance?.invalidateAuthOperations()
 })
 </script>

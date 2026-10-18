@@ -10,6 +10,7 @@ import { storeToRefs } from 'pinia'
 import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import type { Id, Section } from '@/types'
+import { THREAD_CONTENT_MAX_LENGTH } from '@/config/contentLimits'
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -200,6 +201,10 @@ async function submit(): Promise<void> {
     error.value = '请完整填写分区、标题与内容'
     return
   }
+  if (form.value.content.length > THREAD_CONTENT_MAX_LENGTH) {
+    error.value = `正文不能超过 ${THREAD_CONTENT_MAX_LENGTH} 字符`
+    return
+  }
   // 未登录或无令牌时阻止提交
   if (!isLoggedIn.value || !token.value) {
     error.value = '请先登录后再发帖'
@@ -362,6 +367,7 @@ onUnmounted(() => {
           <label class="mb-1 block text-sm font-medium">内容（支持 Markdown）</label>
           <MarkdownTextareaEditor
             v-model="form.content"
+            :max-length="THREAD_CONTENT_MAX_LENGTH"
             :rows="16"
             :uploading="isUploading"
             :upload-progress="uploadProgress"

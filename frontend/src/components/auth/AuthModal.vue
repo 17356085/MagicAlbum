@@ -87,6 +87,7 @@ import AuthQrLogin from './AuthQrLogin.vue'
 import AuthRegisterForm from './AuthRegisterForm.vue'
 import AuthThirdPartyLogin from './AuthThirdPartyLogin.vue'
 import { startOAuthAuthorize } from '@/services/thirdPartyAuth'
+import { useAuthStore } from '@/stores/auth'
 import type { OAuthProvider } from '@/types'
 import { SITE_NAME } from '@/config/brand'
 
@@ -98,6 +99,7 @@ const emit = defineEmits<{
 }>()
 
 const authView = ref<AuthView>('login')
+const authStore = useAuthStore()
 const dialogPanel = ref<HTMLElement | null>(null)
 let previousFocus: HTMLElement | null = null
 const seedPhone = ref('')
@@ -161,6 +163,7 @@ function onLoginSuccess(): void {
 }
 
 function onClose(): void {
+  authStore.invalidateAuthOperations()
   emit('close')
 }
 

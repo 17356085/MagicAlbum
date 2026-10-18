@@ -89,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { followUser, getUserProfile, listUserThreads, unfollowUser } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
@@ -156,6 +156,23 @@ const totalPages = computed(() => {
   return Math.max(1, Math.ceil(total / s))
 })
 
+let profileRequestSeq = 0
+let threadsRequestSeq = 0
+let followRequestSeq = 0
+let disposed = false
+
+function isCurrentProfile(requestSeq: number, requestedUserId: string): boolean {
+  return !disposed && requestSeq === profileRequestSeq && String(userId.value) === requestedUserId
+}
+
+function isCurrentThreads(requestSeq: number, requestedUserId: string): boolean {
+  return !disposed && requestSeq === threadsRequestSeq && String(userId.value) === requestedUserId
+}
+
+function isCurrentFollow(requestSeq: number, requestedUserId: string): boolean {
+  return !disposed && requestSeq === followRequestSeq && String(userId.value) === requestedUserId
+}
+
 function prevPage() {
   if (page.value > 1) {
     page.value -= 1
@@ -190,26 +207,40 @@ watch(page, (val) => {
 }, { immediate: true })
 
 async function loadThreads(): Promise<void> {
+  const requestSeq = ++threadsRequestSeq
+  const requestedUserId = userId.value
+  const requestedPage = page.value
+  const requestedSize = size.value
   threadsLoading.value = true
   threadsError.value = ''
   try {
-    const data = await listUserThreads(userId.value, { page: page.value, size: size.value })
+    const data = await listUserThreads(requestedUserId, { page: requestedPage, size: requestedSize })
+    if (!isCurrentThreads(requestSeq, requestedUserId) || page.value !== requestedPage) return
     threads.value = data
   } catch (e: unknown) {
-    threadsError.value = e instanceof Error ? e.message : '加载帖子失败'
+    if (isCurrentThreads(requestSeq, requestedUserId)) {
+      threadsError.value = e instanceof Error ? e.message : '加载帖子失败'
+    }
   } finally {
-    threadsLoading.value = false
+    if (isCurrentThreads(requestSeq, requestedUserId)) threadsLoading.value = false
   }
 }
 
 async function loadProfile(): Promise<void> {
+  const requestSeq = ++profileRequestSeq
+  const requestedUserId = userId.value
+  loading.value = true
+  error.value = ''
   try {
-    const data = await getUserProfile(userId.value)
+    const data = await getUserProfile(requestedUserId)
+    if (!isCurrentProfile(requestSeq, requestedUserId)) return
     profile.value = data || createEmptyProfile()
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '获取用户资料失败'
+    if (isCurrentProfile(requestSeq, requestedUserId)) {
+      error.value = e instanceof Error ? e.message : '获取用户资料失败'
+    }
   } finally {
-    loading.value = false
+    if (isCurrentProfile(requestSeq, requestedUserId)) loading.value = false
   }
 }
 
@@ -218,12 +249,15 @@ async function toggleFollow(): Promise<void> {
     followError.value = '请先登录后再关注'
     return
   }
+  const requestSeq = ++followRequestSeq
+  const requestedUserId = userId.value
   followSaving.value = true
   followError.value = ''
   try {
     const state = profile.value.followedByMe
-      ? await unfollowUser(userId.value)
-      : await followUser(userId.value)
+      ? await unfollowUser(requestedUserId)
+      : await followUser(requestedUserId)
+    if (!isCurrentFollow(requestSeq, requestedUserId)) return
     profile.value = {
       ...profile.value,
       followedByMe: Boolean(state.followedByMe ?? state.following),
@@ -241,29 +275,48 @@ async function toggleFollow(): Promise<void> {
     } catch (_) {}
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } } | null
-    followError.value = err?.response?.data?.message || '关注操作失败'
+    if (isCurrentFollow(requestSeq, requestedUserId)) {
+      followError.value = err?.response?.data?.message || '关注操作失败'
+    }
   } finally {
-    followSaving.value = false
+    if (isCurrentFollow(requestSeq, requestedUserId)) followSaving.value = false
   }
 }
 
-onMounted(async () => {
-  await loadProfile()
-  // 加载主题帖列表（默认每页10条）
-  await loadThreads()
-})
+function loadForUser(): void {
+  profileRequestSeq += 1
+  threadsRequestSeq += 1
+  followRequestSeq += 1
+  loading.value = true
+  error.value = ''
+  followSaving.value = false
+  followError.value = ''
+  profile.value = createEmptyProfile()
+  threads.value = createEmptyThreads()
+  threadsError.value = ''
+  page.value = 1
+  inputPage.value = '1'
+  // Keep profile and thread requests independent. In particular, an older
+  // profile request must not await and then start a thread request for the
+  // newly selected user.
+  void loadProfile()
+  void loadThreads()
+}
+
+onMounted(loadForUser)
 
 // 当路由 id 变化时，刷新个人资料并重置分页后重新加载帖子
-watch(userId, async (newId, oldId) => {
+watch(userId, (newId, oldId) => {
   if (String(newId) !== String(oldId)) {
-    // 刷新个人资料
-    loading.value = true
-    error.value = ''
-    await loadProfile()
-    // 重置分页并加载对应用户的帖子
-    page.value = 1
-    await loadThreads()
+    loadForUser()
   }
+})
+
+onUnmounted(() => {
+  disposed = true
+  profileRequestSeq += 1
+  threadsRequestSeq += 1
+  followRequestSeq += 1
 })
 </script>
 

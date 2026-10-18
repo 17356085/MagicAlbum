@@ -9,5 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    include: ['src/**/*.spec.ts'],
+    maxWorkers: 1,
   },
 })

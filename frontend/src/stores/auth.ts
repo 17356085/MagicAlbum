@@ -18,16 +18,34 @@ import {
 import type {
   FinishPhoneCodeLoginRequest,
   FinishEmailCodeLoginRequest,
+  LoginResponse,
   LoginWithEmailPasswordRequest,
   LoginWithPhonePasswordRequest,
   PersistedAuthState,
   User,
 } from '@/types'
 
+export class AuthOperationSupersededError extends Error {
+  readonly code = 'AUTH_OPERATION_SUPERSEDED'
+
+  constructor() {
+    super('认证操作已失效')
+    this.name = 'AuthOperationSupersededError'
+    Object.setPrototypeOf(this, new.target.prototype)
+  }
+}
+
+export function isAuthOperationSuperseded(error: unknown): error is AuthOperationSupersededError {
+  if (error instanceof AuthOperationSupersededError) return true
+  if (typeof error !== 'object' || error === null) return false
+  return (error as { code?: unknown }).code === 'AUTH_OPERATION_SUPERSEDED'
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(getStoredCurrentUser())
   const token = ref<string>(getStoredAccessToken())
   const useMock = import.meta.env.VITE_USE_API_MOCK === 'true'
+  let authGeneration = 0
 
   // Clean mock token if needed
   if (!useMock && isMockToken(token.value)) {
@@ -44,69 +62,84 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (_) {}
   }
 
-  function applyAuthState({ accessToken = '', user: nextUser = null }: Partial<PersistedAuthState> = {}): void {
+  function writeAuthState({ accessToken = '', user: nextUser = null }: Partial<PersistedAuthState> = {}): void {
     token.value = hasRealToken(accessToken) ? accessToken : ''
     user.value = nextUser || null
     persistAuthState({ accessToken: token.value, user: user.value })
     emitAuthChanged(!!token.value)
   }
 
+  function invalidateAuthOperations(): number {
+    authGeneration += 1
+    return authGeneration
+  }
+
+  function getAuthGeneration(): number {
+    return authGeneration
+  }
+
+  function isAuthGenerationCurrent(generation: number): boolean {
+    return generation === authGeneration
+  }
+
+  function applyAuthState({ accessToken = '', user: nextUser = null }: Partial<PersistedAuthState> = {}): void {
+    invalidateAuthOperations()
+    writeAuthState({ accessToken, user: nextUser })
+  }
+
   // Keep the option for caller compatibility; browser drafts are independent
   // of auth cleanup and must survive logout for account-scoped recovery.
   function clearAuthState(_options: { clearDraft?: boolean } = {}): void {
-    token.value = ''
-    user.value = null
-    clearPersistedAuthState()
-    emitAuthChanged(false)
+    invalidateAuthOperations()
+    writeAuthState()
   }
 
   // Actions
-  async function loginWithPhonePassword({ phone, password, verifyToken, verifyProvider, verifyScene }: LoginWithPhonePasswordRequest): Promise<void> {
-    const { accessToken, user: userData } = await apiLoginWithPhonePassword({ phone, password, verifyToken, verifyProvider, verifyScene })
-    let nextUser: User | null = userData || null
+  async function applyLoginResponse(
+    generation: number,
+    request: () => Promise<LoginResponse>,
+  ): Promise<void> {
+    let response: LoginResponse
+    try {
+      response = await request()
+    } catch (error: unknown) {
+      if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
+      throw error
+    }
+
+    if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
+
+    let nextUser: User | null = response.user || null
     if (!nextUser) {
       try {
-        const fetched = await getCurrentUser()
+        const fetched = await getCurrentUser(response.accessToken)
         if (fetched) nextUser = fetched
       } catch {}
+      if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
     }
-    applyAuthState({ accessToken, user: nextUser })
+
+    if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
+    writeAuthState({ accessToken: response.accessToken, user: nextUser })
+  }
+
+  async function loginWithPhonePassword({ phone, password, verifyToken, verifyProvider, verifyScene }: LoginWithPhonePasswordRequest): Promise<void> {
+    const generation = invalidateAuthOperations()
+    await applyLoginResponse(generation, () => apiLoginWithPhonePassword({ phone, password, verifyToken, verifyProvider, verifyScene }))
   }
 
   async function loginWithEmailPassword({ email, password, verifyToken, verifyProvider, verifyScene }: LoginWithEmailPasswordRequest): Promise<void> {
-    const { accessToken, user: userData } = await apiLoginWithEmailPassword({ email, password, verifyToken, verifyProvider, verifyScene })
-    let nextUser: User | null = userData || null
-    if (!nextUser) {
-      try {
-        const fetched = await getCurrentUser()
-        if (fetched) nextUser = fetched
-      } catch {}
-    }
-    applyAuthState({ accessToken, user: nextUser })
+    const generation = invalidateAuthOperations()
+    await applyLoginResponse(generation, () => apiLoginWithEmailPassword({ email, password, verifyToken, verifyProvider, verifyScene }))
   }
 
   async function loginWithEmailCode({ channel, address, code, session }: FinishEmailCodeLoginRequest): Promise<void> {
-    const { accessToken, user: userData } = await apiFinishEmailCodeLogin({ channel, address, code, session })
-    let nextUser: User | null = userData || null
-    if (!nextUser) {
-      try {
-        const fetched = await getCurrentUser()
-        if (fetched) nextUser = fetched
-      } catch {}
-    }
-    applyAuthState({ accessToken, user: nextUser })
+    const generation = invalidateAuthOperations()
+    await applyLoginResponse(generation, () => apiFinishEmailCodeLogin({ channel, address, code, session }))
   }
 
   async function loginWithPhoneCode({ channel, address, code, session }: FinishPhoneCodeLoginRequest): Promise<void> {
-    const { accessToken, user: userData } = await apiFinishPhoneCodeLogin({ channel, address, code, session })
-    let nextUser: User | null = userData || null
-    if (!nextUser) {
-      try {
-        const fetched = await getCurrentUser()
-        if (fetched) nextUser = fetched
-      } catch {}
-    }
-    applyAuthState({ accessToken, user: nextUser })
+    const generation = invalidateAuthOperations()
+    await applyLoginResponse(generation, () => apiFinishPhoneCodeLogin({ channel, address, code, session }))
   }
 
   function loginWithAuthResponse({ accessToken, user: userData }: PersistedAuthState): void {
@@ -136,8 +169,12 @@ export const useAuthStore = defineStore('auth', () => {
     persistAuthState({ accessToken: token.value, user: user.value })
   }
 
-  function handleUnauthorized(): void {
+  function handleUnauthorized(requestToken?: string): boolean {
+    const currentToken = token.value
+    if (!hasRealToken(currentToken)) return false
+    if (requestToken !== undefined && requestToken !== currentToken) return false
     clearAuthState()
+    return true
   }
 
   return {
@@ -146,7 +183,10 @@ export const useAuthStore = defineStore('auth', () => {
     isLoggedIn,
     applyAuthState,
     clearAuthState,
+    getAuthGeneration,
     handleUnauthorized,
+    invalidateAuthOperations,
+    isAuthGenerationCurrent,
     loginWithPhonePassword,
     loginWithEmailPassword,
     loginWithPhoneCode,

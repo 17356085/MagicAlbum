@@ -76,4 +76,17 @@ describe('SettingsAccount', () => {
     expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: 'new_user', phone: '13800138000', email: 'blue@example.com' })
     expect(wrapper.emitted('dirty-change')).toContainEqual([false])
   })
+
+  it('blocks empty phone and email values before the backend-required update', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    await wrapper.get('#settings-account-phone').setValue('')
+    await wrapper.get('#settings-account-email').setValue('')
+    await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
+
+    expect(wrapper.get('#settings-account-phone-error').text()).toContain('请输入手机号')
+    expect(wrapper.get('#settings-account-email-error').text()).toContain('请输入邮箱')
+    expect(updateMyBasicInfoMock).not.toHaveBeenCalled()
+  })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { listNotifications, markNotificationRead } from '@/api/notifications'
 import { getMyNotificationSettings, updateMyNotificationSettings } from '@/api/settings'
@@ -31,6 +31,10 @@ const settingsMessage = ref('')
 const settingsMessageError = ref(false)
 const savedPreferenceSnapshot = ref('')
 const router = useRouter()
+let notificationRequestSeq = 0
+let settingsRequestSeq = 0
+let notificationActionSeq = 0
+let disposed = false
 const emit = defineEmits<{
   (event: 'dirty-change', dirty: boolean): void
 }>()
@@ -83,6 +87,7 @@ watch(settingsDirty, (dirty) => {
 }, { immediate: true })
 
 async function loadNotifications(): Promise<void> {
+  const requestSeq = ++notificationRequestSeq
   notifLoading.value = true
   notifError.value = ''
   notifActionError.value = ''
@@ -93,35 +98,39 @@ async function loadNotifications(): Promise<void> {
       page: notifQuery.value.page,
       size: notifQuery.value.size,
     })
+    if (disposed || requestSeq !== notificationRequestSeq) return
     notifList.value = data
   } catch (_) {
-    notifError.value = '加载通知失败，请重试。'
+    if (!disposed && requestSeq === notificationRequestSeq) notifError.value = '加载通知失败，请重试。'
   } finally {
-    notifLoading.value = false
+    if (!disposed && requestSeq === notificationRequestSeq) notifLoading.value = false
   }
 }
 
 async function loadNotificationSettings(): Promise<void> {
+  const requestSeq = ++settingsRequestSeq
   settingsLoading.value = true
   settingsLoaded.value = false
   settingsError.value = ''
   settingsMessage.value = ''
   try {
     const data = await getMyNotificationSettings()
+    if (disposed || requestSeq !== settingsRequestSeq) return
     const normalized = normalizeNotificationSettings(data)
     notifSettings.value = normalized
     savedPreferenceSnapshot.value = preferenceSnapshot(normalized)
     settingsLoaded.value = true
   } catch (_) {
-    settingsError.value = '通知偏好加载失败，暂时无法编辑或保存。'
+    if (!disposed && requestSeq === settingsRequestSeq) settingsError.value = '通知偏好加载失败，暂时无法编辑或保存。'
   } finally {
-    settingsLoading.value = false
+    if (!disposed && requestSeq === settingsRequestSeq) settingsLoading.value = false
   }
 }
 
 async function saveNotificationSettings(): Promise<void> {
   if (!canSaveSettings.value) return
 
+  const requestSeq = ++settingsRequestSeq
   settingsSaving.value = true
   settingsMessage.value = ''
   settingsMessageError.value = false
@@ -140,25 +149,30 @@ async function saveNotificationSettings(): Promise<void> {
   }
   try {
     const data = await updateMyNotificationSettings(payload)
+    if (disposed || requestSeq !== settingsRequestSeq) return
     const normalized = normalizeNotificationSettings(data)
     notifSettings.value = normalized
     savedPreferenceSnapshot.value = preferenceSnapshot(normalized)
     settingsMessage.value = '保存成功'
   } catch (_) {
-    settingsMessageError.value = true
-    settingsMessage.value = '保存失败，请稍后重试。'
+    if (!disposed && requestSeq === settingsRequestSeq) {
+      settingsMessageError.value = true
+      settingsMessage.value = '保存失败，请稍后重试。'
+    }
   } finally {
-    settingsSaving.value = false
+    if (!disposed && requestSeq === settingsRequestSeq) settingsSaving.value = false
   }
 }
 
 async function setNotificationRead(id: NotificationItem['id']): Promise<void> {
+  const actionSeq = ++notificationActionSeq
   notifActionError.value = ''
   try {
     await markNotificationRead(id)
+    if (disposed || actionSeq !== notificationActionSeq) return
     await loadNotifications()
   } catch (_) {
-    notifActionError.value = '标记已读失败，请稍后重试。'
+    if (!disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
   }
 }
 
@@ -211,20 +225,29 @@ async function openNotification(item: NotificationItem): Promise<void> {
   if (!link) {
     return
   }
+  const actionSeq = ++notificationActionSeq
   if (!item.read) {
     try {
       await markNotificationRead(item.id)
+      if (disposed || actionSeq !== notificationActionSeq) return
       item.read = true
     } catch (_) {
-      notifActionError.value = '标记已读失败，请稍后重试。'
+      if (!disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
     }
   }
+  if (disposed || actionSeq !== notificationActionSeq) return
   await router.push(link)
 }
 
 onMounted(() => {
   void loadNotifications()
   void loadNotificationSettings()
+})
+onUnmounted(() => {
+  disposed = true
+  notificationRequestSeq += 1
+  settingsRequestSeq += 1
+  notificationActionSeq += 1
 })
 </script>
 

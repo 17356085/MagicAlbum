@@ -118,7 +118,6 @@ const suggestLoading = ref(false)
 const suggestError = ref('')
 let suggestTimer: ReturnType<typeof setTimeout> | null = null
 let blurTimer: ReturnType<typeof setTimeout> | null = null
-let logoutTimer: ReturnType<typeof setTimeout> | null = null
 let suggestRequestSeq = 0
 let suggestionsDisposed = false
 const suggestProfiles = ref<Record<string, SuggestProfile>>({})
@@ -173,6 +172,12 @@ const onOpenLoginModal = (): void => {
   showLogin.value = true
 }
 
+const onAuthStateChanged = (): void => {
+  if (isLoggedIn.value) return
+  if (!route.matched.some((record) => record.meta?.requiresAuth)) return
+  void router.replace({ name: 'discover' })
+}
+
 onMounted((): void => {
   applyUserIdentity()
   if (needsProfileHydration()) {
@@ -182,6 +187,7 @@ onMounted((): void => {
   }
   window.addEventListener('profile-updated', onProfileUpdated)
   window.addEventListener('open-login-modal', onOpenLoginModal)
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
   if (!isLoggedIn.value && route.query.login === '1') {
     showLogin.value = true
     try {
@@ -195,6 +201,7 @@ onBeforeUnmount(() => {
   suggestRequestSeq += 1
   window.removeEventListener('profile-updated', onProfileUpdated)
   window.removeEventListener('open-login-modal', onOpenLoginModal)
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
   if (suggestTimer) {
     clearTimeout(suggestTimer)
     suggestTimer = null
@@ -202,10 +209,6 @@ onBeforeUnmount(() => {
   if (blurTimer) {
     clearTimeout(blurTimer)
     blurTimer = null
-  }
-  if (logoutTimer) {
-    clearTimeout(logoutTimer)
-    logoutTimer = null
   }
 })
 
@@ -262,24 +265,9 @@ function onLogoutClick(): void {
 }
 
 function confirmLogout(): void {
-  // 在设置、我的帖子、我的评论页面登出时，先重定向到发现页
-  const currentName = String(route.name || '')
-  const needRedirect = currentName === 'settings' || currentName === 'my-threads' || currentName === 'my-posts'
   showLogoutConfirm.value = false
-  if (needRedirect) {
-    try {
-      router.replace({ name: 'discover' })
-    } catch (_) {}
-    // 稍作延迟，确保路由跳转生效后再执行登出（会触发强制刷新）
-    if (logoutTimer) clearTimeout(logoutTimer)
-    logoutTimer = setTimeout(() => {
-      logoutTimer = null
-      if (suggestionsDisposed) return
-      try { logout() } catch (_) {}
-    }, 30)
-  } else {
-    logout()
-  }
+  // 根组件根据当前 route.matched 统一把所有受保护页面带回公开入口。
+  logout()
   // 清理本地显示名与头像，避免残留
   avatarUrl.value = ''
   displayName.value = ''

@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { exchangeOAuthCode } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
@@ -46,6 +46,13 @@ const finished = ref(false)
 const success = ref(false)
 const message = ref('正在处理第三方登录结果…')
 const successRedirect = ref('/discover')
+let disposed = false
+let operationGeneration: number | null = null
+let redirectTimer: ReturnType<typeof setTimeout> | null = null
+
+function isCurrentOperation(generation: number): boolean {
+  return !disposed && authStore.isAuthGenerationCurrent(generation)
+}
 
 const nextPath = computed(() => {
   const redirect = getPendingAuthRedirect()
@@ -61,14 +68,18 @@ async function finalizeSuccess(): Promise<void> {
   }
 
   clearCallbackQuery()
-
+  const generation = authStore.invalidateAuthOperations()
+  operationGeneration = generation
   try {
     const authResponse = await exchangeOAuthCode(code)
+    if (!isCurrentOperation(generation)) return
     if (!authResponse.accessToken) {
       throw new Error('OAuth code exchange returned no access token')
     }
     authStore.loginWithAuthResponse(authResponse)
+    operationGeneration = null
   } catch (_) {
+    if (!isCurrentOperation(generation)) return
     success.value = false
     message.value = '第三方登录 code 无效、已过期或已使用，请重新发起登录。'
     return
@@ -79,8 +90,10 @@ async function finalizeSuccess(): Promise<void> {
   successRedirect.value = nextPath.value
   clearPendingAuthRedirect()
 
-  window.setTimeout(() => {
-    void router.replace(successRedirect.value)
+  const committedGeneration = authStore.getAuthGeneration()
+  redirectTimer = setTimeout(() => {
+    redirectTimer = null
+    if (isCurrentOperation(committedGeneration)) void router.replace(successRedirect.value)
   }, 500)
 }
 
@@ -128,5 +141,13 @@ onMounted(async () => {
   }
 
   finalizeError()
+})
+
+onUnmounted(() => {
+  disposed = true
+  if (redirectTimer) clearTimeout(redirectTimer)
+  if (operationGeneration !== null && authStore.isAuthGenerationCurrent(operationGeneration)) {
+    authStore.invalidateAuthOperations()
+  }
 })
 </script>

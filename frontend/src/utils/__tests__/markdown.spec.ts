@@ -39,4 +39,21 @@ describe('Markdown rendering boundaries', () => {
     expect(fragment.querySelector('pre code')?.classList.contains('hljs')).toBe(true)
     expect(fragment.querySelector('pre code')?.textContent).toContain('const value = 1')
   })
+
+  it('escapes invalid math and prevents trusted HTML commands from injecting elements', () => {
+    const renderer = createMarkdownRenderer({ katex: true })
+    const fragment = parsed(renderMarkdown(renderer,
+      '$\\unknowncommand{<img src=x onerror=alert(1)>}$\n\n$$\\href{javascript:alert(1)}{click}$$'))
+    expect(fragment.querySelector('img')).toBeNull()
+    expect(fragment.querySelector('[onerror]')).toBeNull()
+    expect(fragment.querySelector('a[href^="javascript:"]')).toBeNull()
+    expect(fragment.textContent).toContain('unknowncommand')
+  })
+
+  it('renders soft-broken emails and unknown URI schemes without losing their content', () => {
+    const renderer = createMarkdownRenderer({ highlight: false })
+    const fragment = parsed(renderMarkdown(renderer, 'a@b.co\n'.repeat(2000) + '\n\n' + 'a://'.repeat(2000)))
+    expect(fragment.querySelectorAll('a[href="mailto:a@b.co"]')).toHaveLength(2000)
+    expect(fragment.textContent).toContain('a://'.repeat(2000))
+  })
 })

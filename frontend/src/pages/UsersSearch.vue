@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listUsers } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
@@ -18,8 +18,15 @@ const total = ref(0)
 const q = ref('')
 const inputPage = ref('1')
 const totalPages = computed(() => Math.max(1, Math.ceil((Number(total.value) || 0) / (Number(size.value) || 20))))
+let loadRequestSeq = 0
+let disposed = false
 
-async function load() {
+function isCurrentLoad(requestSeq: number): boolean {
+  return !disposed && requestSeq === loadRequestSeq
+}
+
+async function load(): Promise<void> {
+  const requestSeq = ++loadRequestSeq
   loading.value = true
   error.value = ''
   try {
@@ -28,14 +35,15 @@ async function load() {
     page.value = isNaN(rp) ? 1 : rp
     q.value = rq
     const data = await listUsers({ q: rq, page: page.value, size: size.value })
+    if (!isCurrentLoad(requestSeq)) return
     items.value = data.items
     total.value = data.total
     page.value = data.page
     size.value = data.size
   } catch (_) {
-    error.value = '加载用户失败'
+    if (isCurrentLoad(requestSeq)) error.value = '加载用户失败'
   } finally {
-    loading.value = false
+    if (isCurrentLoad(requestSeq)) loading.value = false
   }
 }
 
@@ -74,6 +82,10 @@ function goToInputPage(): void {
 }
 
 onMounted(load)
+onUnmounted(() => {
+  disposed = true
+  loadRequestSeq += 1
+})
 watch(() => route.query.page, load)
 watch(() => route.query.q, () => {
   page.value = 1

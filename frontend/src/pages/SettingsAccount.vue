@@ -110,8 +110,12 @@ function validateProfile(): boolean {
   clearErrors()
   let ok = true
   if (!isValidUsername(profile.username)) { errors.username = '3-20 位字母、数字或下划线'; ok = false }
-  if (profile.phone && !isValidPhone(profile.phone)) { errors.phone = '请输入有效手机号（国内 11 位或含国家码）'; ok = false }
-  if (profile.email && !isValidEmail(profile.email)) { errors.email = '邮箱格式不正确'; ok = false }
+  const phone = String(profile.phone || '').trim()
+  const email = String(profile.email || '').trim()
+  if (!phone) { errors.phone = '请输入手机号'; ok = false }
+  else if (!isValidPhone(phone)) { errors.phone = '请输入有效手机号（国内 11 位或含国家码）'; ok = false }
+  if (!email) { errors.email = '请输入邮箱'; ok = false }
+  else if (!isValidEmail(email)) { errors.email = '邮箱格式不正确'; ok = false }
   return ok
 }
 
@@ -197,14 +201,14 @@ onMounted(() => { void reloadProfile() })
         </div>
         <div>
           <label for="settings-account-phone" class="mb-1 block text-sm font-medium">手机号</label>
-          <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" placeholder="国内 11 位或含国家码"
+          <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" required placeholder="国内 11 位或含国家码"
                  :aria-invalid="errors.phone ? 'true' : 'false'" :aria-describedby="errors.phone ? 'settings-account-phone-error' : undefined"
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.phone" id="settings-account-phone-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.phone }}</p>
         </div>
         <div>
           <label for="settings-account-email" class="mb-1 block text-sm font-medium">电子邮箱</label>
-          <input id="settings-account-email" v-model.trim="profile.email" type="email" placeholder="name@example.com"
+          <input id="settings-account-email" v-model.trim="profile.email" type="email" required placeholder="name@example.com"
                  :aria-invalid="errors.email ? 'true' : 'false'" :aria-describedby="errors.email ? 'settings-account-email-error' : undefined"
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.email" id="settings-account-email-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.email }}</p>

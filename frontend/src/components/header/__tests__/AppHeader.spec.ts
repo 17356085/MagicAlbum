@@ -108,6 +108,37 @@ async function createWrapper() {
   return { wrapper, search: wrapper.findComponent(SearchBoxStub) }
 }
 
+async function createProtectedWrapper() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const auth = useAuthStore()
+  auth.applyAuthState({ accessToken: 'protected-token', user: user(1, 'protected') })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/discover', name: 'discover', component: { template: '<div />' } },
+      { path: '/settings', name: 'settings', component: { template: '<div />' }, meta: { requiresAuth: true } },
+    ],
+  })
+  await router.push('/settings')
+  await router.isReady()
+  const wrapper = mount(AppHeader, {
+    global: {
+      plugins: [pinia, router],
+      stubs: {
+        SearchBox: SearchBoxStub,
+        BrandBar: true,
+        NotificationsMenu: true,
+        AuthEntry: true,
+        UserMenu: true,
+        AuthModal: true,
+        RouterLink: RouterLinkStub,
+      },
+    },
+  })
+  return { wrapper, router, auth }
+}
+
 describe('AppHeader suggestions', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -214,5 +245,15 @@ describe('AppHeader suggestions', () => {
     pending.resolve([user(3, 'late-user')])
     await flushPromises()
     expect(mocks.getUserProfile).not.toHaveBeenCalled()
+  })
+
+  it('redirects from any matched protected route after logout', async () => {
+    const { wrapper, router, auth } = await createProtectedWrapper()
+
+    auth.logout()
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('discover')
+    wrapper.unmount()
   })
 })

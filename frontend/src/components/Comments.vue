@@ -70,6 +70,38 @@ const previewMode = ref(false)
 const isSubmitting = ref(false)
 const commentSubmissionKey = Symbol.for('bluealbum.comments.submitting') as InjectionKey<Ref<boolean>>
 provide(commentSubmissionKey, isSubmitting)
+let loadRequestSeq = 0
+let submitRequestSeq = 0
+const likeRequestSeqByComment = new Map<string, number>()
+let disposed = false
+let threadGeneration = 0
+let applyingLoadResponse = false
+let loadScheduled = false
+
+function isCurrentThread(threadId: number, generation = threadGeneration): boolean {
+  return !disposed && generation === threadGeneration && String(props.threadId) === String(threadId)
+}
+
+function isCurrentLoad(requestSeq: number, threadId: number): boolean {
+  return isCurrentThread(threadId) && requestSeq === loadRequestSeq
+}
+
+function isCurrentSubmit(requestSeq: number, threadId: number): boolean {
+  return isCurrentThread(threadId) && requestSeq === submitRequestSeq
+}
+
+function isCurrentLike(requestSeq: number, threadId: number, commentKey: string, generation: number): boolean {
+  return isCurrentThread(threadId, generation) && likeRequestSeqByComment.get(commentKey) === requestSeq
+}
+
+function scheduleLoad(): void {
+  if (loadScheduled) return
+  loadScheduled = true
+  nextTick(() => {
+    loadScheduled = false
+    if (!disposed) void load()
+  })
+}
 
 // 资料更新事件：当我更换头像后，更新当前页面中我发表的评论头像
 function onProfileUpdated(evt: Event) {
@@ -84,23 +116,38 @@ function onProfileUpdated(evt: Event) {
 }
 
 async function load(): Promise<void> {
+  const requestSeq = ++loadRequestSeq
+  const threadId = props.threadId
+  const requestedPage = page.value
+  const requestedSize = size.value
+  const requestedSortKey = sortKey.value
+  const requestedSortOrder = sortOrder.value
   loading.value = true
   error.value = ''
   try {
-    const data = await listPosts(props.threadId, {
-      page: page.value,
-      size: size.value,
-      sort: sortKey.value === 'likes' ? 'likeCount' : 'time',
+    const data = await listPosts(threadId, {
+      page: requestedPage,
+      size: requestedSize,
+      sort: requestedSortKey === 'likes' ? 'likeCount' : 'time',
     })
+    if (!isCurrentLoad(requestSeq, threadId)) return
+    if (
+      page.value !== requestedPage
+      || size.value !== requestedSize
+      || sortKey.value !== requestedSortKey
+      || sortOrder.value !== requestedSortOrder
+    ) return
+    applyingLoadResponse = true
     items.value = data.items as CommentItem[]
     total.value = data.total
     page.value = data.page
     size.value = data.size
+    applyingLoadResponse = false
     tryScrollToId(props.scrollToPostId)
   } catch (_) {
-    error.value = '加载评论失败'
+    if (isCurrentLoad(requestSeq, threadId)) error.value = '加载评论失败'
   } finally {
-    loading.value = false
+    if (isCurrentLoad(requestSeq, threadId)) loading.value = false
   }
 }
 
@@ -112,20 +159,28 @@ async function toggleLike(comment: CommentItem): Promise<void> {
   if (!comment?.id || comment._optimistic) {
     return
   }
+  const threadId = props.threadId
+  const generation = threadGeneration
+  const commentKey = String(comment.id)
+  const requestSeq = (likeRequestSeqByComment.get(commentKey) || 0) + 1
+  likeRequestSeqByComment.set(commentKey, requestSeq)
   try {
     const state = comment.liked ? await unlikePost(comment.id) : await likePost(comment.id)
+    if (!isCurrentLike(requestSeq, threadId, commentKey, generation)) return
     items.value = items.value.map((item) => (
       item.id === comment.id
         ? { ...item, liked: state.liked, likeCount: state.likeCount }
         : item
     ))
   } catch (_) {
-    error.value = '点赞操作失败，请稍后再试'
+    if (isCurrentLike(requestSeq, threadId, commentKey, generation)) error.value = '点赞操作失败，请稍后再试'
   }
 }
 
 async function submit(): Promise<void> {
   if (isSubmitting.value) return
+  const requestSeq = ++submitRequestSeq
+  const threadId = props.threadId
   isSubmitting.value = true
   error.value = ''
   if (!isLoggedIn.value) {
@@ -163,17 +218,20 @@ async function submit(): Promise<void> {
   items.value = [...items.value, optimistic]
   total.value = Number(total.value || 0) + 1
   try {
-    const created = await createPost(props.threadId, { contentMd: text, replyToPostId: replyToPostId.value || null })
+    const created = await createPost(threadId, { contentMd: text, replyToPostId: replyToPostId.value || null })
+    if (!isCurrentSubmit(requestSeq, threadId)) return
     items.value = items.value.map(it => (it.id === optimistic.id ? created : it))
     content.value = ''
     replyToPostId.value = null
+    await load()
   } catch (e: unknown) {
+    if (!isCurrentSubmit(requestSeq, threadId)) return
     const err = e as { response?: { data?: { message?: string } } } | null
     error.value = err?.response?.data?.message || '发布失败'
     items.value = items.value.filter(it => it.id !== optimistic.id)
     total.value = Math.max(0, Number(total.value || 0) - 1)
   } finally {
-    isSubmitting.value = false
+    if (isCurrentSubmit(requestSeq, threadId)) isSubmitting.value = false
   }
 }
 
@@ -204,6 +262,8 @@ function getUploadErrorMessage(reason: unknown): string {
 }
 
 async function handleUploadImage(file: File, onProgress?: (percent: number) => void): Promise<void> {
+  const threadId = props.threadId
+  const generation = threadGeneration
   try {
     const token = getStoredAccessToken()
     if (!hasRealToken(token)) {
@@ -211,6 +271,7 @@ async function handleUploadImage(file: File, onProgress?: (percent: number) => v
       return
     }
     const resp: UploadImageResponse = await uploadImage(file, token, onProgress)
+    if (!isCurrentThread(threadId, generation)) return
     const normalized = normalizeImageUrl(resp?.url || resp?.path || '')
     if (!normalized) {
       error.value = '图片上传失败：服务器未返回有效图片地址'
@@ -219,7 +280,7 @@ async function handleUploadImage(file: File, onProgress?: (percent: number) => v
     content.value = (content.value || '') + `\n\n![](${normalized})\n\n`
     error.value = ''
   } catch (reason: unknown) {
-    error.value = getUploadErrorMessage(reason)
+    if (isCurrentThread(threadId, generation)) error.value = getUploadErrorMessage(reason)
   }
 }
 
@@ -289,19 +350,37 @@ function goNextGroupPage(rootId: Id): void {
   groupPageMap.value[String(rootId)] = Number(groupPageMap.value[String(rootId)] || 1) + 1
 }
 
-onMounted(load)
+onMounted(() => { void load() })
 onMounted(() => { window.addEventListener('profile-updated', onProfileUpdated) })
-watch(() => props.threadId, () => { page.value = 1; load() })
+watch(() => props.threadId, () => {
+  threadGeneration += 1
+  const previousPage = page.value
+  page.value = 1
+  items.value = []
+  total.value = 0
+  replyToPostId.value = null
+  groupPageMap.value = {}
+  collapsedMap.value = {}
+  submitRequestSeq += 1
+  likeRequestSeqByComment.clear()
+  isSubmitting.value = false
+  if (previousPage === 1) void load()
+})
 
 onBeforeUnmount(() => {
+  disposed = true
+  threadGeneration += 1
+  loadRequestSeq += 1
+  submitRequestSeq += 1
+  likeRequestSeqByComment.clear()
   try { window.removeEventListener('profile-updated', onProfileUpdated) } catch (_) {}
 })
 
-watch([page, size], () => {
-  nextTick(() => {
-    load()
-  })
-})
+watch(page, () => {
+  if (applyingLoadResponse || disposed) return
+  loadRequestSeq += 1
+  scheduleLoad()
+}, { flush: 'sync' })
 
 function goPrevPage() {
   const max = Math.max(1, Math.ceil(Number(total.value || 0) / Math.max(1, Number(size.value || 15))))
@@ -321,9 +400,12 @@ function applyPageInput() {
 watch([sortKey, sortOrder], () => {
   groupPageMap.value = {}
   collapsedMap.value = {}
+  const previousPage = page.value
   page.value = 1
-  load()
-})
+  if (applyingLoadResponse || disposed) return
+  loadRequestSeq += 1
+  if (previousPage === 1) scheduleLoad()
+}, { flush: 'sync' })
 </script>
 
 <template>

@@ -1,0 +1,24 @@
+# Keep source checkouts consistent across Windows development and Linux CI.
+* text=auto eol=lf
+
+# Unified patch context uses a required leading space on empty source lines.
+frontend/patches/*.patch whitespace=-blank-at-eol,-blank-at-eof
+
+# Windows command scripts use native line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Media and deliverables must never undergo text conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.zip binary

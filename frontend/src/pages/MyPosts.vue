@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listMyPosts, deletePost } from '@/api/my'
 import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
@@ -35,21 +35,31 @@ const showDeleteConfirm = ref(false)
 const deleting = ref(false)
 const pendingDeleteId = ref<Id | null>(null)
 const inputPage = ref('1')
+let loadRequestSeq = 0
+let sectionsRequestSeq = 0
+let deleteRequestSeq = 0
+let disposed = false
 
 async function load(): Promise<void> {
+  const requestSeq = ++loadRequestSeq
   loading.value = true
   error.value = ''
   try {
     const data = await listMyPosts({ q: query.value.q, sectionId: query.value.sectionId || undefined, page: query.value.page, size: query.value.size, sort: query.value.sort })
+    if (disposed || requestSeq !== loadRequestSeq) return
     list.value = data as PageResult<MyPostItem>
   } catch (_) {
-    error.value = '加载我的评论失败'
-  } finally { loading.value = false }
+    if (!disposed && requestSeq === loadRequestSeq) error.value = '加载我的评论失败'
+  } finally {
+    if (!disposed && requestSeq === loadRequestSeq) loading.value = false
+  }
 }
 
 async function loadSections(): Promise<void> {
+  const requestSeq = ++sectionsRequestSeq
   try {
     const data = await listSections({ size: 200 })
+    if (disposed || requestSeq !== sectionsRequestSeq) return
     sections.value = data.items
   } catch (_) {
     // 保持空列表即可
@@ -66,18 +76,22 @@ async function confirmDelete(): Promise<void> {
     showDeleteConfirm.value = false
     return
   }
+  const requestSeq = ++deleteRequestSeq
   deleting.value = true
   try {
     await deletePost(pendingDeleteId.value)
+    if (disposed || requestSeq !== deleteRequestSeq) return
     showDeleteConfirm.value = false
     pendingDeleteId.value = null
     await load()
   } catch (_) {
-    error.value = '删除评论失败，请检查网络后重试'
-    showDeleteConfirm.value = false
-    pendingDeleteId.value = null
+    if (!disposed && requestSeq === deleteRequestSeq) {
+      error.value = '删除评论失败，请检查网络后重试'
+      showDeleteConfirm.value = false
+      pendingDeleteId.value = null
+    }
   } finally {
-    deleting.value = false
+    if (!disposed && requestSeq === deleteRequestSeq) deleting.value = false
   }
 }
 
@@ -86,7 +100,17 @@ function cancelDelete(): void {
   pendingDeleteId.value = null
 }
 
-onMounted(async () => { await loadSections(); await load() })
+onMounted(async () => {
+  await loadSections()
+  if (disposed) return
+  await load()
+})
+onUnmounted(() => {
+  disposed = true
+  loadRequestSeq += 1
+  sectionsRequestSeq += 1
+  deleteRequestSeq += 1
+})
 
 // 分页计算与翻页方法（每页 10 条）
 const totalPages = computed<number>(() => {

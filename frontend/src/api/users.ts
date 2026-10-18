@@ -134,7 +134,7 @@ export async function suggestUsers(q: string, size = 5): Promise<User[]> {
 }
 
 // 获取当前登录用户信息，兼容不同后端路径与返回结构
-export async function getCurrentUser(): Promise<User | null> {
+export async function getCurrentUser(authToken?: string): Promise<User | null> {
   if (useMock) {
     await delay(200)
     return {
@@ -144,9 +144,12 @@ export async function getCurrentUser(): Promise<User | null> {
     }
   }
   const candidates = ['/users/me', '/users/me/basic']
+  const requestConfig = authToken?.trim()
+    ? { headers: { Authorization: `Bearer ${authToken.trim()}` } }
+    : undefined
   for (const path of candidates) {
     try {
-      const { data } = await api.get(path)
+      const { data } = requestConfig ? await api.get(path, requestConfig) : await api.get(path)
       const root = (data ?? null) as Record<string, unknown> | null
       const payload = (root?.data ?? root?.result ?? root ?? null) as Record<string, unknown> | null
       const user = (payload?.user ?? payload?.profile ?? payload?.userInfo ?? payload ?? null) as User | null

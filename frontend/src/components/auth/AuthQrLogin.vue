@@ -35,7 +35,7 @@
               <path d="M19 14v4a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
-          <button type="button" class="ui-button min-h-9 p-2 text-sm" @click="refreshSession" :disabled="loading" aria-label="刷新二维码" title="刷新二维码">
+          <button type="button" class="ui-button min-h-9 p-2 text-sm" @click="refreshSession" aria-label="刷新二维码" title="刷新二维码">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="h-4 w-4">
               <path d="M20 11a8 8 0 1 0 2 5.3" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
               <path d="M20 4v7h-7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
@@ -87,7 +87,11 @@ const message = ref('')
 const loading = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
+let lifecycleGeneration = 0
+let flowAuthGeneration = authStore.getAuthGeneration()
 const now = ref(Date.now())
+
+type SessionSnapshot = Readonly<QrLoginSession>
 
 const confirmPageUrl = computed(() => {
   if (!session.value?.qrId) return ''
@@ -142,48 +146,80 @@ function clearTimers(): void {
   }
 }
 
-function schedulePoll(): void {
-  if (!session.value) return
-  clearTimeout(pollTimer as ReturnType<typeof setTimeout>)
+function isLifecycleCurrent(generation: number): boolean {
+  if (generation !== lifecycleGeneration) return false
+  if (authStore.isAuthGenerationCurrent(flowAuthGeneration)) return true
+  clearTimers()
+  loading.value = false
+  return false
+}
+
+function invalidateLifecycle(): number {
+  lifecycleGeneration += 1
+  clearTimers()
+  return lifecycleGeneration
+}
+
+function snapshotSession(value: QrLoginSession | null): SessionSnapshot | null {
+  return value ? { ...value } : null
+}
+
+function schedulePoll(generation: number, snapshot: SessionSnapshot): void {
+  if (!isLifecycleCurrent(generation)) return
+  if (pollTimer) clearTimeout(pollTimer)
   pollTimer = setTimeout(() => {
-    void pollStatus()
+    pollTimer = null
+    if (isLifecycleCurrent(generation)) void pollStatus(generation, snapshot)
   }, 2000)
 }
 
-function startCountdown(): void {
+function startCountdown(generation: number): void {
   if (countdownTimer) clearInterval(countdownTimer)
   countdownTimer = setInterval(() => {
+    if (!isLifecycleCurrent(generation)) return
     now.value = Date.now()
   }, 1000)
 }
 
 async function createSession(): Promise<void> {
+  const generation = ++lifecycleGeneration
+  flowAuthGeneration = authStore.getAuthGeneration()
+  clearTimers()
   loading.value = true
   try {
     const nextSession = await createQrLoginSession()
-    session.value = nextSession
+    if (!isLifecycleCurrent(generation)) {
+      void Promise.resolve()
+        .then(() => cancelQrLoginSession(nextSession.qrId, nextSession.pollToken))
+        .catch(() => {})
+      return
+    }
+    const nextSnapshot = snapshotSession(nextSession) as SessionSnapshot
+    session.value = nextSnapshot
     status.value = nextSession.status
     message.value = ''
     now.value = Date.now()
-    startCountdown()
-    schedulePoll()
+    startCountdown(generation)
+    schedulePoll(generation, nextSnapshot)
   } catch {
+    if (!isLifecycleCurrent(generation)) return
     message.value = '二维码生成失败，请稍后重试'
     emit('notify', message.value)
   } finally {
-    loading.value = false
+    if (isLifecycleCurrent(generation)) loading.value = false
   }
 }
 
-async function pollStatus(): Promise<void> {
-  if (!session.value) return
+async function pollStatus(generation: number, snapshot: SessionSnapshot): Promise<void> {
+  if (!isLifecycleCurrent(generation)) return
   loading.value = true
   try {
-    const response = await getQrLoginStatus(session.value.qrId, session.value.pollToken)
+    const response = await getQrLoginStatus(snapshot.qrId, snapshot.pollToken)
+    if (!isLifecycleCurrent(generation)) return
 
     session.value = {
       qrId: response.qrId,
-      pollToken: session.value.pollToken,
+      pollToken: snapshot.pollToken,
       qrUrl: response.qrUrl,
       expiresAt: response.expiresAt,
       status: response.status,
@@ -192,7 +228,10 @@ async function pollStatus(): Promise<void> {
     message.value = response.message || ''
 
     if (response.status === 'CONFIRMED') {
-      const login = await exchangeQrLoginSession(session.value.qrId, session.value.pollToken)
+      const login = await exchangeQrLoginSession(snapshot.qrId, snapshot.pollToken)
+      if (!isLifecycleCurrent(generation)) return
+      loading.value = false
+      invalidateLifecycle()
       authStore.loginWithAuthResponse(login)
       emit('notify', '二维码登录成功')
       emit('success')
@@ -211,29 +250,36 @@ async function pollStatus(): Promise<void> {
       return
     }
 
-    schedulePoll()
+    schedulePoll(generation, snapshot)
   } catch {
+    if (!isLifecycleCurrent(generation)) return
     message.value = useMock ? '二维码状态查询失败，请稍后重试' : '二维码状态查询失败，请稍后重试'
     emit('notify', message.value)
-    if (useMock) schedulePoll()
+    if (useMock) schedulePoll(generation, snapshot)
   } finally {
-    loading.value = false
+    if (isLifecycleCurrent(generation)) loading.value = false
   }
 }
 
 async function refreshSession(): Promise<void> {
-  clearTimers()
-  await cancelActiveSession(true)
+  flowAuthGeneration = authStore.getAuthGeneration()
+  const previous = snapshotSession(session.value)
+  const generation = invalidateLifecycle()
+  session.value = null
+  status.value = 'PENDING'
+  message.value = ''
+  loading.value = true
+  await cancelSession(previous, true, generation)
+  if (!isLifecycleCurrent(generation)) return
   await createSession()
 }
 
-async function cancelActiveSession(notifyOnFailure: boolean): Promise<void> {
-  const current = session.value
-  if (!current) return
+async function cancelSession(snapshot: SessionSnapshot | null, notifyOnFailure: boolean, generation?: number): Promise<void> {
+  if (!snapshot) return
   try {
-    await cancelQrLoginSession(current.qrId, current.pollToken)
+    await cancelQrLoginSession(snapshot.qrId, snapshot.pollToken)
   } catch {
-    if (notifyOnFailure) {
+    if (notifyOnFailure && (generation === undefined || isLifecycleCurrent(generation))) {
       message.value = '旧二维码会话取消失败，已继续生成新二维码'
       emit('notify', message.value)
     } else {
@@ -244,15 +290,21 @@ async function cancelActiveSession(notifyOnFailure: boolean): Promise<void> {
 
 function simulateConfirm(): void {
   message.value = ''
-  if (!session.value) return
+  const generation = lifecycleGeneration
+  const snapshot = snapshotSession(session.value)
+  if (!snapshot || !isLifecycleCurrent(generation)) return
   loading.value = true
-  void confirmQrLoginSession(session.value.qrId)
-    .then(() => pollStatus())
+  void confirmQrLoginSession(snapshot.qrId)
+    .then(() => {
+      if (isLifecycleCurrent(generation)) return pollStatus(generation, snapshot)
+      return undefined
+    })
     .catch(() => {
+      if (!isLifecycleCurrent(generation)) return
       message.value = '模拟确认失败，请稍后重试'
     })
     .finally(() => {
-      loading.value = false
+      if (isLifecycleCurrent(generation)) loading.value = false
     })
 }
 
@@ -270,7 +322,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  const current = snapshotSession(session.value)
+  invalidateLifecycle()
+  session.value = null
   clearTimers()
-  void cancelActiveSession(false)
+  void cancelSession(current, false)
 })
 </script>

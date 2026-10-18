@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createChatStream } from '@/api/ai'
 
+const authState = vi.hoisted(() => ({ handleUnauthorized: vi.fn() }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ handleUnauthorized: authState.handleUnauthorized }),
+}))
+
 function responseForReader(reader: ReadableStreamDefaultReader<Uint8Array>): Response {
   return {
     ok: true,
@@ -13,6 +18,7 @@ describe('AI chat SSE protocol', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     localStorage.clear()
+    authState.handleUnauthorized.mockClear()
   })
 
   it('sends the current Bearer token and parses split SSE events', async () => {
@@ -85,5 +91,19 @@ describe('AI chat SSE protocol', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(reader.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('expires the session only when the SSE handshake still uses the current token', async () => {
+    localStorage.setItem('accessToken', 'old-token')
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      localStorage.setItem('accessToken', 'new-token')
+      return { ok: false, status: 401 } as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const handle = createChatStream([{ role: 'user', content: 'hello' }])
+    await handle.done
+
+    expect(authState.handleUnauthorized).not.toHaveBeenCalled()
   })
 })

@@ -50,6 +50,19 @@ describe('ThreadCreate', () => {
     })
   })
 
+  it('rejects oversized content restored or inserted programmatically without posting it', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.find('select').setValue('3')
+    await wrapper.findAll('input[type="text"]')[0].setValue('过长的帖子')
+    await wrapper.find('textarea').setValue('文'.repeat(10_001))
+    await wrapper.findAll('button').find((button) => button.text() === '发布')!.trigger('click')
+    expect(createThreadMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('正文不能超过 10000 字符')
+    expect(wrapper.find('textarea').element.value).toHaveLength(10_001)
+    wrapper.unmount()
+  })
+
   it('prevents duplicate direct submits, keeps an empty form, and links to the created thread', async () => {
     let resolveCreate!: (value: Thread) => void
     createThreadMock.mockReturnValueOnce(new Promise<Thread>((resolve) => {

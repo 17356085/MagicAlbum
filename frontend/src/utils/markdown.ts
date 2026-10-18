@@ -2,7 +2,7 @@ import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
 import MarkdownIt from 'markdown-it'
 import type { RendererRule } from 'markdown-it'
-import markdownItKatex from 'markdown-it-katex'
+import markdownItKatex from '@vscode/markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import { normalizeImageUrl } from '@/utils/image'
 
@@ -75,7 +75,7 @@ export function createMarkdownRenderer(options: MarkdownRendererOptions = {}): M
   } catch (_) {}
 
   if (options.katex) {
-    md.use(markdownItKatex)
+    md.use(markdownItKatex, { throwOnError: false, trust: false, maxExpand: 1000 })
   }
 
   if (options.normalizeImages) {
