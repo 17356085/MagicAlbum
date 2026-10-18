@@ -91,7 +91,7 @@ flowchart LR
 | 依赖审计 | 官方生产审计 **0** 告警；完整依赖审计剩 **1 high**、0 critical/0 moderate/0 low，为已纳入本地补丁的 braces 3.0.3 版本匹配告警，详见下节 |
 | CSS 兼容 | 选择器解析器升级及 braces 补丁前后，110,942 字节 CSS 逐字节一致，SHA-256 相同；不据此声称做过完整浏览器视觉验收 |
 | 构建隔离 | 干净生成的后端 JAR 不包含 application-secrets.yml 或已删除的 InMemoryEmailOtpService.class；原本地私有配置保留 |
-| 仓库与脚本 | 全仓结构与 Java 依赖边界扫描无错误，检查器自身 9 项通过；PowerShell/k6 语法和 Python 编译检查通过 |
+| 仓库与脚本 | 全仓结构与 Java 依赖边界扫描无错误，工程脚本回归 13 项通过（含 MySQL 初始化隔离与 SQL 失败传播）；PowerShell/k6 语法和 Python 编译检查通过 |
 | Python 自动化 | 在输出目录的隔离依赖环境完成 **83 项收集**；没有运行其 API/浏览器测试，不计为 83 项执行通过 |
 
 ### 依赖升级与剩余公告
@@ -107,6 +107,8 @@ braces 3.0.4 在本次官方 npm 查询/安装时尚未发布，不能靠填写�
 二维码流程在创建时固定认证代次，创建、轮询、兑换全过程核对，防止旧二维码覆盖期间开始的密码登录。认证代次变化后停止旧轮询，需手动刷新二维码；补充创建期间登录、轮询期间登录/新认证尝试及正常扫码成功回归。
 
 首次推送后的远端 CI 实际完成镜像构建、容器启动、14 项 API 契约与 1 项 Selenium 操作检查。Playwright 暴露全页首个“举报”按钮可能命中评论举报的问题；旅程应限定帖子互动区域，并先核对响应的目标与举报人，再重放核验持久化。完整旅程的最终结果以对应提交的 GitHub Actions 为准，不把该次部分通过记为完整通过。
+
+后续远端运行还暴露 MySQL 初始化脚本的 shell 选项泄漏：官方入口 source 脚本后继承 `set -u`，访问可选的 `MYSQL_ONETIME_PASSWORD` 时退出。通知库与性能 exporter 初始化主体改为子 shell，保留 SQL 失败退出及输入验证，同时隔离调用方选项与变量；回归以真实 Bash source 加模拟 mysql 验证，不把它等同于容器验收。
 
 本轮证据保存在 `outputs/health-completion/`；提交前补充验证在 `outputs/prepush-2026-10-18/`；上一轮证据仍在 `outputs/code-health-optimization/`。旧缓存诊断探针用于复现错误，不再计为修复后的通过测试。
 

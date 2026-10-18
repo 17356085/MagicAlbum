@@ -1,5 +1,7 @@
 #!/bin/sh
 # The MySQL image sources this file after creating MYSQL_USER on a fresh volume.
+# Keep strict options and temporary variables out of the image's entrypoint shell.
+(
 set -eu
 
 for identifier in "$NOTIFICATION_DB_NAME" "$MYSQL_USER"; do
@@ -15,3 +17,4 @@ MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=socket -u root <<SQL
 CREATE DATABASE IF NOT EXISTS \`$NOTIFICATION_DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 GRANT ALL PRIVILEGES ON \`$NOTIFICATION_DB_NAME\`.* TO '$MYSQL_USER'@'%';
 SQL
+)
