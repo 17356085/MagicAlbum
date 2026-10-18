@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
   uploadImage?: ((file: File) => Promise<string>) | null
   previewDefaultCollapsed?: boolean
   mobilePreviewExclusive?: boolean
+  disabled?: boolean
 }>(), {
   rows: 12,
   maxLength: undefined,
@@ -22,6 +23,7 @@ const props = withDefaults(defineProps<{
   uploadImage: null,
   previewDefaultCollapsed: false,
   mobilePreviewExclusive: false,
+  disabled: false,
 })
 
 const emit = defineEmits<{
@@ -36,6 +38,7 @@ const {
   imageAltInputRef,
   imageError,
   imagePanelRef,
+  imageUploadInFlight,
   imageUrl,
   insertMarkdown,
   linkError,
@@ -61,17 +64,17 @@ const {
   <div ref="rootRef" class="space-y-4">
     <div class="flex flex-wrap items-center gap-2">
       <div :class="mobilePreviewExclusive && showPreview ? 'hidden lg:flex' : 'flex'" class="flex-wrap items-center gap-2">
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('bold')">粗体</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('italic')">斜体</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('heading')">标题</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('quote')">引用</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('code')">代码块</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('list')">列表</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('ordered-list')">有序列表</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('link')">链接</button>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" @click="insertMarkdown('image')">图片</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('bold')">粗体</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('italic')">斜体</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('heading')">标题</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('quote')">引用</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('code')">代码块</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('list')">列表</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('ordered-list')">有序列表</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('link')">链接</button>
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" @click="insertMarkdown('image')">图片</button>
       </div>
-      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :aria-pressed="showPreview" @click="showPreview = !showPreview">
+      <button type="button" class="ui-button min-h-9 px-2.5 py-1 text-xs" :disabled="disabled" :aria-pressed="showPreview" @click="showPreview = !showPreview">
         <template v-if="showPreview">
           <span v-if="mobilePreviewExclusive" class="lg:hidden">返回编辑</span>
           <span :class="mobilePreviewExclusive ? 'hidden lg:inline' : ''">隐藏预览</span>
@@ -92,6 +95,7 @@ const {
             type="text"
             class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="请输入链接文本"
+            :disabled="disabled"
             @keyup.enter="submitLinkPanel"
             @keyup.esc="closeLinkPanel"
           />
@@ -103,6 +107,7 @@ const {
             type="url"
             class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="https://"
+            :disabled="disabled"
             @keyup.enter="submitLinkPanel"
             @keyup.esc="closeLinkPanel"
           />
@@ -112,8 +117,8 @@ const {
         <div v-if="linkError" class="text-xs text-red-600 dark:text-red-400" role="alert">{{ linkError }}</div>
         <div v-else class="ui-muted text-xs">按 Enter 确认，Esc 取消</div>
         <div class="flex items-center gap-2">
-          <button type="button" class="ui-button px-2.5 py-1 text-xs" @click="closeLinkPanel">取消</button>
-          <button type="button" class="ui-button-primary px-2.5 py-1 text-xs" @click="submitLinkPanel">插入链接</button>
+          <button type="button" class="ui-button px-2.5 py-1 text-xs" :disabled="disabled" @click="closeLinkPanel">取消</button>
+          <button type="button" class="ui-button-primary px-2.5 py-1 text-xs" :disabled="disabled" @click="submitLinkPanel">插入链接</button>
         </div>
       </div>
     </div>
@@ -129,6 +134,7 @@ const {
             type="text"
             class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="请输入图片说明"
+            :disabled="disabled"
             @keyup.enter="submitImagePanel"
             @keyup.esc="closeImagePanel"
           />
@@ -140,6 +146,7 @@ const {
             type="url"
             class="ui-field mt-1 min-h-10 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="https://"
+            :disabled="disabled"
             @keyup.enter="submitImagePanel"
             @keyup.esc="closeImagePanel"
           />
@@ -152,18 +159,18 @@ const {
           <button
             type="button"
             class="ui-button px-2.5 py-1 text-xs"
-            :disabled="!uploadImage || uploading"
+            :disabled="disabled || !uploadImage || uploading || imageUploadInFlight"
             @click="fileInputRef?.click()"
           >
             {{ uploading ? '上传中...' : '上传图片' }}
           </button>
-          <button type="button" class="ui-button px-2.5 py-1 text-xs" @click="closeImagePanel">取消</button>
-          <button type="button" class="ui-button-primary px-2.5 py-1 text-xs" @click="submitImagePanel">插入图片</button>
+          <button type="button" class="ui-button px-2.5 py-1 text-xs" :disabled="disabled" @click="closeImagePanel">取消</button>
+          <button type="button" class="ui-button-primary px-2.5 py-1 text-xs" :disabled="disabled" @click="submitImagePanel">插入图片</button>
         </div>
       </div>
     </div>
 
-    <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="onSelectImage" />
+    <input ref="fileInputRef" type="file" accept="image/*" class="hidden" :disabled="disabled || uploading || imageUploadInFlight" @change="onSelectImage" />
 
     <div class="grid gap-3 lg:grid-cols-2">
       <div :class="['relative', mobilePreviewExclusive && showPreview ? 'hidden lg:block' : '']">
@@ -173,6 +180,7 @@ const {
           :rows="mobilePreviewExclusive ? Math.min(rows, 7) : rows"
           :maxlength="maxLength"
           :placeholder="placeholder"
+          :disabled="disabled"
           :class="mobilePreviewExclusive ? 'min-h-[180px] lg:min-h-[260px]' : 'min-h-[260px]'"
           class="ui-field w-full resize-none min-h-[260px] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
           @input="onTextareaInput"

@@ -76,9 +76,29 @@ class ThreadSummaryRecoveryIT {
         assertThat(threads.claimSummaryProcessingIfNormal(id, "old", NOW, NOW.plusSeconds(180))).isEqualTo(1);
         assertThat(threads.claimSummaryProcessingIfNormal(id, "new", NOW.plusSeconds(181), NOW.plusSeconds(361))).isEqualTo(1);
         assertThat(threads.completeSummaryIfNormal(id, "stale", "old", NOW.plusSeconds(182), NOW)).isZero();
-        assertThat(threads.markSummaryFailedIfProcessingAndNormal(id, "old")).isZero();
+        assertThat(threads.markSummaryFailedIfProcessingAndNormal(id, "old", NOW.plusSeconds(182))).isZero();
         assertThat(threads.completeSummaryIfNormal(id, "fresh", "new", NOW.plusSeconds(182), NOW)).isEqualTo(1);
         assertThat(threads.findById(id).orElseThrow().getSummary()).isEqualTo("fresh");
+    }
+
+    @Test
+    void expiredLeaseCannotFailBeforeTakeoverButNewOwnerCanClaim() {
+        Long id = save("NORMAL", "PENDING", NOW.minusSeconds(120));
+        assertThat(threads.claimSummaryProcessingIfNormal(id, "old", NOW, NOW.plusSeconds(180))).isEqualTo(1);
+
+        assertThat(threads.markSummaryFailedIfProcessingAndNormal(id, "old", NOW.plusSeconds(181))).isZero();
+        assertThat(threads.findById(id).orElseThrow().getSummaryStatus()).isEqualTo("PROCESSING");
+        assertThat(threads.claimSummaryProcessingIfNormal(id, "new", NOW.plusSeconds(181), NOW.plusSeconds(361)))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void unexpiredOwnerCanMarkSummaryFailed() {
+        Long id = save("NORMAL", "PENDING", NOW.minusSeconds(120));
+        assertThat(threads.claimSummaryProcessingIfNormal(id, "owner", NOW, NOW.plusSeconds(180))).isEqualTo(1);
+
+        assertThat(threads.markSummaryFailedIfProcessingAndNormal(id, "owner", NOW.plusSeconds(1))).isEqualTo(1);
+        assertThat(threads.findById(id).orElseThrow().getSummaryStatus()).isEqualTo("FAILED");
     }
 
     @Test

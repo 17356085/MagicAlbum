@@ -7,8 +7,18 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 cd -- "$ROOT_DIR"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN=python
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN=python3
+  else
+    printf 'ERROR: Python 3 is required for the CI gate\n' >&2
+    exit 1
+  fi
+fi
 ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/m0-ci}"
-ARTIFACT_DIR="$(python - "$ROOT_DIR" "$ARTIFACT_DIR" <<'PY'
+ARTIFACT_DIR="$("$PYTHON_BIN" - "$ROOT_DIR" "$ARTIFACT_DIR" <<'PY'
 from pathlib import Path
 import sys
 allowed = (Path(sys.argv[1]) / "outputs").resolve()
@@ -61,15 +71,18 @@ compose() {
 }
 
 assert_project_unused() {
-  local containers volumes
+  local containers volumes networks
   if ! containers="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")"; then
     die 'cannot inspect Docker containers before starting the CI stack'
   fi
   if ! volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"; then
     die 'cannot inspect Docker volumes before starting the CI stack'
   fi
-  if [[ -n "$containers" || -n "$volumes" ]]; then
-    die "Compose project label already has resources: $PROJECT"
+  if ! networks="$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")"; then
+    die 'cannot inspect Docker networks before starting the CI stack'
+  fi
+  if [[ -n "$containers" || -n "$volumes" || -n "$networks" ]]; then
+    die "Compose project label already has containers, volumes, or networks: $PROJECT"
   fi
 }
 
@@ -98,11 +111,18 @@ random_hex_32() {
 
 validate_junit() {
   local report="$1"
-  python - "$report" <<'PY'
+  local expected="$2"
+  "$PYTHON_BIN" - "$report" "$expected" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
 report_path = sys.argv[1]
+try:
+    expected = int(sys.argv[2])
+except (IndexError, ValueError):
+    raise SystemExit("JUnit gate requires a positive expected testcase count")
+if expected < 1:
+    raise SystemExit("JUnit gate requires a positive expected testcase count")
 try:
     root = ET.parse(report_path).getroot()
 except (OSError, ET.ParseError) as exc:
@@ -112,18 +132,22 @@ cases = root.findall(".//testcase")
 skipped = sum(case.find("skipped") is not None for case in cases)
 failed = sum(case.find("failure") is not None for case in cases)
 errors = sum(case.find("error") is not None for case in cases)
-if len(cases) < 1 or skipped or failed or errors:
+suites = list(root.iter("testsuite"))
+invalid_summary = any(int(suite.get(field, "0")) != 0 for suite in suites for field in ("failures", "errors", "skipped"))
+if len(cases) < 1 or skipped or failed or errors or invalid_summary:
     raise SystemExit(
-        f"JUnit gate failed: tests={len(cases)} skipped={skipped} failures={failed} errors={errors}"
+        f"JUnit gate failed: tests={len(cases)} expected={expected} skipped={skipped} failures={failed} errors={errors}"
     )
-print(f"JUnit gate passed: tests={len(cases)} skipped=0 failures=0 errors=0")
+if len(cases) != expected:
+    raise SystemExit(f"JUnit gate failed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
+print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }
 
 cleanup() {
   local original_status=$?
   local cleanup_status=0
-  local remaining remaining_volumes
+  local remaining remaining_volumes remaining_networks
 
   set +e
   mkdir -p "$LOG_DIR" || cleanup_status=1
@@ -141,6 +165,12 @@ cleanup() {
       cleanup_status=1
     elif [[ -n "$remaining_volumes" ]]; then
       printf 'Owned volumes remain after cleanup for %s\n' "$PROJECT" >>"$LOG_DIR/cleanup-error.log"
+      cleanup_status=1
+    fi
+    if ! remaining_networks="$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null)"; then
+      cleanup_status=1
+    elif [[ -n "$remaining_networks" ]]; then
+      printf 'Owned networks remain after cleanup for %s\n' "$PROJECT" >>"$LOG_DIR/cleanup-error.log"
       cleanup_status=1
     fi
   fi
@@ -251,7 +281,7 @@ export TEST_PHONE=''
 export TEST_PASSWORD=''
 
 set +e
-python -m pytest -c pytest.ini \
+"$PYTHON_BIN" -m pytest -c pytest.ini \
   tests/api/test_ci_contract.py \
   tests/api/test_bookmarks.py \
   tests/api/test_comments.py \
@@ -262,26 +292,26 @@ api_status=$?
 set -e
 
 [[ -f "$API_JUNIT_FILE" ]] || die "API pytest did not produce a JUnit report: $API_JUNIT_FILE"
-validate_junit "$API_JUNIT_FILE"
+validate_junit "$API_JUNIT_FILE" 14
 (( api_status == 0 )) || die "CI API contract suite exited with status $api_status"
 
 set +e
-python -m pytest -c pytest.ini tests/e2e/selenium/test_ci_smoke.py -q \
+"$PYTHON_BIN" -m pytest -c pytest.ini tests/e2e/selenium/test_ci_smoke.py -q \
   --selenium-browser=chrome --junitxml "$SELENIUM_JUNIT_FILE"
 selenium_status=$?
 set -e
 
 [[ -f "$SELENIUM_JUNIT_FILE" ]] || die "Selenium pytest did not produce a JUnit report: $SELENIUM_JUNIT_FILE"
-validate_junit "$SELENIUM_JUNIT_FILE"
+validate_junit "$SELENIUM_JUNIT_FILE" 1
 (( selenium_status == 0 )) || die "CI Selenium smoke exited with status $selenium_status"
 
 set +e
-python -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml "$UI_JUNIT_FILE"
+"$PYTHON_BIN" -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml "$UI_JUNIT_FILE"
 ui_status=$?
 set -e
 
 [[ -f "$UI_JUNIT_FILE" ]] || die "browser pytest did not produce a JUnit report: $UI_JUNIT_FILE"
-validate_junit "$UI_JUNIT_FILE"
+validate_junit "$UI_JUNIT_FILE" 1
 (( ui_status == 0 )) || die "M0 browser journey exited with status $ui_status"
 
 # Keep the historical artifact name for local tooling that already consumes it.

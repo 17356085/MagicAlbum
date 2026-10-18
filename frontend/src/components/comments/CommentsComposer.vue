@@ -5,6 +5,7 @@ import { createMarkdownRenderer, renderMarkdown } from '@/utils/markdown'
 const props = withDefaults(defineProps<{
   isLoggedIn: boolean
   isSubmitting?: boolean
+  isUploading?: boolean
   modelValue: string
   previewMode: boolean
   replyToPostId?: string | number | null
@@ -12,6 +13,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   replyToPostId: null,
   widthClass: 'w-full',
+  isUploading: false,
 })
 
 const emit = defineEmits<{
@@ -27,6 +29,7 @@ const previewHtml = computed(() => renderMarkdown(markdownRenderer, props.modelV
 const commentSubmissionKey = Symbol.for('bluealbum.comments.submitting') as InjectionKey<Ref<boolean>>
 const inheritedSubmitting = inject(commentSubmissionKey, ref(false))
 const isSubmitting = computed(() => props.isSubmitting || inheritedSubmitting.value)
+const isBusy = computed(() => isSubmitting.value || props.isUploading)
 const inputClass = computed(() =>
   `${props.widthClass} ui-field h-[140px] resize-none text-sm leading-6`,
 )
@@ -42,6 +45,7 @@ const inputClass = computed(() =>
         :class="inputClass"
         aria-label="评论内容"
         placeholder="支持基础 Markdown（图片请使用上方上传功能）"
+        :disabled="isBusy"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
       />
       <div
@@ -53,23 +57,23 @@ const inputClass = computed(() =>
       />
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <label class="inline-flex cursor-pointer items-center gap-2 rounded-lg text-xs focus-within:ring-2 focus-within:ring-[var(--ui-accent)] focus-within:ring-offset-2">
-          <input type="file" accept="image/*" class="sr-only" aria-label="添加评论图片" @change="emit('upload-image', $event)" />
+          <input type="file" accept="image/*" class="sr-only" aria-label="添加评论图片" :disabled="isBusy" @change="emit('upload-image', $event)" />
           <span class="ui-button min-h-9 px-3 py-1 text-xs">添加图片</span>
         </label>
-        <button type="button" class="ui-button min-h-9 px-3 py-1 text-xs" :aria-pressed="previewMode" @click="emit('update:previewMode', !previewMode)">
-          {{ previewMode ? '退出预览' : '预览' }}
+        <button type="button" class="ui-button min-h-9 px-3 py-1 text-xs" :disabled="isBusy" :aria-pressed="previewMode" @click="emit('update:previewMode', !previewMode)">
+          {{ isUploading ? '上传中...' : (previewMode ? '退出预览' : '预览') }}
         </button>
         <button
           type="button"
-          :disabled="isSubmitting"
+          :disabled="isBusy"
           class="ui-button-primary min-h-9 px-3 py-1 text-xs disabled:opacity-60"
           @click="emit('submit')"
         >
-          {{ isSubmitting ? '发送中...' : '发送评论' }}
+          {{ isSubmitting ? '发送中...' : (isUploading ? '上传中...' : '发送评论') }}
         </button>
         <span v-if="replyToPostId != null" class="ui-muted text-xs">
           回复：#{{ replyToPostId }}
-          <button type="button" class="ui-button min-h-8 px-2 py-1 text-xs" @click="emit('cancel-reply')">取消</button>
+          <button type="button" class="ui-button min-h-8 px-2 py-1 text-xs" :disabled="isBusy" @click="emit('cancel-reply')">取消</button>
         </span>
       </div>
     </div>

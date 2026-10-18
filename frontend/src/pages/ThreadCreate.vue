@@ -36,6 +36,8 @@ const form = ref<ThreadCreateForm>(emptyForm())
 
 const isUploading = ref(false)
 const uploadProgress = ref(0)
+const beautifying = ref(false)
+const editorBusy = computed(() => submitting.value || isUploading.value || beautifying.value)
 
 function messageFrom(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || !('message' in value)) return undefined
@@ -90,6 +92,9 @@ let draftMessageTimer: ReturnType<typeof setTimeout> | null = null
 let mounted = false
 let submissionSequence = 0
 let activeSubmissionId: number | null = null
+let editorOperationSequence = 0
+let activeUploadId: number | null = null
+let activeBeautifyId: number | null = null
 
 interface AuthContextSnapshot {
   draftKey: string
@@ -132,6 +137,23 @@ function isCurrentSubmission(submissionId: number, context: AuthContextSnapshot)
     current.token === context.token
 }
 
+function isCurrentEditorContext(context: AuthContextSnapshot): boolean {
+  const current = getAuthContextSnapshot()
+  return mounted &&
+    current.draftKey === context.draftKey &&
+    current.identity === context.identity &&
+    current.loggedIn === context.loggedIn &&
+    current.token === context.token
+}
+
+function isCurrentUpload(uploadId: number, context: AuthContextSnapshot): boolean {
+  return activeUploadId === uploadId && isCurrentEditorContext(context)
+}
+
+function isCurrentBeautify(beautifyId: number, context: AuthContextSnapshot): boolean {
+  return activeBeautifyId === beautifyId && isCurrentEditorContext(context)
+}
+
 function restoreActiveDraft(): void {
   refreshDraft()
   if (draftHasData.value) {
@@ -146,7 +168,13 @@ function switchDraftContext(): void {
   stopAutoSave()
   activeSubmissionId = null
   submissionSequence += 1
+  editorOperationSequence += 1
+  activeUploadId = null
+  activeBeautifyId = null
   submitting.value = false
+  isUploading.value = false
+  uploadProgress.value = 0
+  beautifying.value = false
   form.value = emptyForm()
   error.value = ''
   success.value = ''
@@ -164,19 +192,30 @@ function requestLogin(source = 'thread-create'): void {
 }
 
 async function uploadThreadImage(file: File): Promise<string> {
+  if (!mounted || submitting.value || isUploading.value || beautifying.value) {
+    if (mounted && (submitting.value || beautifying.value)) error.value = '请等待当前编辑操作完成'
+    return ''
+  }
+  const context = getAuthContextSnapshot()
+  const uploadId = ++editorOperationSequence
+  activeUploadId = uploadId
   try {
     isUploading.value = true
     uploadProgress.value = 0
     const { url, path } = await uploadImage(file, token.value, (p) => {
-      uploadProgress.value = p
+      if (isCurrentUpload(uploadId, context)) uploadProgress.value = p
     })
+    if (!isCurrentUpload(uploadId, context)) return ''
     return String(url || path || '')
   } catch (e: unknown) {
-    error.value = errorMessage(e, '图片上传失败')
+    if (isCurrentUpload(uploadId, context)) error.value = errorMessage(e, '图片上传失败')
     return ''
   } finally {
-    isUploading.value = false
-    uploadProgress.value = 0
+    if (activeUploadId === uploadId) {
+      activeUploadId = null
+      isUploading.value = false
+      uploadProgress.value = 0
+    }
   }
 }
 
@@ -194,6 +233,10 @@ async function loadSections(): Promise<void> {
 
 async function submit(): Promise<void> {
   if (submitting.value) return
+  if (isUploading.value || beautifying.value) {
+    error.value = '请等待图片上传或内容美化完成'
+    return
+  }
   error.value = ''
   success.value = ''
   createdThreadId.value = null
@@ -266,6 +309,10 @@ function parseTags(raw: string): string[] {
 
 // 手动按钮：在页面上给予提示，但逻辑已由 composable 处理
 function onSaveDraft(): void {
+  if (editorBusy.value) {
+    showDraftMessage('请等待当前编辑操作完成')
+    return
+  }
   saveDraft()
   showDraftMessage('草稿已保存到本机浏览器')
 }
@@ -282,11 +329,27 @@ function onLoginClick(): void {
 
 // 标准化美化：调用通用 beautifyMarkdown
 async function beautifyContent(): Promise<void> {
+  if (!mounted || submitting.value || isUploading.value || beautifying.value) {
+    if (mounted && (submitting.value || isUploading.value)) showDraftMessage('请等待当前编辑操作完成')
+    return
+  }
+  const context = getAuthContextSnapshot()
+  const source = form.value.content
+  const beautifyId = ++editorOperationSequence
+  activeBeautifyId = beautifyId
+  beautifying.value = true
   try {
-    form.value.content = await beautifyMarkdown(form.value.content)
+    const result = await beautifyMarkdown(source)
+    if (!isCurrentBeautify(beautifyId, context) || form.value.content !== source) return
+    form.value.content = result
     showDraftMessage('已美化内容')
   } catch (_) {
-    showDraftMessage('美化失败')
+    if (isCurrentBeautify(beautifyId, context)) showDraftMessage('美化失败')
+  } finally {
+    if (activeBeautifyId === beautifyId) {
+      activeBeautifyId = null
+      beautifying.value = false
+    }
   }
 }
 
@@ -310,6 +373,12 @@ onUnmounted(() => {
   mounted = false
   activeSubmissionId = null
   submissionSequence += 1
+  editorOperationSequence += 1
+  activeUploadId = null
+  activeBeautifyId = null
+  isUploading.value = false
+  uploadProgress.value = 0
+  beautifying.value = false
   if (stopAuthWatch) {
     stopAuthWatch()
     stopAuthWatch = null
@@ -335,7 +404,7 @@ onUnmounted(() => {
       <div class="space-y-4">
         <div>
           <label for="thread-create-section" class="mb-1 block text-sm font-medium">分区</label>
-          <select id="thread-create-section" v-model="form.sectionId" :disabled="loading" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
+          <select id="thread-create-section" v-model="form.sectionId" :disabled="loading || submitting" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
             <option value="" disabled>请选择分区</option>
             <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
@@ -344,14 +413,14 @@ onUnmounted(() => {
 
         <div>
           <label for="thread-create-title" class="mb-1 block text-sm font-medium">标题</label>
-          <input id="thread-create-title" v-model="form.title" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
+          <input id="thread-create-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
         </div>
 
         <div>
           <label for="thread-create-tags" class="mb-1 block text-sm font-medium">标签</label>
           <input
             id="thread-create-tags"
-            v-model="form.tags"
+            v-model="form.tags" :disabled="submitting"
             type="text"
             class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
             placeholder="用空格或逗号分隔，最多 5 个"
@@ -371,16 +440,17 @@ onUnmounted(() => {
             :rows="16"
             :uploading="isUploading"
             :upload-progress="uploadProgress"
-            :upload-image="uploadThreadImage"
+           :upload-image="uploadThreadImage"
+           :disabled="submitting"
             placeholder="请输入帖子正文，支持 Markdown"
             preview-label="正文预览"
           />
         </div>
 
         <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 sm:flex-row sm:flex-wrap sm:items-center">
-          <button type="button" class="ui-button" @click="onSaveDraft">保存到本机</button>
-          <button type="button" class="ui-button" @click="beautifyContent">美化内容</button>
-          <button :disabled="submitting" class="ui-button-primary" @click="submit">
+          <button type="button" class="ui-button" :disabled="editorBusy" @click="onSaveDraft">保存到本机</button>
+          <button type="button" class="ui-button" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
+          <button :disabled="editorBusy" class="ui-button-primary" @click="submit">
             {{ submitting ? '发布中...' : '发布' }}
           </button>
           <div v-if="!isLoggedIn" class="flex flex-wrap items-center gap-2 text-sm ui-muted">

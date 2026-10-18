@@ -358,8 +358,11 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
               AND t.status = 'NORMAL'
               AND t.summaryStatus = 'PROCESSING'
               AND t.summaryOwner = :owner
+              AND t.summaryLeaseUntil > :now
             """)
-    int markSummaryFailedIfProcessingAndNormal(@Param("threadId") Long threadId, @Param("owner") String owner);
+    int markSummaryFailedIfProcessingAndNormal(@Param("threadId") Long threadId,
+                                               @Param("owner") String owner,
+                                               @Param("now") java.time.Instant now);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Transactional

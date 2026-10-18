@@ -29,6 +29,8 @@ const loading = ref(false)
 const submitting = ref(false)
 const isUploading = ref(false)
 const uploadProgress = ref(0)
+const beautifying = ref(false)
+const editorBusy = computed(() => submitting.value || isUploading.value || beautifying.value)
 const error = ref('')
 const success = ref('')
 const sections = ref<Section[]>([])
@@ -46,6 +48,9 @@ let submissionSequence = 0
 let activeSubmissionId: number | null = null
 let successTimer: ReturnType<typeof setTimeout> | null = null
 let navigationTimer: ReturnType<typeof setTimeout> | null = null
+let editorOperationSequence = 0
+let activeUploadId: number | null = null
+let activeBeautifyId: number | null = null
 
 function messageFrom(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || !('message' in value)) return undefined
@@ -92,6 +97,14 @@ function isCurrentSubmission(submissionId: number, context: AuthContextSnapshot)
   return activeSubmissionId === submissionId && isCurrentContext(context)
 }
 
+function isCurrentUpload(uploadId: number, context: AuthContextSnapshot): boolean {
+  return activeUploadId === uploadId && isCurrentContext(context)
+}
+
+function isCurrentBeautify(beautifyId: number, context: AuthContextSnapshot): boolean {
+  return activeBeautifyId === beautifyId && isCurrentContext(context)
+}
+
 function clearSuccessTimer(): void {
   if (successTimer) {
     clearTimeout(successTimer)
@@ -118,10 +131,14 @@ function showTransientSuccess(message: string): void {
 function invalidatePageContext(resetForm = true): void {
   loadSequence += 1
   submissionSequence += 1
+  editorOperationSequence += 1
   activeSubmissionId = null
+  activeUploadId = null
+  activeBeautifyId = null
   submitting.value = false
   isUploading.value = false
   uploadProgress.value = 0
+  beautifying.value = false
   clearSuccessTimer()
   clearNavigationTimer()
   if (resetForm) form.value = emptyForm()
@@ -158,20 +175,27 @@ async function loadThread(): Promise<void> {
 }
 
 async function uploadThreadImage(file: File): Promise<string> {
+  if (!mounted || submitting.value || isUploading.value || beautifying.value) {
+    if (mounted && (submitting.value || beautifying.value)) error.value = '请等待当前编辑操作完成'
+    return ''
+  }
   const context = getAuthContextSnapshot()
+  const uploadId = ++editorOperationSequence
+  activeUploadId = uploadId
   try {
     isUploading.value = true
     uploadProgress.value = 0
     const { url, path } = await uploadImage(file, token.value, (progress) => {
-      if (isCurrentContext(context)) uploadProgress.value = progress
+      if (isCurrentUpload(uploadId, context)) uploadProgress.value = progress
     })
-    if (!isCurrentContext(context)) return ''
+    if (!isCurrentUpload(uploadId, context)) return ''
     return String(url || path || '')
   } catch (e: unknown) {
-    if (isCurrentContext(context)) error.value = errorMessage(e, '图片上传失败')
+    if (isCurrentUpload(uploadId, context)) error.value = errorMessage(e, '图片上传失败')
     return ''
   } finally {
-    if (isCurrentContext(context)) {
+    if (activeUploadId === uploadId) {
+      activeUploadId = null
       isUploading.value = false
       uploadProgress.value = 0
     }
@@ -179,19 +203,36 @@ async function uploadThreadImage(file: File): Promise<string> {
 }
 
 async function beautifyContent(): Promise<void> {
+  if (!mounted || submitting.value || isUploading.value || beautifying.value) {
+    if (mounted && (submitting.value || isUploading.value)) showTransientSuccess('请等待当前编辑操作完成')
+    return
+  }
   const context = getAuthContextSnapshot()
+  const source = form.value.content
+  const beautifyId = ++editorOperationSequence
+  activeBeautifyId = beautifyId
+  beautifying.value = true
   try {
-    const content = await beautifyMarkdown(form.value.content)
-    if (!isCurrentContext(context)) return
+    const content = await beautifyMarkdown(source)
+    if (!isCurrentBeautify(beautifyId, context) || form.value.content !== source) return
     form.value.content = content
     showTransientSuccess('已美化内容')
   } catch (_) {
-    if (isCurrentContext(context)) error.value = '美化失败'
+    if (isCurrentBeautify(beautifyId, context)) error.value = '美化失败'
+  } finally {
+    if (activeBeautifyId === beautifyId) {
+      activeBeautifyId = null
+      beautifying.value = false
+    }
   }
 }
 
 async function submit(): Promise<void> {
   if (submitting.value) return
+  if (isUploading.value || beautifying.value) {
+    error.value = '请等待图片上传或内容美化完成'
+    return
+  }
   error.value = ''
   success.value = ''
   clearSuccessTimer()
@@ -257,10 +298,7 @@ function parseTags(raw: string): string[] {
 }
 
 function cancel(): void {
-  activeSubmissionId = null
-  submissionSequence += 1
-  clearSuccessTimer()
-  clearNavigationTimer()
+  invalidatePageContext(false)
   router.push('/my/threads')
 }
 
@@ -309,7 +347,7 @@ onUnmounted(() => {
       <div v-else class="space-y-4">
       <div>
         <label for="thread-edit-section" class="mb-1 block text-sm font-medium">分区</label>
-        <select id="thread-edit-section" v-model="form.sectionId" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
+        <select id="thread-edit-section" v-model="form.sectionId" :disabled="submitting" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
           <option value="">保持原分区</option>
           <option v-for="section in sections" :key="section.id" :value="section.id">{{ section.name }}</option>
         </select>
@@ -317,14 +355,14 @@ onUnmounted(() => {
 
       <div>
         <label for="thread-edit-title" class="mb-1 block text-sm font-medium">标题</label>
-        <input id="thread-edit-title" v-model="form.title" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
+        <input id="thread-edit-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
       </div>
 
       <div>
         <label for="thread-edit-tags" class="mb-1 block text-sm font-medium">标签</label>
         <input
           id="thread-edit-tags"
-          v-model="form.tags"
+          v-model="form.tags" :disabled="submitting"
           type="text"
           class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
           placeholder="用空格或逗号分隔，最多 5 个"
@@ -345,14 +383,15 @@ onUnmounted(() => {
           :uploading="isUploading"
           :upload-progress="uploadProgress"
           :upload-image="uploadThreadImage"
+          :disabled="submitting"
           placeholder="请输入帖子正文，支持 Markdown"
           preview-label="正文预览"
         />
       </div>
 
       <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 sm:flex-row sm:flex-wrap sm:items-center">
-        <button type="button" class="ui-button" @click="beautifyContent">美化内容</button>
-        <button :disabled="submitting" class="ui-button-primary" @click="submit">
+        <button type="button" class="ui-button" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
+        <button :disabled="editorBusy" class="ui-button-primary" @click="submit">
           {{ submitting ? '保存中...' : '保存修改' }}
         </button>
         <button type="button" class="ui-button" @click="cancel">取消</button>

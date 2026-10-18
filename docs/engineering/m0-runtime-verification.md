@@ -80,7 +80,7 @@ pwsh -NoProfile -File .\scripts\Test-ComposeRuntime.ps1
 | 参数 | 默认值 | 约束与用途 |
 | --- | --- | --- |
 | `-RunId` | 随机生成的 10 位小写十六进制字符串 | 必须匹配 `^[a-f0-9]{10}$`。它组成源项目 `bluealbum-m0-<RunId>` 和恢复项目 `bluealbum-m0-<RunId>-restore`，并参与镜像标签。每次运行优先使用新的值。 |
-| `-ArtifactDirectory` | `outputs/m0-compose` | 会转为绝对路径，且必须位于仓库 `outputs` 目录下；用于日志、报告、测试产物、转储和上传文件副本。 |
+| `-ArtifactDirectory` | `outputs/m0-compose/<RunId>` | 未显式指定时按本次 `RunId` 生成独立目录；会转为绝对路径，且必须位于仓库 `outputs` 目录下。显式目录仍兼容，用于日志、报告、测试产物、转储和上传文件副本。 |
 | `-PythonExecutable` | `tests/.venv/Scripts/python.exe` | 必须是存在的 Python 文件，并已安装测试依赖。可传相对仓库根目录的路径或绝对路径。 |
 | `-BrowserChannel` | `chrome` | 传给 `TEST_PLAYWRIGHT_CHANNEL`。`chrome` 使用已安装 Chrome；传空字符串使用 Playwright bundled Chromium。 |
 | `-NoBuild` | 未启用 | 跳过 `docker compose build`。只有当以下镜像已按本次 `RunId` 准备好时才可使用：`bluealbum-m0-backend:<RunId>`、`bluealbum-m0-notification:<RunId>`、`bluealbum-m0-gateway:<RunId>`、`bluealbum-m0-frontend:<RunId>`。 |
@@ -99,7 +99,9 @@ pwsh -NoProfile -File .\scripts\Test-ComposeRuntime.ps1
 .\scripts\Test-ComposeRuntime.ps1 -RunId a1b2c3d4e5 -NoBuild
 ```
 
-运行前脚本会拒绝同名 Compose 项目的已有容器或卷，也会拒绝被占用的固定端口。不要在共享或生产项目上修改 `RunId` 以外的 Compose 项目名，也不要用全局 `docker compose down -v` 代替脚本的项目级清理。
+运行前脚本会按 Compose 项目标签逐项检查容器、卷和网络；任一资源已存在或任一 Docker 清点失败都会拒绝启动。脚本也会拒绝被占用的固定端口。不要在共享或生产项目上修改 `RunId` 以外的 Compose 项目名，也不要用全局 `docker compose down -v` 代替脚本的项目级清理。
+
+同一个产物目录不能并发运行多个验收入口。默认本地目录按 `RunId` 隔离；使用 `-ArtifactDirectory` 或 `M0_CI_ARTIFACT_DIR` 时，调用方必须为并发运行提供不同的 `outputs` 子目录。
 
 ### 3.2 直接调用数据库与上传恢复脚本
 
@@ -136,6 +138,7 @@ bash scripts/ci/compose-browser-smoke.sh
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `M0_CI_ARTIFACT_DIR` | `outputs/m0-ci` | 必须位于仓库 `outputs` 目录下，不能直接等于 `outputs`。 |
+| `PYTHON_BIN` | 自动选择 `python`，否则 `python3` | 用于产物路径校验、JUnit 门禁和 pytest；可显式指定解释器路径，例如 `tests/.venv/Scripts/python.exe`。 |
 | `COMPOSE_MYSQL_PORT` | `3306` | MySQL 主机端口。 |
 | `COMPOSE_REDIS_PORT` | `6379` | Redis 主机端口。 |
 | `COMPOSE_RABBITMQ_PORT` | `5672` | RabbitMQ 主机端口。 |
@@ -161,7 +164,7 @@ COMPOSE_FRONTEND_PORT=35173 \
 bash scripts/ci/compose-browser-smoke.sh
 ```
 
-该入口固定把 `TEST_PLAYWRIGHT_CHANNEL` 设为空，因此使用 bundled Chromium；它创建的临时凭证文件权限为 `600`，退出时删除凭证文件，并只清理自己登记的 Compose 项目和卷。
+该入口固定把 `TEST_PLAYWRIGHT_CHANNEL` 设为空，因此使用 bundled Chromium；它创建的临时凭证文件权限为 `600`，退出时删除凭证文件，并只清理自己登记的 Compose 项目、卷和网络。
 
 ## 4. 隔离、端口和凭证边界
 
@@ -172,7 +175,7 @@ bash scripts/ci/compose-browser-smoke.sh
 - 源项目：`bluealbum-m0-<RunId>`
 - 恢复项目：`bluealbum-m0-<RunId>-restore`
 
-脚本要求两个项目的容器和卷在开始时不存在，并在退出时按项目标签保存日志、执行 `down --volumes --remove-orphans`，再重新检查没有遗留容器和卷。它不会清理不属于这两个项目的 Docker 资源。
+脚本要求两个项目按项目标签检查出的容器、卷和网络在开始时都不存在；任一清点失败也会拒绝启动。退出时脚本按项目标签保存日志、执行 `down --volumes --remove-orphans`，再逐项重新检查容器、卷和网络，任何读取失败或遗留资源都会使验收失败。它不会取得预存网络的清理所有权，也不会清理不属于这两个项目的 Docker 资源。
 
 源项目和恢复项目使用下面两组固定宿主机端口；脚本在启动前逐一检查监听状态：
 
@@ -197,12 +200,14 @@ bash scripts/ci/compose-browser-smoke.sh
 
 ## 5. 产物与敏感信息
 
-本地完整入口的默认产物根目录是 `outputs/m0-compose`（或 `-ArtifactDirectory` 指定的 `outputs` 子目录）：
+本地完整入口的默认产物目录是 `outputs/m0-compose/<RunId>`（或 `-ArtifactDirectory` 指定的 `outputs` 子目录）：
 
 | 产物 | 内容与用途 |
 | --- | --- |
 | `compose.override.yml` | 本次 `RunId` 镜像标签以及脚本指定的 JVM 内存/处理器配置。 |
-| `browser-results.xml` | 浏览器旅程的 JUnit 报告；完整入口要求至少有一个测试且没有 skipped、failure 或 error。 |
+| `api-junit.xml` | API 合同与读回 JUnit 报告；必须恰好执行 14 个 testcase，且 skipped、failure、error 均为零。 |
+| `selenium-junit.xml` | Selenium 冒烟 JUnit 报告；必须恰好执行 1 个 testcase，且 skipped、failure、error 均为零。 |
+| `browser-results.xml` | Playwright 浏览器旅程 JUnit 报告；必须恰好执行 1 个 testcase，且 skipped、failure、error 均为零。 |
 | `browser/fixture.json` | 浏览器旅程生成的账号、帖子、评论、举报和通知 ID；不含密码或令牌。 |
 | `browser/m0-journey-failure-*.png` | 测试失败时的脱敏截图。 |
 | `container-resources.jsonl` | 一次 `docker stats --no-stream` 采样。 |
@@ -216,7 +221,7 @@ bash scripts/ci/compose-browser-smoke.sh
 
 `database-dump.sql` 可能包含完整业务数据库数据；`source-uploads/` 和 `restore-uploads/` 可能包含用户上传内容；Compose 日志和环境文件也可能包含敏感信息。不要把这些文件提交 Git、上传到公共工件、贴入 issue 或复制到不受控位置。需要留档时只保留经过授权的最小报告，并按组织的密钥和数据保留规则处理。`verification-summary.json` 只记录校验摘要及哈希，不等于可以公开数据库转储。
 
-CI 入口的默认产物是 `outputs/m0-ci`：`junit.xml`、失败截图、`logs/compose.log`、`logs/compose-down.log`，以及可能的 `logs/cleanup-error.log`。`ci-runtime.env` 是临时凭证文件，正常退出删除；若运行被强制终止，应先检查它是否残留，再按敏感文件处理。CI 脚本不会上传生成的环境文件。
+CI 入口的默认产物是 `outputs/m0-ci`：`api-junit.xml`（14）、`selenium-junit.xml`（1）、`ui-junit.xml`（1）及其兼容副本 `junit.xml`、失败截图、`logs/compose.log`、`logs/compose-down.log`，以及可能的 `logs/cleanup-error.log`。`ci-runtime.env` 是临时凭证文件，正常退出删除；若运行被强制终止，应先检查它是否残留，再按敏感文件处理。CI 脚本不会上传生成的环境文件。
 
 ## 6. 故障排查
 
@@ -225,7 +230,7 @@ CI 入口的默认产物是 `outputs/m0-ci`：`junit.xml`、失败截图、`logs
 - `RunId must contain exactly ten lowercase hexadecimal characters`：使用恰好 10 位 `[0-9a-f]`，例如 `a1b2c3d4e5`；不要使用大写、短横线或更长 UUID。
 - `Compose verification artifacts must be under workspace outputs`：`-ArtifactDirectory` 必须是仓库 `outputs` 下的子目录，例如 `./outputs/m0-compose-next`。
 - `Provide the Python executable with tests/requirements.txt installed`：确认 `-PythonExecutable` 指向存在的解释器，并在该解释器中安装 `tests/requirements.txt`。
-- `This verification project already has resources; use a fresh RunId`：先用 Docker 标签检查精确的 `bluealbum-m0-<RunId>` 和 `...-restore` 项目；不要删除不属于本次运行的资源。若确认是上一次中断留下的本次项目，使用其环境文件和 override 做项目级清理，清理后再换新的 `RunId`。
+- `This verification project already has containers, volumes, or networks; use a fresh RunId`：先用 Docker 项目标签检查精确的 `bluealbum-m0-<RunId>` 和 `...-restore` 项目；不要删除不属于本次运行的资源，也不要把预存网络登记为本次运行的清理对象。若确认是上一次中断留下的本次项目，使用其环境文件和 override 做项目级清理，清理后再换新的 `RunId`。
 - `Verification port ... is occupied`：查明占用端口的进程或容器并释放；本地完整入口没有端口覆盖参数，不能只改访问 URL。
 - `M0 browser journey failed` 或 JUnit gate 报告 skipped/failure/error：查看 `browser-results.xml`、失败截图以及两个 Compose 日志。遇到“人工验证”表示外部验证码进入了测试边界，需在隔离栈关闭该外部验证后重试；不能把 skipped 当成通过。
 - `NoBuild` 下找不到带 `RunId` 的镜像：移除 `-NoBuild` 让脚本构建，或者准备与该 `RunId` 完全相同的镜像标签。
@@ -233,21 +238,21 @@ CI 入口的默认产物是 `outputs/m0-ci`：`junit.xml`、失败截图、`logs
 - 备份脚本提示源应用仍运行：停止源项目的 `frontend`、`gateway`、`backend`、`notification-service`；保持源 MySQL 运行以便取一致转储。备份期间不得有业务写入。
 - 数据库快照不一致：确认源应用已停止、源与恢复环境文件使用相同数据库名，并查看 `verification-summary.json` 的失败阶段。`flyway_schema_history` 和 outbox 表只在允许应用启动变化的最终比较中按脚本规则排除；业务表不一致不能用该例外掩盖。
 - 上传清单不一致：检查 `source-uploads.sha256.json`、`restore-uploads.sha256.json` 以及两份目录中的相对路径、文件大小和 SHA-256；不要手工改清单后再次运行。
-- 清理失败：保留错误日志和项目名，按精确 Compose 项目标签复查容器/卷。完成项目级清理后才能复用 `RunId`；不要运行全局资源清理命令。
+- 清理失败：保留错误日志和项目名，按精确 Compose 项目标签复查容器、卷和网络；若任一 Docker 清点失败，应按未确认清理处理。完成项目级清理后才能复用 `RunId`；不要运行全局资源清理命令。
 
 ### CI / 手动 Bash 入口
 
 - `openssl is required`：安装并确认 `openssl rand -hex 32` 可执行。
-- `Compose project label already has resources`：脚本自动生成或由 CI 提供的项目名已存在容器/卷，先审查该精确项目，再重新运行。
+- `Compose project label already has containers, volumes, or networks`：脚本自动生成或由 CI 提供的项目名已存在容器、卷或网络，先审查该精确项目，再重新运行；Docker 清点失败也会拒绝启动。
 - `Compose host port is occupied`：使用一组空闲端口覆盖全部需要的 `COMPOSE_*_PORT` 变量；脚本会逐项校验数值范围和宿主机端口占用。
 - `temporary credential file already exists`：不要覆盖现有 `outputs/m0-ci/.../ci-runtime.env`；先确认它是否属于中断的本次运行并按敏感文件处理。
-- `JUnit gate failed` 或没有 `junit.xml`：查看 `logs/compose.log`、失败截图和测试进程输出。该入口只验证浏览器旅程，不会自动转入本地完整备份恢复验收。
+- `JUnit gate failed` 或报告缺少：检查 `api-junit.xml` 是否恰好 14 个 testcase、`selenium-junit.xml` 和 `ui-junit.xml` 是否各恰好 1 个 testcase；任一 failure、error、skip、坏 XML、数量少或多都会失败。再查看 `logs/compose.log`、失败截图和测试进程输出。该入口只验证浏览器旅程，不会自动转入本地完整备份恢复验收。
 
 ## 7. 验证记录边界
 
 维护者完成一次运行后，应同时保存命令中的 `RunId`、产物目录和退出状态，并核对：
 
-1. 浏览器 JUnit 至少包含一个实际执行的测试，且 skipped、failure、error 均为零。
+1. 本地入口的 `api-junit.xml` 恰好包含 14 个实际执行的 testcase，`selenium-junit.xml` 和 `browser-results.xml` 各恰好包含 1 个；三份报告的 skipped、failure、error 均为零。CI 入口对应检查 `api-junit.xml`、`selenium-junit.xml` 和 `ui-junit.xml`。
 2. 本地入口的 `checks.json` 中 `Succeeded` 为 `true`，清理错误为空；若使用直接备份入口，还要核对 `verification-summary.json` 的 `Status` 和完整 `DatabaseComparisons` / `UploadComparison`。
 3. 恢复阶段的 API 读回和图片字节校验确实执行过；构建成功、Compose `up` 成功、HTTP 200 或页面可打开都不足以证明数据库和上传文件恢复正确。
 4. 产物中的转储、上传副本、环境文件和日志已经按敏感信息边界处理。

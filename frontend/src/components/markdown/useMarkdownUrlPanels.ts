@@ -1,4 +1,4 @@
-import { nextTick, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref } from 'vue'
 import { createMarkdownImage, createMarkdownLink, replaceSelection } from '@/utils/markdownEditor'
 
 interface Selection {
@@ -12,6 +12,7 @@ interface PanelHelpers {
   focusTextarea: (start?: number, end?: number) => void
   applyResult: (value: string, start: number, end: number) => void
   uploadImage: ((file: File) => Promise<string>) | null | undefined
+  isDisabled?: () => boolean
 }
 
 export function useMarkdownUrlPanels({
@@ -20,6 +21,7 @@ export function useMarkdownUrlPanels({
   focusTextarea,
   applyResult,
   uploadImage,
+  isDisabled,
 }: PanelHelpers) {
   const fileInputRef = ref<HTMLInputElement | null>(null)
   const linkTextInputRef = ref<HTMLInputElement | null>(null)
@@ -35,6 +37,32 @@ export function useMarkdownUrlPanels({
   const imageUrl = ref('https://')
   const imageError = ref('')
   const pendingSelection = ref<Selection>({ start: 0, end: 0 })
+  const imageContentSnapshot = ref('')
+  const imageUploadInFlight = ref(false)
+  let disposed = false
+  let imagePanelGeneration = 0
+  let imageUploadSequence = 0
+
+  function isEditorDisabled(): boolean {
+    try {
+      return Boolean(isDisabled?.())
+    } catch (_) {
+      return true
+    }
+  }
+
+  function cloneSelection(selection: Selection): Selection {
+    return { start: Number(selection.start || 0), end: Number(selection.end || 0) }
+  }
+
+  function isCurrentImageUpload(uploadId: number, panelGeneration: number): boolean {
+    return !disposed
+      && !isEditorDisabled()
+      && showImagePanel.value
+      && imageUploadInFlight.value
+      && imageUploadSequence === uploadId
+      && imagePanelGeneration === panelGeneration
+  }
 
   function isValidUrl(raw: string): boolean {
     const value = String(raw || '').trim()
@@ -48,6 +76,7 @@ export function useMarkdownUrlPanels({
   }
 
   function openLinkPanel(): void {
+    if (disposed || isEditorDisabled()) return
     const selection = getSelection()
     const selectedText = getValue().slice(selection.start, selection.end).trim()
     pendingSelection.value = selection
@@ -68,6 +97,7 @@ export function useMarkdownUrlPanels({
   }
 
   function submitLinkPanel(): void {
+    if (disposed || isEditorDisabled()) return
     const url = String(linkUrl.value || '').trim()
     const label = String(linkLabel.value || '').trim() || '链接文本'
     if (!url) {
@@ -85,7 +115,12 @@ export function useMarkdownUrlPanels({
   }
 
   function openImagePanel(): void {
+    if (disposed || isEditorDisabled()) return
+    imagePanelGeneration += 1
+    imageUploadSequence += 1
+    imageUploadInFlight.value = false
     pendingSelection.value = getSelection()
+    imageContentSnapshot.value = getValue()
     imageAlt.value = 'image'
     imageUrl.value = 'https://'
     imageError.value = ''
@@ -97,12 +132,20 @@ export function useMarkdownUrlPanels({
   }
 
   function closeImagePanel(): void {
+    imagePanelGeneration += 1
+    imageUploadSequence += 1
     showImagePanel.value = false
+    imageUploadInFlight.value = false
     imageError.value = ''
     focusTextarea(pendingSelection.value.start, pendingSelection.value.end)
   }
 
   function submitImagePanel(): void {
+    if (disposed || isEditorDisabled()) return
+    if (imageUploadInFlight.value) {
+      imageError.value = '请等待图片上传完成'
+      return
+    }
     const url = String(imageUrl.value || '').trim()
     const alt = String(imageAlt.value || '').trim() || 'image'
     if (!url) {
@@ -110,10 +153,19 @@ export function useMarkdownUrlPanels({
       return
     }
     if (!isValidUrl(url)) {
-      imageError.value = '图片地址格式无效，请输入 http:// 或 https:// 开头的地址'
-      return
+      // Uploaded local images use stable same-origin paths.
+      if (!/^\/(?!\/)[^\s\\]+$/.test(url)) {
+        imageError.value = '图片地址格式无效，请输入 http:// 或 https:// 开头的地址'
+        return
+      }
     }
-    const result = replaceSelection(getValue(), createMarkdownImage(url, alt), pendingSelection.value)
+    const currentValue = getValue()
+    // If the body changed while the panel was open, only a fresh selection is
+    // safe. The click on this button is the explicit confirmation to use it.
+    const selection = currentValue === imageContentSnapshot.value
+      ? pendingSelection.value
+      : cloneSelection(getSelection())
+    const result = replaceSelection(currentValue, createMarkdownImage(url, alt), selection)
     showImagePanel.value = false
     imageError.value = ''
     applyResult(result.value, result.selection.start, result.selection.end)
@@ -122,26 +174,43 @@ export function useMarkdownUrlPanels({
   async function onSelectImage(event: Event): Promise<void> {
     const target = event.target as HTMLInputElement | null
     const file = target?.files?.[0]
-    if (!file || !uploadImage) {
+    if (!file || !uploadImage || disposed || isEditorDisabled() || !showImagePanel.value || imageUploadInFlight.value) {
       if (target) target.value = ''
       return
     }
+    const uploadId = ++imageUploadSequence
+    const panelGeneration = imagePanelGeneration
+    const contentSnapshot = imageContentSnapshot.value
+    const selectionSnapshot = cloneSelection(pendingSelection.value)
+    const altSnapshot = String(imageAlt.value || '').trim() || 'image'
+    imageUploadInFlight.value = true
     try {
       const url = await uploadImage(file)
-      if (!url) return
+      if (!url || !isCurrentImageUpload(uploadId, panelGeneration)) return
       imageUrl.value = url
-      const result = replaceSelection(
-        getValue(),
-        createMarkdownImage(url, String(imageAlt.value || '').trim() || 'image'),
-        pendingSelection.value,
-      )
+      const currentValue = getValue()
+      if (currentValue !== contentSnapshot) {
+        imageError.value = '正文已变化，请重新选择插入位置后点击“插入图片”'
+        return
+      }
+      const result = replaceSelection(currentValue, createMarkdownImage(url, altSnapshot), selectionSnapshot)
       showImagePanel.value = false
       imageError.value = ''
       applyResult(result.value, result.selection.start, result.selection.end)
+    } catch (_) {
+      if (isCurrentImageUpload(uploadId, panelGeneration)) imageError.value = '图片上传失败，请稍后重试'
     } finally {
+      if (imageUploadSequence === uploadId) imageUploadInFlight.value = false
       if (target) target.value = ''
     }
   }
+
+  onBeforeUnmount(() => {
+    disposed = true
+    imagePanelGeneration += 1
+    imageUploadSequence += 1
+    imageUploadInFlight.value = false
+  })
 
   return {
     closeImagePanel,
@@ -151,6 +220,7 @@ export function useMarkdownUrlPanels({
     imageAltInputRef,
     imageError,
     imagePanelRef,
+    imageUploadInFlight,
     imageUrl,
     linkError,
     linkLabel,

@@ -18,6 +18,7 @@ export interface MarkdownTextareaProps {
   uploadImage?: ((file: File) => Promise<string>) | null
   previewDefaultCollapsed?: boolean
   mobilePreviewExclusive?: boolean
+  disabled?: boolean
 }
 
 interface MarkdownTextareaEmit {
@@ -36,7 +37,12 @@ export function useMarkdownTextareaState(
   const previewHtml = computed(() => renderMarkdown(markdownRenderer, props.modelValue))
   const contentLength = computed(() => String(props.modelValue || '').length)
 
+  function isDisabled(): boolean {
+    return Boolean(props.disabled)
+  }
+
   function updateValue(value: string): void {
+    if (isDisabled()) return
     emit('update:modelValue', value)
   }
 
@@ -60,6 +66,7 @@ export function useMarkdownTextareaState(
   }
 
   function applyResult(value: string, start: number, end: number): void {
+    if (isDisabled()) return
     updateValue(value)
     focusTextarea(start, end)
   }
@@ -99,6 +106,7 @@ export function useMarkdownTextareaState(
     imageAltInputRef,
     imageError,
     imagePanelRef,
+    imageUploadInFlight,
     imageUrl,
     linkError,
     linkLabel,
@@ -118,9 +126,11 @@ export function useMarkdownTextareaState(
     focusTextarea,
     applyResult,
     uploadImage: props.uploadImage,
+    isDisabled,
   })
 
   function insertMarkdown(action: InsertAction): void {
+    if (isDisabled()) return
     const selection = getSelection()
     const currentValue = String(props.modelValue || '')
 
@@ -171,6 +181,7 @@ export function useMarkdownTextareaState(
   }
 
   function onTextareaInput(event: Event): void {
+    if (isDisabled()) return
     const target = event.target as HTMLTextAreaElement | null
     const rawValue = target?.value ?? ''
     const cursor = target?.selectionStart ?? rawValue.length
@@ -180,6 +191,7 @@ export function useMarkdownTextareaState(
   }
 
   function onTextareaKeydown(event: KeyboardEvent): void {
+    if (isDisabled()) return
     handleMarkdownKeydown(event, {
       value: String(props.modelValue || ''),
       selection: getSelection(),
@@ -221,6 +233,7 @@ export function useMarkdownTextareaState(
     imageAltInputRef,
     imageError,
     imagePanelRef,
+    imageUploadInFlight,
     imageUrl,
     insertMarkdown,
     linkError,

@@ -17,6 +17,7 @@ const props = defineProps({
   hasPagination: { type: Boolean, required: true },
   highlightedPostId: { type: [String, Number] as PropType<Id | null>, default: null },
   isLoggedIn: { type: Boolean, required: true },
+  isUploading: { type: Boolean, default: false },
   loading: { type: Boolean, required: true },
   modelValue: { type: String, required: true },
   page: { type: Number, required: true },
@@ -194,6 +195,7 @@ function updateReportDialogVisibility(open: boolean): void {
             <div v-if="replyToPostId === group.root.id" class="mt-2">
               <CommentsComposer
                 :is-logged-in="isLoggedIn"
+                 :is-uploading="isUploading"
                 :model-value="modelValue"
                 :preview-mode="previewMode"
                 :reply-to-post-id="replyToPostId"
@@ -257,6 +259,7 @@ function updateReportDialogVisibility(open: boolean): void {
               <div v-if="replyToPostId === comment.id" class="mt-2">
                 <CommentsComposer
                   :is-logged-in="isLoggedIn"
+                   :is-uploading="isUploading"
                   :model-value="modelValue"
                   :preview-mode="previewMode"
                   :reply-to-post-id="replyToPostId"

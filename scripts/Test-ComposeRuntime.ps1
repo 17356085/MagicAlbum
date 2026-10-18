@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$RunId = ([Guid]::NewGuid().ToString('N').Substring(0, 10)),
-    [string]$ArtifactDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'outputs/m0-compose'),
+    [string]$ArtifactDirectory = '',
     [string]$PythonExecutable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/.venv/Scripts/python.exe'),
     [string]$BrowserChannel = 'chrome',
     [ValidateSet('Standard', 'Constrained')]
@@ -16,6 +16,9 @@ if ($ResourceMode -eq 'Constrained' -and -not $NoBuild) {
 }
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
 if ($RunId -notmatch '^[a-f0-9]{10}$') { throw 'RunId must contain exactly ten lowercase hexadecimal characters' }
+if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) {
+    $ArtifactDirectory = Join-Path (Join-Path $runtimeRoot 'outputs/m0-compose') $RunId
+}
 $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
 $allowedOutput = [IO.Path]::GetFullPath((Join-Path $runtimeRoot 'outputs'))
 if (-not $ArtifactDirectory.StartsWith($allowedOutput + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -52,7 +55,8 @@ function Confirm-Check([bool]$Passed, [string]$Name) {
     Write-Host "PASS $Name"
 }
 
-function Assert-PytestJunitReport([string]$ReportPath, [string]$SuiteName, [int]$ExitCode) {
+function Assert-PytestJunitReport([string]$ReportPath, [string]$SuiteName, [int]$ExpectedTestCases, [int]$ExitCode) {
+    if ($ExpectedTestCases -lt 1) { throw "$SuiteName expected testcase count must be positive" }
     if ($ExitCode -ne 0) { throw "$SuiteName pytest run failed with exit code $ExitCode" }
     if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) { throw "$SuiteName pytest run did not produce a JUnit report" }
 
@@ -68,6 +72,9 @@ function Assert-PytestJunitReport([string]$ReportPath, [string]$SuiteName, [int]
     }
     $testCases = @($report.SelectNodes('//testcase'))
     if ($testCases.Count -lt 1) { throw "$SuiteName JUnit report contains no executed testcases" }
+    if ($testCases.Count -ne $ExpectedTestCases) {
+        throw "$SuiteName JUnit report contains $($testCases.Count) executed testcases; expected $ExpectedTestCases"
+    }
     if (@($report.SelectNodes('//testcase/failure')).Count -or
         @($report.SelectNodes('//testcase/error')).Count -or
         @($report.SelectNodes('//testcase/skipped')).Count) {
@@ -94,12 +101,21 @@ function Send-VerificationRequest([string]$Base, [string]$Method, [string]$Path,
     if ($response.Content) { return $response.Content | ConvertFrom-Json }
 }
 
-function Assert-ProjectUnused([string]$Project) {
+function Get-ComposeProjectResources([string]$Project) {
     $containers = @(& docker ps -aq --filter "label=com.docker.compose.project=$Project")
-    if ($LASTEXITCODE -ne 0) { throw 'Docker container inventory failed' }
+    if ($LASTEXITCODE -ne 0) { throw "Docker container inventory failed for $Project" }
     $volumes = @(& docker volume ls -q --filter "label=com.docker.compose.project=$Project")
-    if ($LASTEXITCODE -ne 0) { throw 'Docker volume inventory failed' }
-    if (@($containers + $volumes | Where-Object { $_ }).Count) { throw 'This verification project already has resources; use a fresh RunId' }
+    if ($LASTEXITCODE -ne 0) { throw "Docker volume inventory failed for $Project" }
+    $networks = @(& docker network ls -q --filter "label=com.docker.compose.project=$Project")
+    if ($LASTEXITCODE -ne 0) { throw "Docker network inventory failed for $Project" }
+    return [pscustomobject]@{ Containers = $containers; Volumes = $volumes; Networks = $networks }
+}
+
+function Assert-ProjectUnused([string]$Project) {
+    $resources = Get-ComposeProjectResources $Project
+    if (@($resources.Containers + $resources.Volumes + $resources.Networks | Where-Object { $_ }).Count) {
+        throw 'This verification project already has containers, volumes, or networks; use a fresh RunId'
+    }
 }
 
 New-Item -ItemType Directory -Path $ArtifactDirectory, $browserArtifacts, $browserTemporary -Force | Out-Null
@@ -258,20 +274,20 @@ services:
             tests/api/test_ci_contract.py tests/api/test_bookmarks.py tests/api/test_comments.py `
             tests/api/test_threads.py tests/api/test_user.py -q --junitxml $apiReportPath
         $apiExitCode = $LASTEXITCODE
-        $null = Assert-PytestJunitReport $apiReportPath 'API 14' $apiExitCode
+        $null = Assert-PytestJunitReport $apiReportPath 'API 14' 14 $apiExitCode
         Confirm-Check $true 'API 14 contract tests execute with API read-back'
 
         $seleniumReportPath = Join-Path $ArtifactDirectory 'selenium-junit.xml'
         & $PythonExecutable -m pytest -c pytest.ini tests/e2e/selenium/test_ci_smoke.py `
             --selenium-browser=chrome -q --junitxml $seleniumReportPath
         $seleniumExitCode = $LASTEXITCODE
-        $null = Assert-PytestJunitReport $seleniumReportPath 'Selenium 1' $seleniumExitCode
+        $null = Assert-PytestJunitReport $seleniumReportPath 'Selenium 1' 1 $seleniumExitCode
         Confirm-Check $true 'Selenium 1 smoke test executes with UI and API read-back'
 
         $browserReportPath = Join-Path $ArtifactDirectory 'browser-results.xml'
         & $PythonExecutable -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml $browserReportPath
         $playwrightExitCode = $LASTEXITCODE
-        $null = Assert-PytestJunitReport $browserReportPath 'Playwright 1' $playwrightExitCode
+        $null = Assert-PytestJunitReport $browserReportPath 'Playwright 1' 1 $playwrightExitCode
         Confirm-Check $true 'Playwright 1 browser journey executes with independent accounts and API read-back'
     } finally { Pop-Location }
 
@@ -366,16 +382,23 @@ services:
         $owned = $ownedProjects[$index]
         try {
             $ownedIds = @(& docker ps -aq --filter "label=com.docker.compose.project=$($owned.Name)")
-            if ($LASTEXITCODE -eq 0 -and $ownedIds.Count) {
+            if ($LASTEXITCODE -ne 0) {
+                $cleanupErrors.Add("Evidence inventory failed: $($owned.Name)")
+                $ownedIds = @()
+            }
+            if ($ownedIds.Count) {
                 & docker inspect --format '{{.Name}} {{json .State.Health}}' @ownedIds 2>&1 |
                     Set-Content (Join-Path $ArtifactDirectory "$($owned.Name)-health.log")
+                if ($LASTEXITCODE -ne 0) { $cleanupErrors.Add("Health evidence incomplete: $($owned.Name)") }
             }
             $null = & docker compose --project-directory $runtimeRoot -p $owned.Name --env-file $owned.Environment -f $composeFile -f $overrideFile logs --no-color --tail 300 2>&1 |
                 Set-Content (Join-Path $ArtifactDirectory "$($owned.Name).log")
+            if ($LASTEXITCODE -ne 0) { $cleanupErrors.Add("Log evidence incomplete: $($owned.Name)") }
             Invoke-VerificationCompose $owned.Name $owned.Environment @('down', '--volumes', '--remove-orphans')
-            $remaining = @(& docker ps -aq --filter "label=com.docker.compose.project=$($owned.Name)")
-            $remainingVolumes = @(& docker volume ls -q --filter "label=com.docker.compose.project=$($owned.Name)")
-            if ($LASTEXITCODE -ne 0 -or @($remaining + $remainingVolumes | Where-Object { $_ }).Count) { throw 'Owned resources remain' }
+            $remaining = Get-ComposeProjectResources $owned.Name
+            if (@($remaining.Containers + $remaining.Volumes + $remaining.Networks | Where-Object { $_ }).Count) {
+                throw 'Owned containers, volumes, or networks remain'
+            }
         } catch { $cleanupErrors.Add("Cleanup incomplete: $($owned.Name)") }
     }
     foreach ($file in @($sourceEnvironment, $restoreEnvironment)) {

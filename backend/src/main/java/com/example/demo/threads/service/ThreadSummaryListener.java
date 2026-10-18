@@ -85,7 +85,7 @@ public class ThreadSummaryListener {
             }
             if (threadRepository.completeSummaryIfNormal(threadId, summary, owner,
                     java.time.Instant.now(), processingThread.getUpdatedAt()) == 0) {
-                threadRepository.markSummaryFailedIfProcessingAndNormal(threadId, owner);
+                threadRepository.markSummaryFailedIfProcessingAndNormal(threadId, owner, java.time.Instant.now());
                 aiSummaryCacheService.evict(threadId);
                 return;
             }
@@ -97,7 +97,8 @@ public class ThreadSummaryListener {
             log.info("Summary generated for thread: {}", threadId);
         } catch (Exception e) {
             log.error("Failed to generate summary for thread: " + threadId, e);
-            if (threadRepository.markSummaryFailedIfProcessingAndNormal(threadId, owner) > 0 && isNormal(threadId)) {
+            if (threadRepository.markSummaryFailedIfProcessingAndNormal(threadId, owner, java.time.Instant.now()) > 0
+                    && isNormal(threadId)) {
                 aiSummaryCacheService.put(threadId, processingThread.getSummary(), "FAILED");
             } else {
                 aiSummaryCacheService.evict(threadId);

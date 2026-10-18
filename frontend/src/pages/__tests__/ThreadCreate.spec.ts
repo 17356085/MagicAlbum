@@ -7,14 +7,22 @@ import { createThread } from '@/api/threads'
 import { listSections } from '@/api/sections'
 import { useAuthStore } from '@/stores/auth'
 import type { Thread } from '@/types'
+import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 
 const mocks = vi.hoisted(() => ({
   createThread: vi.fn(),
   listSections: vi.fn(),
+  uploadImage: vi.fn(),
+  beautifyMarkdown: vi.fn(),
 }))
 
 vi.mock('@/api/threads', () => ({ createThread: mocks.createThread }))
 vi.mock('@/api/sections', () => ({ listSections: mocks.listSections }))
+vi.mock('@/api/uploads', () => ({ uploadImage: mocks.uploadImage }))
+vi.mock('@/composables/useMarkdownTools', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/composables/useMarkdownTools')>(),
+  beautifyMarkdown: mocks.beautifyMarkdown,
+}))
 
 const createThreadMock = vi.mocked(createThread)
 const listSectionsMock = vi.mocked(listSections)
@@ -24,7 +32,7 @@ function createWrapper() {
     global: {
       stubs: {
         MarkdownTextareaEditor: {
-          props: ['modelValue'],
+          props: ['modelValue', 'uploadImage', 'disabled'],
           template: '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
         },
         RouterLink: {
@@ -48,6 +56,61 @@ describe('ThreadCreate', () => {
       size: 100,
       total: 1,
     })
+  })
+
+  it('blocks publishing during upload and preserves the body after upload failure', async () => {
+    let rejectUpload!: (reason: Error) => void
+    mocks.uploadImage.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectUpload = reject }))
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('保留这段正文')
+    const upload = wrapper.findComponent(MarkdownTextareaEditor).props('uploadImage')!
+    const pending = upload(new File(['image'], 'image.png', { type: 'image/png' }))
+    await nextTick()
+    const publish = wrapper.findAll('button').find((button) => button.text() === '发布')!
+    expect(publish.attributes('disabled')).toBeDefined()
+    await publish.trigger('click')
+    expect(createThreadMock).not.toHaveBeenCalled()
+    rejectUpload(new Error('网络失败'))
+    expect(await pending).toBe('')
+    await nextTick()
+    expect(publish.attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('textarea').element.value).toBe('保留这段正文')
+    expect(wrapper.text()).toContain('网络失败')
+    wrapper.unmount()
+  })
+
+  it('does not replace newer typing with an old beautification result', async () => {
+    let resolveFormat!: (value: string) => void
+    mocks.beautifyMarkdown.mockReturnValueOnce(new Promise<string>((resolve) => { resolveFormat = resolve }))
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('旧正文')
+    await wrapper.findAll('button').find((button) => button.text() === '美化内容')!.trigger('click')
+    expect(wrapper.findAll('button').find((button) => button.text() === '发布')!.attributes('disabled')).toBeDefined()
+    await wrapper.find('textarea').setValue('继续输入的新正文')
+    resolveFormat('格式化后的旧正文')
+    await flushPromises()
+    expect(wrapper.find('textarea').element.value).toBe('继续输入的新正文')
+    expect(wrapper.findAll('button').find((button) => button.text() === '发布')!.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('does not create new message timers when beautification finishes after leaving', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolve!: (value: string) => void
+      mocks.beautifyMarkdown.mockReturnValueOnce(new Promise<string>((yes) => { resolve = yes }))
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('textarea').setValue('正文')
+      await wrapper.findAll('button').find((button) => button.text() === '美化内容')!.trigger('click')
+      wrapper.unmount()
+      expect(vi.getTimerCount()).toBe(0)
+      resolve('已美化')
+      await flushPromises()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
   })
 
   it('rejects oversized content restored or inserted programmatically without posting it', async () => {

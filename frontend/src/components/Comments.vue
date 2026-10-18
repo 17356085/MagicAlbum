@@ -68,10 +68,13 @@ const authStore = useAuthStore()
 const { isLoggedIn, user } = storeToRefs(authStore)
 const previewMode = ref(false)
 const isSubmitting = ref(false)
+const isUploading = ref(false)
 const commentSubmissionKey = Symbol.for('bluealbum.comments.submitting') as InjectionKey<Ref<boolean>>
 provide(commentSubmissionKey, isSubmitting)
 let loadRequestSeq = 0
 let submitRequestSeq = 0
+let uploadRequestSeq = 0
+let activeUploadId: number | null = null
 const likeRequestSeqByComment = new Map<string, number>()
 let disposed = false
 let threadGeneration = 0
@@ -79,7 +82,9 @@ let applyingLoadResponse = false
 let loadScheduled = false
 
 function isCurrentThread(threadId: number, generation = threadGeneration): boolean {
-  return !disposed && generation === threadGeneration && String(props.threadId) === String(threadId)
+  return !disposed
+    && generation === threadGeneration
+    && String(props.threadId) === String(threadId)
 }
 
 function isCurrentLoad(requestSeq: number, threadId: number): boolean {
@@ -92,6 +97,10 @@ function isCurrentSubmit(requestSeq: number, threadId: number): boolean {
 
 function isCurrentLike(requestSeq: number, threadId: number, commentKey: string, generation: number): boolean {
   return isCurrentThread(threadId, generation) && likeRequestSeqByComment.get(commentKey) === requestSeq
+}
+
+function isCurrentUpload(uploadId: number, threadId: number, generation: number, authGeneration: number): boolean {
+  return activeUploadId === uploadId && isCurrentThread(threadId, generation) && authGeneration === authStore.getAuthGeneration()
 }
 
 function scheduleLoad(): void {
@@ -179,6 +188,10 @@ async function toggleLike(comment: CommentItem): Promise<void> {
 
 async function submit(): Promise<void> {
   if (isSubmitting.value) return
+  if (isUploading.value) {
+    error.value = '请等待图片上传完成'
+    return
+  }
   const requestSeq = ++submitRequestSeq
   const threadId = props.threadId
   isSubmitting.value = true
@@ -264,14 +277,22 @@ function getUploadErrorMessage(reason: unknown): string {
 async function handleUploadImage(file: File, onProgress?: (percent: number) => void): Promise<void> {
   const threadId = props.threadId
   const generation = threadGeneration
+  const authGeneration = authStore.getAuthGeneration()
+  if (isSubmitting.value || isUploading.value) {
+    if (!isUploading.value) error.value = '请等待评论发送完成'
+    return
+  }
+  const uploadId = ++uploadRequestSeq
+  activeUploadId = uploadId
+  isUploading.value = true
   try {
     const token = getStoredAccessToken()
     if (!hasRealToken(token)) {
-      error.value = '请先登录后再上传图片'
+      if (isCurrentUpload(uploadId, threadId, generation, authGeneration)) error.value = '请先登录后再上传图片'
       return
     }
     const resp: UploadImageResponse = await uploadImage(file, token, onProgress)
-    if (!isCurrentThread(threadId, generation)) return
+    if (!isCurrentUpload(uploadId, threadId, generation, authGeneration)) return
     const normalized = normalizeImageUrl(resp?.url || resp?.path || '')
     if (!normalized) {
       error.value = '图片上传失败：服务器未返回有效图片地址'
@@ -280,7 +301,12 @@ async function handleUploadImage(file: File, onProgress?: (percent: number) => v
     content.value = (content.value || '') + `\n\n![](${normalized})\n\n`
     error.value = ''
   } catch (reason: unknown) {
-    if (isCurrentThread(threadId, generation)) error.value = getUploadErrorMessage(reason)
+    if (isCurrentUpload(uploadId, threadId, generation, authGeneration)) error.value = getUploadErrorMessage(reason)
+  } finally {
+    if (activeUploadId === uploadId) {
+      activeUploadId = null
+      isUploading.value = false
+    }
   }
 }
 
@@ -364,6 +390,10 @@ watch(() => props.threadId, () => {
   submitRequestSeq += 1
   likeRequestSeqByComment.clear()
   isSubmitting.value = false
+  activeUploadId = null
+  uploadRequestSeq += 1
+  isUploading.value = false
+  content.value = ''
   if (previousPage === 1) void load()
 })
 
@@ -372,6 +402,9 @@ onBeforeUnmount(() => {
   threadGeneration += 1
   loadRequestSeq += 1
   submitRequestSeq += 1
+  activeUploadId = null
+  uploadRequestSeq += 1
+  isUploading.value = false
   likeRequestSeqByComment.clear()
   try { window.removeEventListener('profile-updated', onProfileUpdated) } catch (_) {}
 })
@@ -414,6 +447,7 @@ watch([sortKey, sortOrder], () => {
       <CommentsComposer
         :is-logged-in="isLoggedIn"
         :is-submitting="isSubmitting"
+        :is-uploading="isUploading"
         :model-value="content"
         :preview-mode="previewMode"
         @submit="submit"
@@ -431,6 +465,7 @@ watch([sortKey, sortOrder], () => {
       :has-pagination="hasPagination"
       :highlighted-post-id="highlightedPostId"
       :is-logged-in="isLoggedIn"
+      :is-uploading="isUploading"
       :loading="loading"
       :model-value="content"
       :page="page"

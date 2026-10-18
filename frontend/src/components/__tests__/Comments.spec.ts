@@ -96,6 +96,47 @@ describe('Comments image upload feedback', () => {
     listPostsMock.mockResolvedValue({ items: [], page: 1, size: 20, total: 0 })
   })
 
+  it('blocks sending during image upload and includes the image once upload finishes', async () => {
+    const upload = deferred<Awaited<ReturnType<typeof uploadImage>>>()
+    uploadImageMock.mockReturnValueOnce(upload.promise)
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('textarea').setValue('正文')
+    await selectFile(wrapper, new File(['png'], 'test.png'))
+    const send = wrapper.findAll('button').find((button) => button.text() === '上传中...' && button.classes().includes('ui-button-primary'))!
+    expect(send.attributes('disabled')).toBeDefined()
+    await send.trigger('click')
+    expect(createPostMock).not.toHaveBeenCalled()
+    upload.resolve({ url: '/uploads/image.png' })
+    await flushPromises()
+    expect(wrapper.get('textarea').element.value).toContain('/uploads/image.png')
+    createPostMock.mockResolvedValueOnce({ id: 71, threadId: 1, content: '正文', authorId: 1 })
+    await wrapper.findAll('button').find((button) => button.text() === '发送评论')!.trigger('click')
+    expect(createPostMock).toHaveBeenCalledWith(1, expect.objectContaining({ contentMd: expect.stringContaining('/uploads/image.png') }))
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('does not let an old upload clear the busy state for a new thread upload', async () => {
+    const old = deferred<Awaited<ReturnType<typeof uploadImage>>>()
+    const fresh = deferred<Awaited<ReturnType<typeof uploadImage>>>()
+    uploadImageMock.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+    const wrapper = createWrapper()
+    await flushPromises()
+    await selectFile(wrapper, new File(['old'], 'old.png'))
+    await wrapper.setProps({ threadId: 2 })
+    await flushPromises()
+    await selectFile(wrapper, new File(['fresh'], 'fresh.png'))
+    old.resolve({ url: '/uploads/old.png' })
+    await flushPromises()
+    expect(wrapper.get('input[type="file"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('textarea').element.value).not.toContain('/uploads/old.png')
+    fresh.resolve({ url: '/uploads/fresh.png' })
+    await flushPromises()
+    expect(wrapper.get('textarea').element.value).toContain('/uploads/fresh.png')
+    wrapper.unmount()
+  })
+
   it('uses one in-flight submit, disables the button, and rolls back while preserving input on failure', async () => {
     let rejectCreate!: (reason?: unknown) => void
     createPostMock.mockReturnValueOnce(new Promise<Post>((_resolve, reject) => {

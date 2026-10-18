@@ -3,18 +3,24 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ThreadEdit from '../ThreadEdit.vue'
+import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 
-const mocks = vi.hoisted(() => ({ getThread: vi.fn(), updateThread: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getThread: vi.fn(), updateThread: vi.fn(), push: vi.fn(), uploadImage: vi.fn(), beautifyMarkdown: vi.fn() }))
 const route = reactive({ params: { id: '42' } })
 vi.mock('@/api/threads', () => ({ getThread: mocks.getThread }))
 vi.mock('@/api/my', () => ({ updateThread: mocks.updateThread }))
+vi.mock('@/api/uploads', () => ({ uploadImage: mocks.uploadImage }))
+vi.mock('@/composables/useMarkdownTools', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/composables/useMarkdownTools')>(),
+  beautifyMarkdown: mocks.beautifyMarkdown,
+}))
 vi.mock('@/api/sections', () => ({
   listSections: vi.fn().mockResolvedValue({ items: [], page: 1, size: 100, total: 0 }),
 }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: mocks.push }) }))
 
 const editorStub = {
-  props: ['modelValue', 'maxLength'],
+  props: ['modelValue', 'maxLength', 'uploadImage', 'disabled'],
   template: '<textarea :value="modelValue" :maxlength="maxLength" @input="$emit(\'update:modelValue\', $event.target.value)" />',
 }
 
@@ -37,6 +43,40 @@ describe('ThreadEdit content boundaries', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('blocks save during upload and keeps existing text on upload failure', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '保留正文' })
+    let rejectUpload!: (reason: Error) => void
+    mocks.uploadImage.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectUpload = reject }))
+    const wrapper = createWrapper()
+    await flushPromises()
+    const pending = wrapper.findComponent(MarkdownTextareaEditor).props('uploadImage')!(new File(['png'], 'test.png'))
+    await flushPromises()
+    const save = wrapper.findAll('button').find((button) => button.text() === '保存修改')!
+    expect(save.attributes('disabled')).toBeDefined()
+    await save.trigger('click')
+    expect(mocks.updateThread).not.toHaveBeenCalled()
+    rejectUpload(new Error('网络失败'))
+    expect(await pending).toBe('')
+    await flushPromises()
+    expect(save.attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('textarea').element.value).toBe('保留正文')
+    wrapper.unmount()
+  })
+
+  it('does not overwrite newer typing when beautification resolves', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '原正文' })
+    let resolve!: (value: string) => void
+    mocks.beautifyMarkdown.mockReturnValueOnce(new Promise<string>((yes) => { resolve = yes }))
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '美化内容')!.trigger('click')
+    await wrapper.get('textarea').setValue('新输入')
+    resolve('旧格式结果')
+    await flushPromises()
+    expect(wrapper.get('textarea').element.value).toBe('新输入')
+    wrapper.unmount()
   })
 
   it('preserves oversized legacy content and allows saving once reduced to the server limit', async () => {
