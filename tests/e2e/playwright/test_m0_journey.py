@@ -307,7 +307,11 @@ def _read_report_by_replay(
         pytest.fail("report persistence readback returned a different reporter")
     if str(body.get("targetType") or "").upper() != "THREAD" or int(body.get("targetId") or 0) != thread_id:
         pytest.fail("report persistence readback returned a different target")
-    if str(body.get("status") or "").upper() != "PENDING" or body.get("detail") != detail:
+    if (
+        str(body.get("status") or "").upper() != "PENDING"
+        or str(body.get("reason") or "").upper() != "OTHER"
+        or body.get("detail") != detail
+    ):
         pytest.fail("report persistence readback did not preserve the submitted report")
     return body
 
@@ -549,7 +553,10 @@ def test_m0_r01_r04_browser_journey() -> None:
             # persisted result is verified again through the API replay below.
             report_detail = f"M0 browser report {uuid4().hex[:12]}"
             page_b.goto(f"{BASE_URL}/threads/{thread_id}", wait_until="domcontentloaded")
-            page_b.get_by_role("button", name="举报", exact=True).first.click()
+            expect(thread_actions_b).to_be_visible(timeout=10000)
+            thread_report_button = thread_actions_b.get_by_role("button", name="举报", exact=True)
+            expect(thread_report_button).to_be_visible(timeout=10000)
+            thread_report_button.click()
             report_dialog = page_b.get_by_role("dialog", name="举报内容")
             expect(report_dialog).to_be_visible(timeout=10000)
             report_dialog.locator("#report-reason").select_option("OTHER")
@@ -563,9 +570,22 @@ def test_m0_r01_r04_browser_journey() -> None:
             if report_response.status != 201:
                 pytest.fail(f"browser report submission returned HTTP {report_response.status}")
             report_body = report_response.json()
-            report_id = int(report_body.get("id") or 0) if isinstance(report_body, dict) else 0
+            if not isinstance(report_body, dict):
+                pytest.fail("browser report submission returned an unexpected response shape")
+            report_id = int(report_body.get("id") or 0)
             if report_id <= 0:
                 pytest.fail("browser report submission did not return a report id")
+            if (
+                str(report_body.get("targetType") or "").upper() != "THREAD"
+                or int(report_body.get("targetId") or 0) != thread_id
+                or int(report_body.get("reporterId") or 0) != user_b_id
+            ):
+                pytest.fail("browser report submission returned mismatched report identity")
+            if (
+                str(report_body.get("reason") or "").upper() != "OTHER"
+                or report_body.get("detail") != report_detail
+            ):
+                pytest.fail("browser report submission did not preserve submitted report details")
             expect(report_dialog.get_by_role("status")).to_contain_text("举报已提交", timeout=10000)
             _read_report_by_replay(client_b, thread_id, report_detail, user_b_id, report_id)
             _write_fixture(
