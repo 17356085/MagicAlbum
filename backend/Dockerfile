@@ -9,6 +9,10 @@ COPY config /workspace/config
 
 RUN mvn -q -e -pl backend -am dependency:go-offline
 
+# Bound build/test JVMs independently of the runtime container's JAVA_OPTS.
+ARG JAVA_BUILD_OPTIONS="-Xmx512m -XX:ActiveProcessorCount=2 -Dspring.test.context.cache.maxSize=8"
+ENV JAVA_TOOL_OPTIONS=${JAVA_BUILD_OPTIONS}
+
 COPY backend/src /workspace/backend/src
 
 RUN mvn -q -e -pl backend -am package

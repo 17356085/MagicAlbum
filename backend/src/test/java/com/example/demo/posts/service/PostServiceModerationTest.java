@@ -38,7 +38,7 @@ class PostServiceModerationTest {
         post.setId(12L);
         post.setThreadId(7L);
         post.setStatus("NORMAL");
-        when(posts.findActiveById(12L)).thenReturn(Optional.of(post));
+        when(posts.findByIdForInteraction(12L)).thenReturn(Optional.of(post));
         when(threads.findById(7L)).thenReturn(Optional.of(thread("NORMAL")));
 
         service.hideForModeration(12L);

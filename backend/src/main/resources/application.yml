@@ -3,7 +3,7 @@ server:
 
 spring:
   config:
-    import: optional:classpath:application-secrets.yml,optional:file:.env.local[.properties],optional:file:backend/.env.local[.properties]
+    import: optional:file:.env.local[.properties],optional:file:backend/.env.local[.properties]
   application:
     name: bluealbum-monolith
   cloud:
@@ -79,6 +79,9 @@ springdoc:
     tags-sorter: alpha
 
 app:
+  deployment:
+    # Multi-instance deployments must share Redis and uploads; startup rejects local-only state.
+    multi-instance: ${APP_MULTI_INSTANCE:false}
   rate-limit:
     fail-closed: ${APP_RATE_LIMIT_FAIL_CLOSED:true}
   ai:
@@ -153,13 +156,14 @@ app:
       endpoint: "" # 可选：S3 兼容对象存储自定义 endpoint，例如 https://s3.amazonaws.com 或 MinIO/自建网关
       accessKey: ""
       secretKey: ""
-      # 前端展示用的公共 URL 前缀（建议配置为 CDN/网站域名）；留空将回退到 endpoint 或 AWS 默认域名
+      # 公开 CDN URL；留空返回应用内稳定地址，读取时签名，支持私有 bucket。
       publicBaseUrl: ""
       # 默认私有对象；公开展示应通过受控 CDN/签名 URL 暴露
       aclPublicRead: false
       # 路径前缀，按日期分目录
       pathPrefix: threads
     local:
+      shared: ${APP_STORAGE_LOCAL_SHARED:false}
       # 本地存储目录（相对于项目根目录或绝对路径）
       baseDir: uploads
 ai:

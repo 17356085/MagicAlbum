@@ -39,6 +39,7 @@ public class UserFollowService {
 
     @Transactional
     public UserFollowResponse follow(Long currentUserId, Long targetUserId) {
+        lockPair(currentUserId, targetUserId);
         validateFollowRequest(currentUserId, targetUserId);
         boolean alreadyFollowing = userFollowRepository.existsByFollowerIdAndFollowingId(currentUserId, targetUserId);
         if (!alreadyFollowing) {
@@ -53,6 +54,7 @@ public class UserFollowService {
 
     @Transactional
     public UserFollowResponse unfollow(Long currentUserId, Long targetUserId) {
+        lockPair(currentUserId, targetUserId);
         validateTarget(currentUserId, targetUserId);
         if (currentUserId.equals(targetUserId)) {
             return status(currentUserId, targetUserId);
@@ -119,6 +121,16 @@ public class UserFollowService {
             return false;
         }
         return userFollowRepository.existsByFollowerIdAndFollowingId(followerId, followingId);
+    }
+
+    private void lockPair(Long first, Long second) {
+        if (first == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
+        if (second == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在");
+        // A stable order also covers simultaneous A->B and B->A requests.
+        for (Long id : java.util.stream.Stream.of(first, second).sorted().distinct().toList()) {
+            userRepository.findByIdForInteraction(id)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+        }
     }
 
     private void validateFollowRequest(Long currentUserId, Long targetUserId) {

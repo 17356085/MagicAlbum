@@ -3,7 +3,6 @@ package com.example.demo.ai.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.web.client.RestClient;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -27,7 +26,6 @@ import java.util.function.Consumer;
 public class RealAiProvider implements AiProvider {
     private static final Logger log = LoggerFactory.getLogger(RealAiProvider.class);
 
-    private final RestClient restClient;
     private final HttpClient httpClient;
     private final URI completionUri;
     private final String apiKey;
@@ -46,10 +44,6 @@ public class RealAiProvider implements AiProvider {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(this.timeout)
                 .build();
-        this.restClient = RestClient.builder()
-                .baseUrl(normalizeBaseUrl(baseUrl))
-                .defaultHeader("Authorization", "Bearer " + this.apiKey)
-                .build();
     }
 
     @Override
@@ -61,17 +55,24 @@ public class RealAiProvider implements AiProvider {
                     "temperature", 0.3,
                     "max_tokens", 512
             );
-            Map<?, ?> response = restClient.post()
-                    .uri("/chat/completions")
-                    .body(requestBody)
-                    .retrieve()
-                    .body(Map.class);
-            String parsed = responseParser.parseResponse(response);
-            return parsed == null || parsed.isBlank() ? "无法生成摘要，请稍后重试" : parsed;
+            HttpRequest request = HttpRequest.newBuilder(completionUri).timeout(timeout)
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody), StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("AI provider returned HTTP " + response.statusCode());
+            }
+            String parsed = responseParser.parseResponse(objectMapper.readValue(response.body(), Map.class));
+            if (parsed == null || parsed.isBlank()) throw new IllegalStateException("AI provider returned an empty summary");
+            return parsed;
         } catch (Exception ex) {
             log.warn("ai_summary_failed model={} error={}",
                     promptBuilder.getModelName(), ex.getClass().getSimpleName());
-            return "摘要生成失败，请稍后重试";
+            if (ex instanceof InterruptedException) java.lang.Thread.currentThread().interrupt();
+            // Failure is a task state, never successful content persisted as COMPLETED.
+            throw new IllegalStateException("AI summary generation failed");
         }
     }
 

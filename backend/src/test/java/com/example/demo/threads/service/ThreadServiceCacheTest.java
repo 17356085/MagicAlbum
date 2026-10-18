@@ -17,10 +17,12 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -45,7 +47,7 @@ class ThreadServiceCacheTest {
         com.example.demo.threads.entity.Thread thread = new com.example.demo.threads.entity.Thread();
         thread.setId(7L);
         thread.setAuthorId(11L);
-        when(repository.findById(7L)).thenReturn(Optional.of(thread));
+        when(repository.findByIdForInteraction(7L)).thenReturn(Optional.of(thread));
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
@@ -114,6 +116,11 @@ class ThreadServiceCacheTest {
         dto.setAuthorId(11L);
         dto.setTitle("Cached");
         dto.setStatus("NORMAL");
+        Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
+        dto.setUpdatedAt(updatedAt);
+        com.example.demo.threads.entity.Thread authoritative = normalThread(9L);
+        authoritative.setUpdatedAt(updatedAt);
+        when(threadRepository.findAllById(List.of(9L))).thenReturn(List.of(authoritative));
         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
         String json = mapper.writeValueAsString(new Object() {
             public final List<ThreadDto> items = List.of(dto);
@@ -132,6 +139,65 @@ class ThreadServiceCacheTest {
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getContent().get(0).getTitle()).isEqualTo("Cached");
         verify(threadRepository, times(0)).searchNewestView(any(), any(), any(), any(PageRequest.class));
+    }
+
+    @Test
+    void list_should_fallback_when_authoritative_thread_is_hidden() throws Exception {
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        ThreadDto dto = validThreadDto(9L, "NORMAL");
+        Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
+        dto.setUpdatedAt(updatedAt);
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        when(valueOperations.get(anyString())).thenReturn(mapper.writeValueAsString(new Object() {
+            public final List<ThreadDto> items = List.of(dto);
+            public final long total = 1L;
+        }));
+        com.example.demo.threads.entity.Thread hidden = normalThread(9L);
+        hidden.setStatus("HIDDEN");
+        hidden.setUpdatedAt(updatedAt);
+        when(threadRepository.findAllById(List.of(9L))).thenReturn(List.of(hidden));
+        when(threadRepository.searchNewestView(any(), any(), any(), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
+
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(null);
+        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+
+        assertThat(service.list(null, null, 7L, 1, 10).getContent()).isEmpty();
+        verify(threadRepository).searchNewestView(isNull(), isNull(), eq(7L), any(PageRequest.class));
+    }
+
+    @Test
+    void list_should_propagate_authoritative_cache_validation_failure() throws Exception {
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        ThreadDto dto = validThreadDto(9L, "NORMAL");
+        dto.setUpdatedAt(Instant.parse("2026-10-18T00:00:00Z"));
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        when(valueOperations.get(anyString())).thenReturn(mapper.writeValueAsString(new Object() {
+            public final List<ThreadDto> items = List.of(dto);
+            public final long total = 1L;
+        }));
+        IllegalStateException failure = new IllegalStateException("database unavailable");
+        when(threadRepository.findAllById(List.of(9L))).thenThrow(failure);
+
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(null);
+        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+
+        assertThatThrownBy(() -> service.list(null, null, 7L, 1, 10)).isSameAs(failure);
+        verify(threadRepository, never()).searchNewestView(any(), any(), any(), any(PageRequest.class));
     }
 
     @Test
@@ -267,6 +333,54 @@ class ThreadServiceCacheTest {
     }
 
     @Test
+    void detail_should_fallback_when_cached_updated_at_is_stale_and_render_view_snapshot() throws Exception {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        Instant stale = Instant.parse("2026-10-18T00:00:00Z");
+        ThreadDto cached = validThreadDto(9L, "NORMAL");
+        cached.setUpdatedAt(stale);
+        cached.setContent("Cached body");
+        when(valueOperations.get("cache:threads:detail:9"))
+                .thenReturn(mapper.writeValueAsString(cached));
+
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        com.example.demo.threads.entity.Thread entity = normalThread(9L);
+        entity.setUpdatedAt(Instant.parse("2026-10-18T00:00:01Z"));
+        entity.setContentMd("Entity body");
+        when(threadRepository.findById(9L)).thenReturn(Optional.of(entity));
+        ThreadQueryView view = mock(ThreadQueryView.class);
+        Instant viewUpdatedAt = Instant.parse("2026-10-18T00:00:02Z");
+        when(view.getId()).thenReturn(9L);
+        when(view.getSectionId()).thenReturn(7L);
+        when(view.getAuthorId()).thenReturn(11L);
+        when(view.getTitle()).thenReturn("Database");
+        when(view.getContent()).thenReturn("View body");
+        when(view.getUpdatedAt()).thenReturn(viewUpdatedAt);
+        when(view.getStatus()).thenReturn("NORMAL");
+        when(threadRepository.findViewById(9L)).thenReturn(Optional.of(view));
+
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(null);
+        MarkdownRenderService markdown = mock(MarkdownRenderService.class);
+        when(markdown.renderWithCache(9L, viewUpdatedAt, "View body"))
+                .thenReturn("<p>View body</p>");
+        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
+                mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+
+        ThreadDto result = service.getById(9L);
+
+        assertThat(result.getTitle()).isEqualTo("Database");
+        assertThat(result.getContentHtml()).isEqualTo("<p>View body</p>");
+        verify(redisTemplate).delete("cache:threads:detail:9");
+        verify(threadRepository).findViewById(9L);
+        verify(markdown).renderWithCache(9L, viewUpdatedAt, "View body");
+    }
+
+    @Test
     void detail_should_fallback_and_delete_cache_when_cached_status_is_not_normal() throws Exception {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
@@ -309,7 +423,7 @@ class ThreadServiceCacheTest {
         when(redis.scan(any(ScanOptions.class))).thenReturn(cursor);
         when(cursor.hasNext()).thenReturn(false);
         com.example.demo.threads.entity.Thread thread = normalThread(7L);
-        when(repository.findById(7L)).thenReturn(java.util.Optional.of(thread));
+        when(repository.findByIdForInteraction(7L)).thenReturn(java.util.Optional.of(thread));
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
@@ -335,7 +449,7 @@ class ThreadServiceCacheTest {
         ThreadRepository repository = mock(ThreadRepository.class);
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         com.example.demo.threads.entity.Thread thread = normalThread(7L);
-        when(repository.findById(7L)).thenReturn(java.util.Optional.of(thread));
+        when(repository.findByIdForInteraction(7L)).thenReturn(java.util.Optional.of(thread));
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(repository, mock(SectionRepository.class),

@@ -34,6 +34,7 @@ class UserFollowServiceNotificationFailureTest {
         when(provider.getIfAvailable()).thenReturn(notificationClient);
 
         when(users.existsById(2L)).thenReturn(true);
+        when(users.findByIdForInteraction(anyLong())).thenReturn(Optional.of(new com.example.demo.user.entity.User()));
         when(users.findById(1L)).thenReturn(Optional.empty());
         when(follows.existsByFollowerIdAndFollowingId(1L, 2L)).thenReturn(false, true);
         when(follows.countByFollowingId(2L)).thenReturn(1L);

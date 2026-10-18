@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class JwtTokenProviderTest {
 
@@ -29,6 +30,15 @@ class JwtTokenProviderTest {
         ReflectionTestUtils.setField(provider, "ttlMinutes", 60L);
         provider.validateConfiguration();
         signingKey = Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void obvious_change_this_template_is_rejected_without_exposing_its_value() {
+        String placeholder = "LocalOnly_ChangeThis_To_A_Random_Secret_123456";
+        ReflectionTestUtils.setField(provider, "secret", placeholder);
+        assertThatThrownBy(provider::validateConfiguration)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageNotContaining(placeholder);
     }
 
     @Test

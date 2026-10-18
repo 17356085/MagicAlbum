@@ -1,6 +1,7 @@
 package com.example.demo.threads.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.demo.ai.service.AiSummaryCacheService;
 import com.example.demo.common.RedisKeys;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.sections.repo.SectionRepository;
@@ -34,10 +35,14 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class ThreadService {
+    private static final int MAX_CONTENT_CHARS = 10_000;
     private static final Logger log = LoggerFactory.getLogger(ThreadService.class);
 
     private final ThreadRepository threadRepository;
@@ -53,6 +58,7 @@ public class ThreadService {
     private final ThreadDtoMapper dtoMapper;
     private final NotificationClient notificationClient;
     private final TagService tagService;
+    private final AiSummaryCacheService aiSummaryCacheService;
 
     @Autowired
     public ThreadService(ThreadRepository threadRepository,
@@ -67,13 +73,15 @@ public class ThreadService {
                          ObjectProvider<StringRedisTemplate> redisTemplateProvider,
                          ObjectProvider<ObjectMapper> objectMapperProvider,
                          ObjectProvider<NotificationClient> notificationClientProvider,
-                         ObjectProvider<TagService> tagServiceProvider) {
+                         ObjectProvider<TagService> tagServiceProvider,
+                         ObjectProvider<AiSummaryCacheService> aiSummaryCacheServiceProvider) {
         this(threadRepository, threadLikeRepository, sectionRepository, userRepository, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 redisTemplateProvider == null ? null : redisTemplateProvider.getIfAvailable(),
                 resolveObjectMapper(objectMapperProvider),
                 notificationClientProvider == null ? null : notificationClientProvider.getIfAvailable(),
-                tagServiceProvider == null ? null : tagServiceProvider.getIfAvailable());
+                tagServiceProvider == null ? null : tagServiceProvider.getIfAvailable(),
+                aiSummaryCacheServiceProvider == null ? null : aiSummaryCacheServiceProvider.getIfAvailable());
     }
 
     ThreadService(ThreadRepository threadRepository,
@@ -85,7 +93,7 @@ public class ThreadService {
                   boolean rabbitEnabled) {
         this(threadRepository, null, sectionRepository, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
-                null, defaultObjectMapper(), null, null);
+                null, defaultObjectMapper(), null, null, null);
     }
 
     ThreadService(ThreadRepository threadRepository,
@@ -100,7 +108,8 @@ public class ThreadService {
                   StringRedisTemplate redisTemplate,
                   ObjectMapper objectMapper,
                   NotificationClient notificationClient,
-                  TagService tagService) {
+                  TagService tagService,
+                  AiSummaryCacheService aiSummaryCacheService) {
         this.threadRepository = threadRepository;
         this.threadLikeRepository = threadLikeRepository;
         this.sectionRepository = sectionRepository;
@@ -113,6 +122,7 @@ public class ThreadService {
         this.cache = new ThreadCache(redisTemplate, objectMapper == null ? defaultObjectMapper() : objectMapper);
         this.notificationClient = notificationClient;
         this.tagService = tagService;
+        this.aiSummaryCacheService = aiSummaryCacheService;
         this.dtoMapper = new ThreadDtoMapper(threadRepository, threadLikeRepository, tagService);
     }
 
@@ -127,7 +137,7 @@ public class ThreadService {
                   ObjectMapper objectMapper) {
         this(threadRepository, null, sectionRepository, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
-                redisTemplate, objectMapper, null, null);
+                redisTemplate, objectMapper, null, null, null);
     }
 
     @Transactional
@@ -142,6 +152,9 @@ public class ThreadService {
         }
         if (req.getContent() == null || req.getContent().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "内容不能为空");
+        }
+        if (req.getContent().length() > MAX_CONTENT_CHARS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "内容过长");
         }
 
         Thread t = new Thread();
@@ -193,7 +206,10 @@ public class ThreadService {
         String cacheKey = threadListCacheKey(normalizedQuery, normalizedTag, sectionId, page, limit);
         ThreadCache.CachedThreadPage cached = cache.readList(cacheKey);
         if (cached != null) {
-            return new PageImpl<>(cached.items(), PageRequest.of(pageIndex, limit), cached.total());
+            if (isFreshThreadPage(cached)) {
+                return new PageImpl<>(cached.items(), PageRequest.of(pageIndex, limit), cached.total());
+            }
+            cache.evictList(cacheKey);
         }
         if (normalizedTag == null && mpThreadsEnabled && threadReadServiceMp != null) {
             com.baomidou.mybatisplus.extension.plugins.pagination.Page<Thread> mpPage = threadReadServiceMp.searchNewest(normalizedQuery, sectionId, page, limit);
@@ -269,7 +285,7 @@ public class ThreadService {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
         }
-        Thread thread = findNormalThread(threadId);
+        Thread thread = findNormalThreadForInteraction(threadId);
         boolean alreadyLiked = threadLikeRepository.existsByThreadIdAndUserId(threadId, userId);
         if (!alreadyLiked) {
             ThreadLike like = new ThreadLike();
@@ -287,7 +303,7 @@ public class ThreadService {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
         }
-        findNormalThread(threadId);
+        findNormalThreadForInteraction(threadId);
         if (threadLikeRepository.existsByThreadIdAndUserId(threadId, userId)) {
             threadLikeRepository.deleteByThreadIdAndUserId(threadId, userId);
             evictThreadCachesAfterCommit(threadId);
@@ -312,8 +328,12 @@ public class ThreadService {
         // A moderation decision must take effect even if a detail response was cached earlier.
         Thread t = findNormalThread(id);
         ThreadDto cached = cache.readDetail(id);
-        if (cached != null) {
+        if (cached != null && t.getUpdatedAt() != null
+                && Objects.equals(t.getUpdatedAt(), cached.getUpdatedAt())) {
             return cached;
+        }
+        if (cached != null) {
+            cache.evictDetail(id);
         }
         ThreadQueryView view = threadRepository.findViewById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
@@ -322,7 +342,7 @@ public class ThreadService {
         }
         ThreadDto dto = dtoMapper.toDto(view);
         // 服务端渲染并缓存 HTML，减轻前端开销
-        String html = markdownRenderService.renderWithCache(t.getId(), t.getUpdatedAt(), t.getContentMd());
+        String html = markdownRenderService.renderWithCache(view.getId(), view.getUpdatedAt(), view.getContent());
         dto.setContentHtml(html);
         cache.writeDetail(id, dto);
         return dto;
@@ -335,6 +355,51 @@ public class ThreadService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
         return thread;
+    }
+
+    private Thread findNormalThreadForInteraction(Long threadId) {
+        Thread thread = threadRepository.findByIdForInteraction(threadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        if (thread.getStatus() == null || !"NORMAL".equals(thread.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        }
+        return thread;
+    }
+
+    private boolean isFreshThreadPage(ThreadCache.CachedThreadPage cached) {
+        List<ThreadDto> items = cached.items();
+        if (items == null || items.isEmpty()) {
+            return true;
+        }
+        if (items.stream().anyMatch(dto -> dto == null
+                || dto.getId() == null
+                || dto.getId() <= 0
+                || dto.getUpdatedAt() == null)) {
+            return false;
+        }
+        List<Long> ids = items.stream().map(ThreadDto::getId).toList();
+        if (ids.stream().distinct().count() != ids.size()) {
+            return false;
+        }
+        List<Thread> authoritative = threadRepository.findAllById(ids);
+        if (authoritative == null || authoritative.size() != ids.size()) {
+            return false;
+        }
+        Map<Long, Thread> byId = new HashMap<>();
+        for (Thread thread : authoritative) {
+            if (thread == null || thread.getId() == null || byId.put(thread.getId(), thread) != null) {
+                return false;
+            }
+        }
+        return items.stream().allMatch(dto -> {
+            Thread thread = dto == null ? null : byId.get(dto.getId());
+            return thread != null
+                    && "NORMAL".equals(thread.getStatus())
+                    && "NORMAL".equals(dto.getStatus())
+                    && thread.getUpdatedAt() != null
+                    && dto.getUpdatedAt() != null
+                    && Objects.equals(thread.getUpdatedAt(), dto.getUpdatedAt());
+        });
     }
 
     private void sendLikeNotification(Long actorId, Thread thread) {
@@ -360,7 +425,7 @@ public class ThreadService {
 
     @Transactional
     public ThreadDto update(Long userId, Long threadId, UpdateThreadRequest req) {
-        Thread t = threadRepository.findById(threadId)
+        Thread t = threadRepository.findByIdForInteraction(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
         if (t.getStatus() == null || !"NORMAL".equals(t.getStatus())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
@@ -369,6 +434,7 @@ public class ThreadService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可编辑帖子");
         }
         boolean changed = false;
+        boolean contentChanged = false;
         if (req.getTitle() != null) {
             String title = req.getTitle().trim();
             if (title.isBlank()) {
@@ -385,9 +451,10 @@ public class ThreadService {
             if (content.isBlank()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "内容不能为空");
             }
-            if (content.length() > 10000) {
+            if (content.length() > MAX_CONTENT_CHARS) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "内容过长");
             }
+            contentChanged = !Objects.equals(t.getContentMd(), content);
             t.setContentMd(content);
             changed = true;
         }
@@ -404,6 +471,13 @@ public class ThreadService {
         if (!changed) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "未提供需要更新的字段");
         }
+        if (contentChanged) {
+            t.setSummary(null);
+            t.setSummaryStatus("PENDING");
+            t.setSummaryOwner(null);
+            t.setSummaryLeaseUntil(null);
+            t.setSummaryAttempts(0);
+        }
         Thread saved = threadRepository.save(t);
         if (req.getTags() != null) {
             replaceTags(saved.getId(), req.getTags());
@@ -411,13 +485,13 @@ public class ThreadService {
         ThreadDto dto = dtoMapper.toDto(saved);
         String html = markdownRenderService.renderWithCache(saved.getId(), saved.getUpdatedAt(), saved.getContentMd());
         dto.setContentHtml(html);
-        evictThreadCachesAfterCommit(threadId);
+        evictThreadCachesAfterCommit(threadId, contentChanged);
         return dto;
     }
 
     @Transactional
     public void delete(Long userId, Long threadId) {
-        Thread t = threadRepository.findById(threadId)
+        Thread t = threadRepository.findByIdForInteraction(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
         if (!t.getAuthorId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可删除帖子");
@@ -429,7 +503,7 @@ public class ThreadService {
 
     @Transactional
     public void hideForModeration(Long threadId) {
-        Thread thread = findNormalThread(threadId);
+        Thread thread = findNormalThreadForInteraction(threadId);
         thread.setStatus("HIDDEN");
         threadRepository.save(thread);
         evictThreadCachesAfterCommit(threadId);
@@ -457,9 +531,20 @@ public class ThreadService {
     }
 
     private void evictThreadCachesAfterCommit(Long threadId) {
+        evictThreadCachesAfterCommit(threadId, false);
+    }
+
+    private void evictThreadCachesAfterCommit(Long threadId, boolean republishSummary) {
         afterCommit(() -> {
             cache.evictLists();
             cache.evictDetail(threadId);
+            markdownRenderService.evict(threadId);
+            if (aiSummaryCacheService != null) {
+                aiSummaryCacheService.evict(threadId);
+            }
+            if (republishSummary) {
+                publishSummaryGeneration(threadId);
+            }
         });
     }
 

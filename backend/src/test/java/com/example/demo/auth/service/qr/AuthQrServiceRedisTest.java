@@ -9,7 +9,9 @@ import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +22,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -69,7 +72,36 @@ class AuthQrServiceRedisTest {
         when(redisTemplate.opsForHash()).thenThrow(new RuntimeException("redis down"));
 
         AuthQrService service = new AuthQrService(userRepository, jwtTokenProvider, 60, "magicalbum://auth/qr/", redisTemplate);
-        assertThrows(org.springframework.web.server.ResponseStatusException.class, service::createSession);
+        org.springframework.web.server.ResponseStatusException failure = assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                service::createSession
+        );
+        assertEquals(503, failure.getStatusCode().value());
+    }
+
+    @Test
+    void mutation_scripts_contract_is_atomic_and_preserves_exchange_consume_script() throws Exception {
+        String scan = scriptText("SCAN_SCRIPT");
+        String confirm = scriptText("CONFIRM_SCRIPT");
+        String cancel = scriptText("CANCEL_SCRIPT");
+        String exchange = scriptText("EXCHANGE_SCRIPT");
+
+        assertTrue(scan.contains("HGET") && scan.contains("HSET") && scan.contains("SCANNED"));
+        assertTrue(scan.contains("OWNER_CONFLICT") && scan.contains("ARGV[2]"));
+        assertTrue(scan.contains("not expiresAt"));
+        assertTrue(confirm.contains("HGET") && confirm.contains("HSET") && confirm.contains("CONFIRMED"));
+        assertTrue(confirm.contains("OWNER_CONFLICT") && confirm.contains("ARGV[3]"));
+        assertTrue(confirm.contains("not expiresAt"));
+        assertTrue(cancel.contains("HGET") && cancel.contains("HSET") && cancel.contains("CANCELLED"));
+        assertTrue(cancel.contains("INVALID_TOKEN") && cancel.contains("ARGV[2]"));
+        assertTrue(cancel.contains("not expiresAt"));
+        assertTrue(exchange.contains("exchangeConsumed") && exchange.contains("HSET"));
+    }
+
+    private String scriptText(String name) throws Exception {
+        Field field = AuthQrService.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return ((DefaultRedisScript<?>) field.get(null)).getScriptAsString();
     }
 
     private String hash(String value) throws Exception {

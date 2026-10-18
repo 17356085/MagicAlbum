@@ -32,36 +32,84 @@ public class ThreadSummaryListener {
     @RabbitListener(queues = RabbitMQConfig.QUEUE_THREAD_SUMMARY)
     public void processThreadSummary(Long threadId) {
         log.info("Processing summary for thread: {}", threadId);
+        if (threadId == null) {
+            return;
+        }
         Optional<Thread> threadOpt = threadRepository.findById(threadId);
         if (threadOpt.isEmpty()) {
             log.warn("Thread not found: {}", threadId);
+            aiSummaryCacheService.evict(threadId);
             return;
         }
 
         Thread thread = threadOpt.get();
+        if (!isNormal(thread)) {
+            aiSummaryCacheService.evict(threadId);
+            return;
+        }
         if ("COMPLETED".equals(thread.getSummaryStatus())) {
             log.info("Summary already exists for thread: {}", threadId);
             return;
         }
 
-        try {
-            // Update status to processing
-            thread.setSummaryStatus("PROCESSING");
-            threadRepository.save(thread);
-            aiSummaryCacheService.put(threadId, thread.getSummary(), "PROCESSING");
+        String owner = java.util.UUID.randomUUID().toString();
+        java.time.Instant now = java.time.Instant.now();
+        // AI requests are bounded to 120 seconds; the lease includes a full minute of scheduling margin.
+        if (threadRepository.claimSummaryProcessingIfNormal(threadId, owner, now, now.plusSeconds(180)) == 0) {
+            threadRepository.exhaustSummaryLease(threadId, now);
+            aiSummaryCacheService.evict(threadId);
+            return;
+        }
 
-            String summary = aiService.generateSummary(thread.getContentMd());
-            
-            thread.setSummary(summary);
-            thread.setSummaryStatus("COMPLETED");
-            threadRepository.save(thread);
-            aiSummaryCacheService.put(threadId, summary, "COMPLETED");
+        Optional<Thread> processingThreadOpt = threadRepository.findById(threadId);
+        if (processingThreadOpt.isEmpty() || !isNormal(processingThreadOpt.get())) {
+            aiSummaryCacheService.evict(threadId);
+            return;
+        }
+        Thread processingThread = processingThreadOpt.get();
+
+        try {
+            if (!isNormal(threadId)) {
+                aiSummaryCacheService.evict(threadId);
+                return;
+            }
+            aiSummaryCacheService.put(threadId, processingThread.getSummary(), "PROCESSING");
+
+            String summary = aiService.generateSummary(processingThread.getContentMd());
+            if (summary == null || summary.isBlank()) {
+                throw new IllegalStateException("AI returned no summary content");
+            }
+            if (!isNormal(threadId)) {
+                aiSummaryCacheService.evict(threadId);
+                return;
+            }
+            if (threadRepository.completeSummaryIfNormal(threadId, summary, owner,
+                    java.time.Instant.now(), processingThread.getUpdatedAt()) == 0) {
+                threadRepository.markSummaryFailedIfProcessingAndNormal(threadId, owner);
+                aiSummaryCacheService.evict(threadId);
+                return;
+            }
+            if (isNormal(threadId)) {
+                aiSummaryCacheService.put(threadId, summary, "COMPLETED");
+            } else {
+                aiSummaryCacheService.evict(threadId);
+            }
             log.info("Summary generated for thread: {}", threadId);
         } catch (Exception e) {
             log.error("Failed to generate summary for thread: " + threadId, e);
-            thread.setSummaryStatus("FAILED");
-            threadRepository.save(thread);
-            aiSummaryCacheService.put(threadId, thread.getSummary(), "FAILED");
+            if (threadRepository.markSummaryFailedIfProcessingAndNormal(threadId, owner) > 0 && isNormal(threadId)) {
+                aiSummaryCacheService.put(threadId, processingThread.getSummary(), "FAILED");
+            } else {
+                aiSummaryCacheService.evict(threadId);
+            }
         }
+    }
+
+    private boolean isNormal(Long threadId) {
+        return threadRepository.findById(threadId).map(this::isNormal).orElse(false);
+    }
+
+    private boolean isNormal(Thread thread) {
+        return thread != null && "NORMAL".equals(thread.getStatus());
     }
 }

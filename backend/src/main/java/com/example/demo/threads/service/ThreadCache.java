@@ -65,6 +65,20 @@ final class ThreadCache {
         }
     }
 
+    void evictList(String key) {
+        deleteQuietly(key);
+    }
+
+    void evictThreadPosts(Long threadId) {
+        if (redisTemplate == null || threadId == null) {
+            return;
+        }
+        try {
+            RedisCacheEvictor.evictMatching(redisTemplate, RedisKeys.threadPostsPattern(threadId));
+        } catch (Exception ignored) {
+        }
+    }
+
     ThreadDto readDetail(Long threadId) {
         if (redisTemplate == null || threadId == null) {
             return null;

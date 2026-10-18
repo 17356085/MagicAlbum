@@ -13,6 +13,7 @@ public class CreateThreadRequest {
     private String title;
 
     @NotBlank
+    @Size(max = 10000)
     private String content;
 
     @Size(max = 5)

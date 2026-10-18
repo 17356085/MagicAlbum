@@ -27,6 +27,37 @@ import static org.mockito.Mockito.when;
 
 class CognitoOtpAuthServiceTest {
 
+    private CognitoOtpAuthService service(CognitoOtpClient client, UserRepository users) {
+        return new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class),
+                mock(PasswordEncoder.class), mock(JwtTokenProvider.class),
+                AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)), 300, 300, 60);
+    }
+
+    @Test
+    void emailStartMustActuallyReturnTheRequestedProviderChallenge() {
+        var client = mock(CognitoOtpClient.class);
+        var users = mock(UserRepository.class);
+        var wrongChallenge = new CognitoAuthFlowResponse();
+        wrongChallenge.setChallengeName("PASSWORD"); wrongChallenge.setSession("session");
+        when(client.initiateUserAuth("demo@example.com", "EMAIL_OTP")).thenReturn(wrongChallenge);
+        var request = new AuthCodeStartRequest(); request.setChannel(AuthCodeChannel.email); request.setAddress("demo@example.com");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(client, users).start(request))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        org.mockito.Mockito.verifyNoInteractions(users);
+    }
+
+    @Test
+    void emailFinishCannotProvisionAUserWithoutSuccessfulProviderAuthentication() {
+        var client = mock(CognitoOtpClient.class);
+        var users = mock(UserRepository.class);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), any(), any(), any())).thenReturn(new CognitoAuthFlowResponse());
+        var request = new AuthCodeFinishRequest(); request.setChannel(AuthCodeChannel.email);
+        request.setAddress("demo@example.com"); request.setSession("session"); request.setCode("123456");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(client, users).finish(request))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        org.mockito.Mockito.verifyNoInteractions(users);
+    }
+
     @Test
     void shouldStartEmailOtpLogin() {
         CognitoOtpClient client = mock(CognitoOtpClient.class);
@@ -35,9 +66,10 @@ class CognitoOtpAuthServiceTest {
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         JwtTokenProvider jwtTokenProvider = mock(JwtTokenProvider.class);
         AuthVerifyService authVerifyService = AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class));
-        InMemoryEmailOtpService inMemoryEmailOtpService = mock(InMemoryEmailOtpService.class);
-        when(inMemoryEmailOtpService.start("demo@example.com", 300, 60))
-                .thenReturn(new InMemoryEmailOtpService.EmailOtpTicket("local-email-session", "123456"));
+        CognitoAuthFlowResponse challenge = new CognitoAuthFlowResponse();
+        challenge.setChallengeName("EMAIL_OTP");
+        challenge.setSession("cognito-email-session");
+        when(client.initiateUserAuth("demo@example.com", "EMAIL_OTP")).thenReturn(challenge);
 
         CognitoOtpAuthService service = new CognitoOtpAuthService(
                 client,
@@ -46,7 +78,6 @@ class CognitoOtpAuthServiceTest {
                 passwordEncoder,
                 jwtTokenProvider,
                 authVerifyService,
-                inMemoryEmailOtpService,
                 300,
                 300,
                 60
@@ -59,7 +90,7 @@ class CognitoOtpAuthServiceTest {
         AuthCodeStartResponse startResponse = service.start(request);
 
         assertEquals(AuthCodeChannel.email, startResponse.getChannel());
-        assertEquals("local-email-session", startResponse.getSession());
+        assertEquals("cognito-email-session", startResponse.getSession());
         assertEquals(300, startResponse.getExpireSeconds());
         assertEquals(60, startResponse.getCooldownSeconds());
         assertTrue(startResponse.getMaskedAddress().contains("****"));
@@ -73,8 +104,12 @@ class CognitoOtpAuthServiceTest {
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         JwtTokenProvider jwtTokenProvider = mock(JwtTokenProvider.class);
         AuthVerifyService authVerifyService = AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class));
-        InMemoryEmailOtpService inMemoryEmailOtpService = mock(InMemoryEmailOtpService.class);
-        doNothing().when(inMemoryEmailOtpService).verify("demo@example.com", "session-1", "123456");
+        CognitoAuthFlowResponse verified = new CognitoAuthFlowResponse();
+        CognitoAuthenticationResult result = new CognitoAuthenticationResult();
+        result.setAccessToken("cognito-email-token");
+        verified.setAuthenticationResult(result);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq("demo@example.com"),
+                eq(java.util.Map.of("EMAIL_OTP_CODE", "123456")), eq("session-1"))).thenReturn(verified);
 
         when(userRepository.findByEmail("demo@example.com")).thenReturn(Optional.empty());
         when(userRepository.existsByUsername("demo")).thenReturn(false);
@@ -96,7 +131,6 @@ class CognitoOtpAuthServiceTest {
                 passwordEncoder,
                 jwtTokenProvider,
                 authVerifyService,
-                inMemoryEmailOtpService,
                 300,
                 300,
                 60
@@ -120,7 +154,6 @@ class CognitoOtpAuthServiceTest {
     void shouldStartPhoneOtpLogin() {
         CognitoOtpClient client = mock(CognitoOtpClient.class);
         AuthVerifyService authVerifyService = AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class));
-        InMemoryEmailOtpService inMemoryEmailOtpService = mock(InMemoryEmailOtpService.class);
 
         CognitoAuthFlowResponse response = new CognitoAuthFlowResponse();
         response.setChallengeName("SMS_OTP");
@@ -134,7 +167,6 @@ class CognitoOtpAuthServiceTest {
                 mock(PasswordEncoder.class),
                 mock(JwtTokenProvider.class),
                 authVerifyService,
-                inMemoryEmailOtpService,
                 300,
                 300,
                 60
@@ -160,7 +192,6 @@ class CognitoOtpAuthServiceTest {
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         JwtTokenProvider jwtTokenProvider = mock(JwtTokenProvider.class);
         AuthVerifyService authVerifyService = AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class));
-        InMemoryEmailOtpService inMemoryEmailOtpService = mock(InMemoryEmailOtpService.class);
 
         CognitoAuthFlowResponse response = new CognitoAuthFlowResponse();
         CognitoAuthenticationResult authResult = new CognitoAuthenticationResult();
@@ -188,7 +219,6 @@ class CognitoOtpAuthServiceTest {
                 passwordEncoder,
                 jwtTokenProvider,
                 authVerifyService,
-                inMemoryEmailOtpService,
                 300,
                 300,
                 60

@@ -6,13 +6,20 @@ import com.example.demo.threads.dto.ThreadFeedView;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 public interface ThreadRepository extends JpaRepository<com.example.demo.threads.entity.Thread, Long> {
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM Thread t WHERE t.id = :id")
+    Optional<com.example.demo.threads.entity.Thread> findByIdForInteraction(@Param("id") Long id);
 
     @Query(value = """
             SELECT
@@ -282,6 +289,87 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             WHERE t.id = :id
             """)
     Optional<ThreadQueryView> findViewById(Long id);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Thread t
+            SET t.summaryStatus = 'PROCESSING', t.summaryOwner = :owner,
+                t.summaryLeaseUntil = :until, t.summaryAttempts = t.summaryAttempts + 1
+            WHERE t.id = :threadId
+              AND t.status = 'NORMAL'
+              AND t.summaryAttempts < 5
+              AND (t.summaryStatus IS NULL OR t.summaryStatus = 'PENDING'
+                   OR (t.summaryStatus = 'PROCESSING' AND (t.summaryLeaseUntil IS NULL OR t.summaryLeaseUntil <= :now)))
+            """)
+    int claimSummaryProcessingIfNormal(@Param("threadId") Long threadId, @Param("owner") String owner,
+                                      @Param("now") java.time.Instant now, @Param("until") java.time.Instant until);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Thread t
+            SET t.summaryStatus = :summaryStatus, t.summaryOwner = NULL,
+                t.summaryLeaseUntil = NULL, t.summaryAttempts = 0
+            WHERE t.id = :threadId
+              AND t.status = 'NORMAL'
+              AND (t.summaryStatus IS NULL OR t.summaryStatus <> 'PROCESSING')
+            """)
+    int updateSummaryStatusIfNormal(@Param("threadId") Long threadId,
+                                    @Param("summaryStatus") String summaryStatus);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Thread t
+            SET t.summary = :summary,
+                t.summaryStatus = 'COMPLETED', t.summaryOwner = NULL, t.summaryLeaseUntil = NULL
+            WHERE t.id = :threadId
+              AND t.status = 'NORMAL'
+              AND t.summaryStatus = 'PROCESSING'
+              AND t.summaryOwner = :owner
+              AND t.summaryLeaseUntil > :now
+              AND t.updatedAt = :sourceUpdatedAt
+            """)
+    int completeSummaryIfNormal(@Param("threadId") Long threadId,
+                                @Param("summary") String summary, @Param("owner") String owner,
+                                @Param("now") java.time.Instant now, @Param("sourceUpdatedAt") java.time.Instant sourceUpdatedAt);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Thread t
+            SET t.summary = :summary,
+                t.summaryStatus = :summaryStatus
+            WHERE t.id = :threadId
+              AND t.status = 'NORMAL'
+              AND t.summaryStatus = 'PENDING'
+            """)
+    int restoreSummaryIfPendingAndNormal(@Param("threadId") Long threadId,
+                                         @Param("summary") String summary,
+                                         @Param("summaryStatus") String summaryStatus);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Thread t
+            SET t.summaryStatus = 'FAILED', t.summaryOwner = NULL, t.summaryLeaseUntil = NULL
+            WHERE t.id = :threadId
+              AND t.status = 'NORMAL'
+              AND t.summaryStatus = 'PROCESSING'
+              AND t.summaryOwner = :owner
+            """)
+    int markSummaryFailedIfProcessingAndNormal(@Param("threadId") Long threadId, @Param("owner") String owner);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Thread t SET t.summaryStatus = 'FAILED', t.summaryOwner = NULL, t.summaryLeaseUntil = NULL
+            WHERE t.id = :id AND t.status = 'NORMAL' AND t.summaryAttempts >= 5
+              AND (t.summaryStatus = 'PENDING' OR (t.summaryStatus = 'PROCESSING'
+                   AND (t.summaryLeaseUntil IS NULL OR t.summaryLeaseUntil <= :now)))
+            """)
+    int exhaustSummaryLease(@Param("id") Long id, @Param("now") java.time.Instant now);
 
     @Query("""
             SELECT

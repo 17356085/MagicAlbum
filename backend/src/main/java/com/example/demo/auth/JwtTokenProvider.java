@@ -92,6 +92,7 @@ public class JwtTokenProvider {
     private boolean isObviousPlaceholder(String value) {
         String normalized = value.toLowerCase(Locale.ROOT);
         return normalized.contains("change_me")
+                || normalized.contains("changethis")
                 || normalized.contains("change-me")
                 || normalized.contains("replace_me")
                 || normalized.contains("replace-me")

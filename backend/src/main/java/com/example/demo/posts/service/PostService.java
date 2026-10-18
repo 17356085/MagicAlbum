@@ -2,7 +2,6 @@ package com.example.demo.posts.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.demo.common.RedisKeys;
-import com.example.demo.common.RedisCacheEvictor;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.dto.PostLikeResponse;
@@ -14,6 +13,7 @@ import com.example.demo.posts.entity.PostLike;
 import com.example.demo.posts.repo.PostLikeRepository;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.repo.ThreadRepository;
+import com.example.demo.threads.service.ThreadCacheInvalidator;
 import com.example.demo.user.repo.UserRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,11 +25,16 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -47,6 +52,7 @@ public class PostService {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final NotificationClient notificationClient;
+    private final ThreadCacheInvalidator threadCacheInvalidator;
 
     @Autowired
     public PostService(PostRepository postRepository,
@@ -76,6 +82,7 @@ public class PostService {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper == null ? defaultObjectMapper() : objectMapper;
         this.notificationClient = notificationClient;
+        this.threadCacheInvalidator = new ThreadCacheInvalidator(redisTemplate, this.objectMapper);
     }
 
     PostService(PostRepository postRepository, ThreadRepository threadRepository, UserRepository userRepository,
@@ -92,9 +99,14 @@ public class PostService {
         int limit = Math.min(Math.max(size, 1), 50);
         int pageIndex = Math.max(page, 1) - 1;
         String normalizedSort = normalizeSort(sort);
-        CachedPostPage cached = readThreadPostsCache(threadId, normalizedSort, page, limit);
+        CachedPostPage cached = currentUserId == null
+                ? readThreadPostsCache(threadId, normalizedSort, page, limit)
+                : null;
         if (cached != null) {
-            return new PageImpl<>(cached.items(), PageRequest.of(pageIndex, limit), cached.total());
+            if (isFreshAnonymousPostPage(cached, threadId)) {
+                return new PageImpl<>(cached.items(), PageRequest.of(pageIndex, limit), cached.total());
+            }
+            threadCacheInvalidator.evictThreadPosts(threadId);
         }
         PageRequest pr = PageRequest.of(pageIndex, limit);
         Page<PostQueryView> p = "likeCount".equals(normalizedSort)
@@ -169,7 +181,7 @@ public class PostService {
         post.setContentMd(content);
         post.setReplyToPostId(parentId);
         Post saved = postRepository.save(post);
-        evictThreadPostsCache(threadId);
+        evictThreadCachesAfterCommit(threadId);
         sendInteractionNotifications(authorId, thread, parent, saved);
         return toDto(saved);
     }
@@ -227,9 +239,9 @@ public class PostService {
         return userIds;
     }
 
+    @Transactional
     public PostDto update(Long userId, Long postId, UpdatePostRequest req) {
-        Post post = postRepository.findActiveById(postId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        Post post = findPostForInteraction(postId);
         findNormalThread(post.getThreadId());
         if (!post.getAuthorId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可编辑评论");
@@ -243,27 +255,28 @@ public class PostService {
         }
         post.setContentMd(content);
         Post saved = postRepository.save(post);
-        evictThreadPostsCache(post.getThreadId());
+        evictThreadCachesAfterCommit(post.getThreadId());
         return toDto(saved);
     }
 
+    @Transactional
     public void delete(Long userId, Long postId) {
-        Post post = postRepository.findActiveById(postId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        Post post = findPostForInteraction(postId);
         findNormalThread(post.getThreadId());
         if (!post.getAuthorId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可删除评论");
         }
-        evictThreadPostsCache(post.getThreadId());
         postRepository.deleteById(postId);
+        evictThreadCachesAfterCommit(post.getThreadId());
     }
 
     @Transactional
     public void hideForModeration(Long postId) {
-        Post post = findActivePost(postId);
+        Post post = findPostForInteraction(postId);
+        findNormalThread(post.getThreadId());
         post.setStatus("HIDDEN");
         postRepository.save(post);
-        evictThreadPostsCache(post.getThreadId());
+        evictThreadCachesAfterCommit(post.getThreadId());
     }
 
     private PostDto toDto(Post p) {
@@ -301,14 +314,14 @@ public class PostService {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
         }
-        Post post = findActivePost(postId);
+        Post post = findActivePostForInteraction(postId);
         boolean alreadyLiked = postLikeRepository.existsByPostIdAndUserId(postId, userId);
         if (!alreadyLiked) {
             PostLike like = new PostLike();
             like.setPostId(postId);
             like.setUserId(userId);
             postLikeRepository.save(like);
-            evictThreadPostsCache(post.getThreadId());
+            evictThreadCachesAfterCommit(post.getThreadId());
             sendLikeNotification(userId, post);
         }
         return new PostLikeResponse(postId, true, countLikes(postId));
@@ -319,10 +332,10 @@ public class PostService {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
         }
-        Post post = findActivePost(postId);
+        Post post = findActivePostForInteraction(postId);
         if (postLikeRepository.existsByPostIdAndUserId(postId, userId)) {
             postLikeRepository.deleteByPostIdAndUserId(postId, userId);
-            evictThreadPostsCache(post.getThreadId());
+            evictThreadCachesAfterCommit(post.getThreadId());
         }
         return new PostLikeResponse(postId, false, countLikes(postId));
     }
@@ -343,12 +356,68 @@ public class PostService {
         return post;
     }
 
+    private Post findActivePostForInteraction(Long postId) {
+        Post post = findPostForInteraction(postId);
+        findNormalThread(post.getThreadId());
+        return post;
+    }
+
+    private Post findPostForInteraction(Long postId) {
+        Post post = postRepository.findByIdForInteraction(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        if (!"NORMAL".equals(post.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在");
+        }
+        return post;
+    }
+
     private com.example.demo.threads.entity.Thread findNormalThread(Long threadId) {
         com.example.demo.threads.entity.Thread thread = threadId == null ? null : threadRepository.findById(threadId).orElse(null);
         if (thread == null || !"NORMAL".equals(thread.getStatus())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
         return thread;
+    }
+
+    private boolean isFreshAnonymousPostPage(CachedPostPage cached, Long threadId) {
+        List<PostDto> items = cached.items();
+        if (items == null || cached.total() < 0 || cached.total() < items.size()) {
+            return false;
+        }
+        if (items.isEmpty()) {
+            return true;
+        }
+        if (items.stream().anyMatch(dto -> dto == null
+                || dto.getId() == null
+                || dto.getId() <= 0
+                || dto.getThreadId() == null
+                || dto.getUpdatedAt() == null)) {
+            return false;
+        }
+        List<Long> ids = items.stream().map(PostDto::getId).toList();
+        if (ids.stream().distinct().count() != ids.size()) {
+            return false;
+        }
+        List<Post> authoritative = postRepository.findAllById(ids);
+        if (authoritative == null || authoritative.size() != ids.size()) {
+            return false;
+        }
+        Map<Long, Post> byId = new HashMap<>();
+        for (Post post : authoritative) {
+            if (post == null || post.getId() == null || byId.put(post.getId(), post) != null) {
+                return false;
+            }
+        }
+        return items.stream().allMatch(dto -> {
+            Post post = dto == null ? null : byId.get(dto.getId());
+            return post != null
+                    && threadId.equals(post.getThreadId())
+                    && threadId.equals(dto.getThreadId())
+                    && "NORMAL".equals(post.getStatus())
+                    && post.getUpdatedAt() != null
+                    && dto.getUpdatedAt() != null
+                    && Objects.equals(post.getUpdatedAt(), dto.getUpdatedAt());
+        });
     }
 
     private long countLikes(Long postId) {
@@ -418,14 +487,21 @@ public class PostService {
         }
     }
 
-    private void evictThreadPostsCache(Long threadId) {
-        if (redisTemplate == null || threadId == null) {
+    private void evictThreadCachesAfterCommit(Long threadId) {
+        afterCommit(() -> threadCacheInvalidator.evictThread(threadId));
+    }
+
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
             return;
         }
-        try {
-            RedisCacheEvictor.evictMatching(redisTemplate, RedisKeys.threadPostsPattern(threadId));
-        } catch (Exception ignored) {
-        }
+        action.run();
     }
 
     private String threadPostsCacheKey(Long threadId, String sort, int page, int size) {

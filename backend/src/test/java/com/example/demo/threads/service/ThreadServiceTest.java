@@ -1,10 +1,12 @@
 package com.example.demo.threads.service;
 
+import com.example.demo.ai.service.AiSummaryCacheService;
 import com.example.demo.common.config.RabbitMQConfig;
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
+import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.threads.service.mp.ThreadReadServiceMp;
@@ -28,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -49,6 +52,7 @@ class ThreadServiceTest {
         Thread thread = new Thread();
         thread.setId(8L);
         thread.setStatus("NORMAL");
+        when(threadRepository.findByIdForInteraction(8L)).thenReturn(Optional.of(thread));
         when(threadRepository.findById(8L)).thenReturn(Optional.of(thread));
 
         service.hideForModeration(8L);
@@ -58,6 +62,27 @@ class ThreadServiceTest {
         assertThatThrownBy(() -> service.getById(8L))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         e -> assertThat(e.getStatusCode().value()).isEqualTo(404));
+    }
+
+    @Test
+    void hideAndDelete_should_evict_ai_summary_cache_after_status_change() {
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        AiSummaryCacheService aiSummaryCacheService = mock(AiSummaryCacheService.class);
+        ThreadService service = new ThreadService(
+                threadRepository, null, sectionRepository, null, markdownRenderService,
+                mpProvider, false, rabbitProvider, false, null, null, null, null, aiSummaryCacheService);
+        Thread thread = new Thread();
+        thread.setId(8L);
+        thread.setAuthorId(1L);
+        thread.setStatus("NORMAL");
+        when(threadRepository.findByIdForInteraction(8L)).thenReturn(Optional.of(thread));
+
+        service.hideForModeration(8L);
+        service.delete(1L, 8L);
+
+        verify(aiSummaryCacheService, times(2)).evict(8L);
+        verify(markdownRenderService, times(2)).evict(8L);
     }
 
     @Test
@@ -177,6 +202,106 @@ class ThreadServiceTest {
         ThreadDto dto = service.create(1L, req);
         assertThat(dto.getId()).isEqualTo(123L);
         assertThat(dto.getTitle()).isEqualTo("Hello");
+    }
+
+    @Test
+    void create_should_accept_content_at_10000_characters() {
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        ThreadService service = new ThreadService(
+                threadRepository, sectionRepository, markdownRenderService,
+                mpProvider, false, rabbitProvider, false);
+        when(sectionRepository.existsById(7L)).thenReturn(true);
+        when(threadRepository.save(any(Thread.class))).thenAnswer(invocation -> {
+            Thread saved = invocation.getArgument(0);
+            saved.setId(123L);
+            return saved;
+        });
+        ThreadQueryView createdView = view(
+                123L, 7L, null, 1L, null, null, null, "Hello", "x".repeat(10_000));
+        when(threadRepository.findViewsByIdIn(List.of(123L))).thenReturn(List.of(createdView));
+
+        CreateThreadRequest req = new CreateThreadRequest();
+        req.setSectionId(7L);
+        req.setTitle("Hello");
+        req.setContent("x".repeat(10_000));
+
+        service.create(1L, req);
+
+        ArgumentCaptor<Thread> savedCaptor = ArgumentCaptor.forClass(Thread.class);
+        verify(threadRepository).save(savedCaptor.capture());
+        assertThat(savedCaptor.getValue().getContentMd()).hasSize(10_000);
+    }
+
+    @Test
+    void create_should_reject_content_over_10000_characters() {
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        ThreadService service = new ThreadService(
+                threadRepository, sectionRepository, markdownRenderService,
+                mpProvider, false, rabbitProvider, false);
+        when(sectionRepository.existsById(7L)).thenReturn(true);
+
+        CreateThreadRequest req = new CreateThreadRequest();
+        req.setSectionId(7L);
+        req.setTitle("Hello");
+        req.setContent("x".repeat(10_001));
+
+        assertThatThrownBy(() -> service.create(1L, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("内容过长");
+        verify(threadRepository, never()).save(any(Thread.class));
+    }
+
+    @Test
+    void update_should_accept_content_at_10000_characters() {
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        ThreadService service = new ThreadService(
+                threadRepository, sectionRepository, markdownRenderService,
+                mpProvider, false, rabbitProvider, false);
+        Thread thread = new Thread();
+        thread.setId(8L);
+        thread.setAuthorId(1L);
+        thread.setSectionId(7L);
+        thread.setStatus("NORMAL");
+        thread.setTitle("Hello");
+        thread.setContentMd("old");
+        when(threadRepository.findByIdForInteraction(8L)).thenReturn(Optional.of(thread));
+        when(threadRepository.save(any(Thread.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        ThreadQueryView updatedView = view(
+                8L, 7L, null, 1L, null, null, null, "Hello", "x".repeat(10_000));
+        when(threadRepository.findViewsByIdIn(List.of(8L))).thenReturn(List.of(updatedView));
+
+        UpdateThreadRequest req = new UpdateThreadRequest();
+        req.setContent("x".repeat(10_000));
+
+        service.update(1L, 8L, req);
+
+        assertThat(thread.getContentMd()).hasSize(10_000);
+        verify(threadRepository).save(thread);
+    }
+
+    @Test
+    void update_should_reject_content_over_10000_characters() {
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        ThreadService service = new ThreadService(
+                threadRepository, sectionRepository, markdownRenderService,
+                mpProvider, false, rabbitProvider, false);
+        Thread thread = new Thread();
+        thread.setId(8L);
+        thread.setAuthorId(1L);
+        thread.setStatus("NORMAL");
+        when(threadRepository.findByIdForInteraction(8L)).thenReturn(Optional.of(thread));
+
+        UpdateThreadRequest req = new UpdateThreadRequest();
+        req.setContent("x".repeat(10_001));
+
+        assertThatThrownBy(() -> service.update(1L, 8L, req))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("内容过长");
+        verify(threadRepository, never()).save(any(Thread.class));
     }
 
     @Test

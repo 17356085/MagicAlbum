@@ -34,10 +34,22 @@ public class CognitoOtpAuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final AuthVerifyService authVerifyService;
-    private final InMemoryEmailOtpService inMemoryEmailOtpService;
     private final long emailOtpExpireSeconds;
     private final long phoneOtpExpireSeconds;
     private final long sendCooldownSeconds;
+    private org.springframework.transaction.support.TransactionTemplate provisioningTransactions;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public CognitoOtpAuthService(CognitoOtpClient client, UserRepository users, UserProfileRepository profiles,
+            PasswordEncoder passwords, JwtTokenProvider tokens, AuthVerifyService verification,
+            @Value("${app.auth.cognito.email-otp-expire-seconds:300}") long emailExpiry,
+            @Value("${app.auth.cognito.phone-otp-expire-seconds:300}") long phoneExpiry,
+            @Value("${app.auth.cognito.send-cooldown-seconds:60}") long cooldown,
+            org.springframework.transaction.PlatformTransactionManager manager) {
+        this(client, users, profiles, passwords, tokens, verification, emailExpiry, phoneExpiry, cooldown);
+        provisioningTransactions = new org.springframework.transaction.support.TransactionTemplate(manager);
+        provisioningTransactions.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
 
     public CognitoOtpAuthService(
             CognitoOtpClient cognitoOtpClient,
@@ -46,7 +58,6 @@ public class CognitoOtpAuthService {
             PasswordEncoder passwordEncoder,
             JwtTokenProvider jwtTokenProvider,
             AuthVerifyService authVerifyService,
-            InMemoryEmailOtpService inMemoryEmailOtpService,
             @Value("${app.auth.cognito.email-otp-expire-seconds:300}") long emailOtpExpireSeconds,
             @Value("${app.auth.cognito.phone-otp-expire-seconds:300}") long phoneOtpExpireSeconds,
             @Value("${app.auth.cognito.send-cooldown-seconds:60}") long sendCooldownSeconds
@@ -57,7 +68,6 @@ public class CognitoOtpAuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.authVerifyService = authVerifyService;
-        this.inMemoryEmailOtpService = inMemoryEmailOtpService;
         this.emailOtpExpireSeconds = Math.max(emailOtpExpireSeconds, 60);
         this.phoneOtpExpireSeconds = Math.max(phoneOtpExpireSeconds, 60);
         this.sendCooldownSeconds = Math.max(sendCooldownSeconds, 30);
@@ -86,22 +96,18 @@ public class CognitoOtpAuthService {
 
     private AuthCodeStartResponse startEmailOtp(String rawEmail) {
         String email = normalizeEmail(rawEmail);
+        CognitoAuthFlowResponse response;
         try {
-            InMemoryEmailOtpService.EmailOtpTicket ticket = inMemoryEmailOtpService.start(email, emailOtpExpireSeconds, sendCooldownSeconds);
-            return new AuthCodeStartResponse(
-                    AuthCodeChannel.email,
-                    maskEmail(email),
-                    ticket.sessionId(),
-                    emailOtpExpireSeconds,
-                    sendCooldownSeconds
-            );
+            response = initiateOtpChallenge(email, "EMAIL_OTP");
         } catch (Exception ex) {
-            if (ex instanceof ResponseStatusException responseStatusException) {
-                throw responseStatusException;
-            }
-            log.error("Failed to start local EMAIL_OTP flow for email={}", maskEmail(email), ex);
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Email OTP 发起失败，请稍后重试");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱验证码服务暂不可用，请检查 Cognito 配置", ex);
         }
+        if (response == null || !"EMAIL_OTP".equals(response.getChallengeName())
+                || trimToEmpty(response.getSession()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱验证码服务未返回可用验证会话");
+        }
+        return new AuthCodeStartResponse(AuthCodeChannel.email, maskEmail(email), response.getSession(),
+                emailOtpExpireSeconds, sendCooldownSeconds);
     }
 
     private AuthCodeStartResponse startPhoneOtp(String rawPhone) {
@@ -114,7 +120,7 @@ public class CognitoOtpAuthService {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Phone OTP 发起失败，请检查 Cognito 配置与短信通道");
         }
 
-        if (!"SMS_OTP".equals(trimToEmpty(response.getChallengeName())) || trimToEmpty(response.getSession()).isBlank()) {
+        if (response == null || !"SMS_OTP".equals(trimToEmpty(response.getChallengeName())) || trimToEmpty(response.getSession()).isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Cognito 未返回 SMS_OTP 挑战");
         }
 
@@ -130,17 +136,19 @@ public class CognitoOtpAuthService {
     private LoginResponse finishEmailOtp(AuthCodeFinishRequest request) {
         String email = normalizeEmail(request.getAddress());
 
+        CognitoAuthFlowResponse response;
         try {
-            inMemoryEmailOtpService.verify(email, trimToEmpty(request.getSession()), trimToEmpty(request.getCode()));
+            response = cognitoOtpClient.respondToChallenge("EMAIL_OTP", email,
+                    Map.of("EMAIL_OTP_CODE", trimToEmpty(request.getCode())), trimToEmpty(request.getSession()));
         } catch (Exception ex) {
-            if (ex instanceof ResponseStatusException responseStatusException) {
-                throw responseStatusException;
-            }
-            log.warn("Failed to finish local EMAIL_OTP flow for email={}", maskEmail(email), ex);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "邮箱验证码无效或已过期");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "邮箱验证码无效或已过期", ex);
+        }
+        if (response == null || response.getAuthenticationResult() == null
+                || trimToEmpty(response.getAuthenticationResult().getAccessToken()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "邮箱验证码登录未完成");
         }
 
-        User user = resolveOrCreateLocalUserByEmail(email);
+        User user = provision(() -> resolveOrCreateLocalUserByEmail(email), () -> userRepository.findByEmail(email));
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
         return new LoginResponse(token, toUserDto(user));
     }
@@ -165,9 +173,21 @@ public class CognitoOtpAuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机验证码登录未完成");
         }
 
-        User user = resolveOrCreateLocalUserByPhone(phone);
+        User user = provision(() -> resolveOrCreateLocalUserByPhone(phone), () -> userRepository.findByPhone(phone));
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
         return new LoginResponse(token, toUserDto(user));
+    }
+
+    private User provision(java.util.function.Supplier<User> action,
+                           java.util.function.Supplier<Optional<User>> readWinner) {
+        if (provisioningTransactions == null) return action.get();
+        try {
+            return provisioningTransactions.execute(status -> action.get());
+        } catch (org.springframework.dao.DataIntegrityViolationException conflict) {
+            User winner = provisioningTransactions.execute(status -> readWinner.get().orElse(null));
+            if (winner != null) return winner;
+            throw conflict;
+        }
     }
 
     private CognitoAuthFlowResponse initiateOtpChallenge(String username, String preferredChallenge) {

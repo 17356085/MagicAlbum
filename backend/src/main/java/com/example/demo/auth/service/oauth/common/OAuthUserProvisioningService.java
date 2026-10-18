@@ -21,8 +21,18 @@ public class OAuthUserProvisioningService {
     private final UserProfileRepository userProfileRepository;
     private final ConnectedAccountsService userConnectedAccountsService;
     private final PasswordEncoder passwordEncoder;
+    private org.springframework.transaction.support.TransactionTemplate transactions;
 
-    public OAuthUserProvisioningService(
+    @org.springframework.beans.factory.annotation.Autowired
+    public OAuthUserProvisioningService(UserRepository users, UserProfileRepository profiles,
+            ConnectedAccountsService accounts, PasswordEncoder encoder,
+            org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this(users, profiles, accounts, encoder);
+        transactions = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        transactions.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    OAuthUserProvisioningService(
             UserRepository userRepository,
             UserProfileRepository userProfileRepository,
             ConnectedAccountsService userConnectedAccountsService,
@@ -49,6 +59,10 @@ public class OAuthUserProvisioningService {
     }
 
     public User resolveOrCreateGithubUser(GithubUserProfile githubUser) {
+        return provision("github", String.valueOf(githubUser.getId()), () -> resolveGithub(githubUser));
+    }
+
+    private User resolveGithub(GithubUserProfile githubUser) {
         String externalId = String.valueOf(githubUser.getId());
         Long connectedUserId = userConnectedAccountsService.findUserIdByExternalAccount("github", externalId);
         if (connectedUserId != null) {
@@ -70,6 +84,10 @@ public class OAuthUserProvisioningService {
     }
 
     public User resolveOrCreateGoogleUser(GoogleUserProfile googleUser) {
+        return provision("google", trimToEmpty(googleUser.getSub()), () -> resolveGoogle(googleUser));
+    }
+
+    private User resolveGoogle(GoogleUserProfile googleUser) {
         String externalId = trimToEmpty(googleUser.getSub());
         Long connectedUserId = userConnectedAccountsService.findUserIdByExternalAccount("google", externalId);
         if (connectedUserId != null) {
@@ -91,6 +109,10 @@ public class OAuthUserProvisioningService {
     }
 
     public User resolveOrCreateAppleUser(AppleIdTokenClaims appleUser) {
+        return provision("apple", trimToEmpty(appleUser.getSub()), () -> resolveApple(appleUser));
+    }
+
+    private User resolveApple(AppleIdTokenClaims appleUser) {
         String externalId = trimToEmpty(appleUser.getSub());
         Long connectedUserId = userConnectedAccountsService.findUserIdByExternalAccount("apple", externalId);
         if (connectedUserId != null) {
@@ -109,6 +131,22 @@ public class OAuthUserProvisioningService {
         userConnectedAccountsService.bindExternalAccount(user.getId(), "apple", externalId, resolveDisplayName(appleUser));
         ensureUserProfile(user, appleUser);
         return user;
+    }
+
+    private User provision(String provider, String externalId, java.util.function.Supplier<User> action) {
+        // Tests may use the four-argument constructor; application beans always receive a real transaction manager.
+        if (transactions == null) return action.get();
+        try {
+            return transactions.execute(status -> action.get());
+        } catch (org.springframework.dao.DataIntegrityViolationException conflict) {
+            // The failed creation has rolled back before reading the concurrent winner in a fresh transaction.
+            User winner = transactions.execute(status -> {
+                Long id = userConnectedAccountsService.findUserIdByExternalAccount(provider, externalId);
+                return id == null ? null : userRepository.findById(id).orElse(null);
+            });
+            if (winner != null) return winner;
+            throw conflict;
+        }
     }
 
     private User tryFindByEmail(String email) {

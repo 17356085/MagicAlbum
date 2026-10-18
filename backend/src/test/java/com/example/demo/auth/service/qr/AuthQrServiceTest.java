@@ -10,7 +10,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -130,5 +137,84 @@ class AuthQrServiceTest {
         var login = service.exchange(created.getQrId(), created.getPollToken());
         assertEquals("qr-login-token", login.getAccessToken());
         assertThrows(ResponseStatusException.class, () -> service.exchange(created.getQrId(), created.getPollToken()));
+    }
+
+    @Test
+    void concurrent_scans_assign_one_owner_and_reject_the_other() throws Exception {
+        AuthQrService service = createService();
+        QrLoginCreateResponse created = service.createSession();
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            List<Callable<Object>> calls = List.of(
+                    () -> attempt(() -> service.scan(created.getQrId(), 1001L)),
+                    () -> attempt(() -> service.scan(created.getQrId(), 2002L))
+            );
+            List<Future<Object>> futures = workers.invokeAll(calls, 5, TimeUnit.SECONDS);
+            List<Object> results = new ArrayList<>();
+            for (Future<Object> future : futures) {
+                results.add(future.get());
+            }
+
+            assertEquals(1, results.stream().filter(QrLoginStatusResponse.class::isInstance).count());
+            ResponseStatusException rejected = results.stream()
+                    .filter(ResponseStatusException.class::isInstance)
+                    .map(ResponseStatusException.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(409, rejected.getStatusCode().value());
+            assertEquals(QrLoginStatus.SCANNED, service.getStatus(created.getQrId(), created.getPollToken()).getStatus());
+        } finally {
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrent_cancel_and_confirm_never_revive_a_terminal_session() throws Exception {
+        AuthQrService service = createService();
+        QrLoginCreateResponse created = service.createSession();
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            List<Callable<Object>> calls = List.of(
+                    () -> attempt(() -> {
+                        service.cancel(created.getQrId(), created.getPollToken());
+                        return null;
+                    }),
+                    () -> attempt(() -> service.confirm(created.getQrId(), 1001L))
+            );
+            List<Future<Object>> futures = workers.invokeAll(calls, 5, TimeUnit.SECONDS);
+            for (Future<Object> future : futures) {
+                future.get();
+            }
+
+            QrLoginStatus status = service.getStatus(created.getQrId(), created.getPollToken()).getStatus();
+            assertTrue(status == QrLoginStatus.CANCELLED || status == QrLoginStatus.CONFIRMED);
+        } finally {
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
+    void confirm_by_another_user_cannot_succeed_after_scan() {
+        AuthQrService service = createService();
+        QrLoginCreateResponse created = service.createSession();
+        service.scan(created.getQrId(), 1001L);
+
+        ResponseStatusException failure = assertThrows(
+                ResponseStatusException.class,
+                () -> service.confirm(created.getQrId(), 2002L)
+        );
+
+        assertEquals(403, failure.getStatusCode().value());
+        assertEquals(QrLoginStatus.SCANNED, service.getStatus(created.getQrId(), created.getPollToken()).getStatus());
+    }
+
+    private Object attempt(Callable<Object> action) {
+        try {
+            return action.call();
+        } catch (ResponseStatusException ex) {
+            return ex;
+        } catch (Exception ex) {
+            throw new AssertionError(ex);
+        }
     }
 }

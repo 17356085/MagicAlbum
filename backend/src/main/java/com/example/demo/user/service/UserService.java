@@ -50,7 +50,7 @@ public class UserService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "邮箱已被使用");
         }
         if (userRepository.existsByPhone(req.getPhone())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "手机号已被使用");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "该手机号已被占用");
         }
 
         // 密码加密
@@ -131,7 +131,7 @@ public class UserService {
             if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "邮箱已被使用");
         });
         userRepository.findByPhone(nextPhone).ifPresent(other -> {
-            if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "手机号已被使用");
+            if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.CONFLICT, "该手机号已被占用");
         });
 
         u.setUsername(nextUsername);

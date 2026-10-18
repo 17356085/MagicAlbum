@@ -8,13 +8,16 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
-@Table(name = "threads")
+@org.hibernate.annotations.DynamicUpdate
+@Table(name = "threads", indexes = @Index(name = "idx_threads_summary_recovery",
+        columnList = "status, summary_status, id, created_at"))
 @TableName("threads")
 public class Thread {
     @Id
@@ -51,6 +54,15 @@ public class Thread {
 
     @Column(name = "summary_status", length = 32)
     private String summaryStatus = "PENDING";
+
+    @Column(name = "summary_owner", length = 36)
+    private String summaryOwner;
+
+    @Column(name = "summary_lease_until")
+    private Instant summaryLeaseUntil;
+
+    @Column(name = "summary_attempts", nullable = false)
+    private int summaryAttempts;
 
     @PrePersist
     public void prePersist() {
@@ -89,4 +101,10 @@ public class Thread {
     public void setSummary(String summary) { this.summary = summary; }
     public String getSummaryStatus() { return summaryStatus; }
     public void setSummaryStatus(String summaryStatus) { this.summaryStatus = summaryStatus; }
+    public String getSummaryOwner() { return summaryOwner; }
+    public void setSummaryOwner(String owner) { this.summaryOwner = owner; }
+    public Instant getSummaryLeaseUntil() { return summaryLeaseUntil; }
+    public void setSummaryLeaseUntil(Instant until) { this.summaryLeaseUntil = until; }
+    public int getSummaryAttempts() { return summaryAttempts; }
+    public void setSummaryAttempts(int attempts) { this.summaryAttempts = attempts; }
 }

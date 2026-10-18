@@ -28,6 +28,7 @@ public class Section {
     @Column(columnDefinition = "TEXT")
     private String rules;
 
+    /** Navigation discovery flag; content authorization is governed by thread/post status. */
     @Column(nullable = false)
     private Boolean visible = true;
 

@@ -173,7 +173,13 @@ class NotificationOutboxServiceH2Test {
 
     private void savePending() {
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
-        transaction.executeWithoutResult(status -> outboxService.enqueue(
+        NotificationOutbox pending = transaction.execute(status -> outboxService.enqueue(
                 UUID.randomUUID(), 101L, "reply", "Title", "Content", null, null, "post").orElseThrow());
+        // Claim tests exercise lease ownership and ordering; make the seed row explicitly due.
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET available_at = ? WHERE id = ?",
+                Timestamp.from(Instant.EPOCH),
+                pending.getId()
+        );
     }
 }

@@ -189,7 +189,7 @@ class ContentReportServiceTest {
     @Test
     void hide_resolution_persists_reviewer_and_hides_thread() {
         ContentReport pending = report(31L, 7L, ReportTargetType.THREAD, 11L, ReportStatus.PENDING);
-        when(reportRepository.findById(31L)).thenReturn(Optional.of(pending));
+        when(reportRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(pending));
         when(reportRepository.save(any(ContentReport.class))).thenAnswer(invocation -> invocation.getArgument(0));
         ResolveReportRequest request = resolveRequest(ReportAction.HIDE);
 
@@ -198,6 +198,7 @@ class ContentReportServiceTest {
         assertEquals(ReportStatus.HIDDEN, response.getStatus());
         assertEquals(42L, response.getReviewerId());
         assertNotNull(response.getResolvedAt());
+        verify(reportRepository).findByIdForUpdate(31L);
         verify(threadService).hideForModeration(11L);
         verifyNoInteractions(postService);
     }
@@ -205,13 +206,14 @@ class ContentReportServiceTest {
     @Test
     void dismiss_resolution_leaves_target_service_untouched() {
         ContentReport pending = report(31L, 7L, ReportTargetType.POST, 21L, ReportStatus.PENDING);
-        when(reportRepository.findById(31L)).thenReturn(Optional.of(pending));
+        when(reportRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(pending));
         when(reportRepository.save(any(ContentReport.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ReportResolutionResponse response = service.resolve(42L, 31L, resolveRequest(ReportAction.DISMISS));
 
         assertEquals(ReportStatus.DISMISSED, response.getStatus());
         assertEquals(42L, response.getReviewerId());
+        verify(reportRepository).findByIdForUpdate(31L);
         verifyNoInteractions(threadService, postService);
     }
 
@@ -220,7 +222,7 @@ class ContentReportServiceTest {
         ContentReport hidden = report(31L, 7L, ReportTargetType.THREAD, 11L, ReportStatus.HIDDEN);
         hidden.setReviewerId(42L);
         hidden.setResolvedAt(Instant.parse("2026-10-07T00:00:00Z"));
-        when(reportRepository.findById(31L)).thenReturn(Optional.of(hidden));
+        when(reportRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(hidden));
 
         ReportResolutionResponse response = service.resolve(42L, 31L, resolveRequest(ReportAction.HIDE));
 
@@ -233,7 +235,7 @@ class ContentReportServiceTest {
     @Test
     void different_resolution_action_conflicts_after_resolution() {
         ContentReport hidden = report(31L, 7L, ReportTargetType.THREAD, 11L, ReportStatus.HIDDEN);
-        when(reportRepository.findById(31L)).thenReturn(Optional.of(hidden));
+        when(reportRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(hidden));
 
         ResponseStatusException failure = assertThrows(
                 ResponseStatusException.class,

@@ -105,7 +105,7 @@ public class ContentReportService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "处理参数不合法");
         }
 
-        ContentReport report = reportRepository.findById(reportId)
+        ContentReport report = reportRepository.findByIdForUpdate(reportId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "举报不存在"));
         ReportStatus resultingStatus = resultingStatus(request.getAction());
 

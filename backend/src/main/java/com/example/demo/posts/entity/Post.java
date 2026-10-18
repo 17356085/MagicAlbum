@@ -11,6 +11,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(name = "posts")
 public class Post {
     @Id

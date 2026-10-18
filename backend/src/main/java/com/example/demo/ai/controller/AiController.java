@@ -75,9 +75,11 @@ public class AiController {
                                               @AuthenticationPrincipal Long userId,
                                               HttpServletRequest httpRequest) {
         aiQuotaService.enforceRequest(userId, RequestIdentity.clientIp(httpRequest));
-        Thread thread = threadRepository.findById(threadId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        Thread thread = findNormalThread(threadId);
 
+        if ("PROCESSING".equals(thread.getSummaryStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "摘要正在生成");
+        }
         if (!force && thread.getSummary() != null && !thread.getSummary().isBlank()) {
             return Map.of("status", "COMPLETED", "summary", thread.getSummary());
         }
@@ -86,24 +88,22 @@ public class AiController {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "摘要生成服务暂不可用");
         }
 
-        String previousSummary = thread.getSummary();
-        String previousStatus = thread.getSummaryStatus();
-        thread.setSummaryStatus("PENDING");
-        threadRepository.save(thread);
+        if (threadRepository.updateSummaryStatusIfNormal(threadId, "PENDING") == 0) {
+            Thread current = threadRepository.findById(threadId).orElse(null);
+            if (current != null && "NORMAL".equals(current.getStatus())
+                    && "PROCESSING".equals(current.getSummaryStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "摘要正在生成");
+            }
+            aiSummaryCacheService.evict(threadId);
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        }
         aiSummaryCacheService.put(threadId, thread.getSummary(), "PENDING");
 
         try {
             rabbitTemplate.convertAndSend(com.example.demo.common.config.RabbitMQConfig.QUEUE_THREAD_SUMMARY, threadId);
         } catch (RuntimeException ex) {
-            thread.setSummary(previousSummary);
-            thread.setSummaryStatus(previousStatus);
-            try {
-                threadRepository.save(thread);
-                aiSummaryCacheService.put(threadId, previousSummary, previousStatus);
-            } catch (RuntimeException restoreException) {
-                log.error("Failed to restore summary state after queue submission failed for thread {}", threadId,
-                        restoreException);
-            }
+            // Keep the durable PENDING intent: a failed publisher must not restore over a newer request.
+            aiSummaryCacheService.evict(threadId);
             log.warn("Failed to enqueue AI summary for thread {}", threadId, ex);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "摘要生成服务暂不可用");
         }
@@ -112,19 +112,21 @@ public class AiController {
 
     @GetMapping("/summary/{threadId}")
     public Map<String, Object> getSummary(@PathVariable Long threadId) {
-        AiSummaryCacheService.CachedAiSummary cached = aiSummaryCacheService.get(threadId);
-        if (cached != null) {
-            return Map.of(
-                    "summary", cached.summary() == null ? "" : cached.summary(),
-                    "status", cached.status() == null ? "PENDING" : cached.status()
-            );
-        }
-        Thread thread = threadRepository.findById(threadId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        Thread thread = findNormalThread(threadId);
+        // The database owns lease state; a delayed cache fill must not roll a new task back to an old status.
         String summary = thread.getSummary() == null ? "" : thread.getSummary();
         String status = thread.getSummaryStatus() == null ? "PENDING" : thread.getSummaryStatus();
         aiSummaryCacheService.put(threadId, summary, status);
         return Map.of("summary", summary, "status", status);
+    }
+
+    private Thread findNormalThread(Long threadId) {
+        Thread thread = threadRepository.findById(threadId).orElse(null);
+        if (thread == null || thread.getStatus() == null || !"NORMAL".equals(thread.getStatus())) {
+            aiSummaryCacheService.evict(threadId);
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        }
+        return thread;
     }
 
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

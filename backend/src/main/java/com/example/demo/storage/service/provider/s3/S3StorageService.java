@@ -85,13 +85,14 @@ public class S3StorageService implements ImageStorageProvider {
                 .region(Region.of(region))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)));
         if (endpoint != null && !endpoint.isBlank()) {
-            b = b.endpointOverride(URI.create(endpoint));
+            b = b.endpointOverride(URI.create(endpoint)).forcePathStyle(true);
         }
         return b.build();
     }
 
     @Override
     public String uploadImage(MultipartFile file) {
+        validatePrefix();
         ImageUploadValidator.ValidatedImage validated = imageUploadValidator.validate(file);
         LocalDate today = LocalDate.now();
         String uuid = UUID.randomUUID().toString().replace("-", "");
@@ -110,9 +111,50 @@ public class S3StorageService implements ImageStorageProvider {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "上传失败", e);
         }
 
-        String base = (publicBaseUrl != null && !publicBaseUrl.isBlank()) ? publicBaseUrl : (endpoint != null && !endpoint.isBlank() ? endpoint : ("https://" + bucket + ".s3." + region + ".amazonaws.com"));
+        if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
+            // Persist a stable application URL, never an expiring signed URL in Markdown.
+            return "/uploads/s3/" + java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        String base = publicBaseUrl;
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         return base + "/" + key;
+    }
+
+    public URI resolveReadUrl(String token) {
+        if (!isConfigured()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "图片不存在");
+        validatePrefix();
+        String key;
+        try {
+            if (token == null || token.length() > 1024) throw new IllegalArgumentException();
+            key = new String(java.util.Base64.getUrlDecoder().decode(token), java.nio.charset.StandardCharsets.UTF_8);
+            if (!key.matches(java.util.regex.Pattern.quote(pathPrefix)
+                    + "/[0-9]{4}/[0-9]{2}/[0-9]{2}/[a-f0-9]{32}\\.(png|jpg|jpeg|gif|webp)")) {
+                throw new IllegalArgumentException();
+            }
+        } catch (IllegalArgumentException invalid) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "图片不存在");
+        }
+        var builder = software.amazon.awssdk.services.s3.presigner.S3Presigner.builder()
+                .region(Region.of(region))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)));
+        if (endpoint != null && !endpoint.isBlank()) {
+            builder.endpointOverride(URI.create(endpoint)).serviceConfiguration(
+                    software.amazon.awssdk.services.s3.S3Configuration.builder()
+                            .pathStyleAccessEnabled(true).checksumValidationEnabled(false).build());
+        }
+        try (var presigner = builder.build()) {
+            return presigner.presignGetObject(b -> b.signatureDuration(java.time.Duration.ofMinutes(5))
+                    .getObjectRequest(r -> r.bucket(bucket).key(key))).url().toURI();
+        } catch (java.net.URISyntaxException invalid) {
+            throw new IllegalStateException("Invalid storage read URL", invalid);
+        }
+    }
+
+    private void validatePrefix() {
+        if (pathPrefix == null || !pathPrefix.matches("[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*")) {
+            throw new IllegalStateException("S3 pathPrefix must contain only safe path segments");
+        }
     }
 
     @PreDestroy
