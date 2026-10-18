@@ -80,16 +80,41 @@ Run from the repository root:
 
 ```text
 python -m pytest --collect-only -q -p no:cacheprovider tests
-python -m pytest tests/api -m api
+python -m pytest tests/api/test_ci_contract.py tests/api/test_bookmarks.py tests/api/test_comments.py tests/api/test_threads.py tests/api/test_user.py -m api
+python -m pytest tests/e2e/selenium/test_ci_smoke.py -m ui --selenium-browser=chrome
+python -m pytest tests/api -m api  # local regression inventory
 python -m pytest tests/e2e/selenium -m ui --selenium-browser=chrome
 python -m pytest tests/e2e/playwright -m ui
 python -m pytest --collect-only -q -p no:cacheprovider tests/e2e/playwright/test_m0_journey.py
 ```
 
 Collection does not require running services. API and E2E execution does, and
-authenticated cases fail early when the test account variables are missing or
-the account cannot log in. The suites can create or mutate test data, so use an
-isolated local/test environment rather than a shared or production database.
+the suites can create or mutate test data, so use an isolated local/test
+environment rather than a shared or production database.
+
+The mandatory runtime API suite is the deterministic group
+`tests/api/test_ci_contract.py`, `test_bookmarks.py`, `test_comments.py`,
+`test_threads.py`, and `test_user.py`. Its session fixture creates two
+UUID-based accounts, one owner thread, and one reader comment, then verifies
+authenticated readback, bookmark and like transitions, cross-account
+ownership rejection, anonymous write rejection, and the concurrent same-phone
+registration contract (one `201`, one `409`, with a winner login/profile
+readback). Setup failures are test failures; the fixture never converts
+missing sections or failed API creation into `pytest.skip`. Teardown removes
+mutable content and interaction state, while accounts remain because the
+public contract has no account-delete operation.
+
+The dedicated Selenium smoke at
+`tests/e2e/selenium/test_ci_smoke.py` uses a separate generated account, seeded
+thread, and seeded comment. It reads the thread in Selenium, submits a comment
+through the UI, and reads that comment back through the API before cleanup.
+The other Selenium modules remain a regression inventory for local environments
+because they use an externally supplied account or historical data. The other
+API and Playwright modules likewise include cases that depend on an admin
+account, pre-existing content, or the optional AI provider; those capabilities
+are documented as local regression coverage rather than silently counted as CI
+coverage. The fresh-stack CI gate uses the deterministic API contract group,
+the dedicated Selenium smoke, and the independent M0 Playwright journey.
 
 Reports, screenshots, caches, `.env`, and Python bytecode are local run
 products, not source artifacts.
@@ -131,14 +156,15 @@ operation in this test contract.
 
 ### CI runtime-browser job
 
-`.github/workflows/ci.yml` runs the `runtime-browser` job after the frontend and
-backend checks. The job installs the checked-in Python dependencies and bundled
-Playwright Chromium, then invokes
+`.github/workflows/ci.yml` runs the `runtime-browser` job after the repository,
+frontend, backend, and Python source checks. The job installs the checked-in Python
+dependencies, warms Selenium Manager's Chrome resolution, and installs bundled
+Playwright Chromium before invoking
 [`scripts/ci/compose-browser-smoke.sh`](../scripts/ci/compose-browser-smoke.sh).
 The script creates a unique Compose project named
 `bluealbum-ci-<GITHUB_RUN_ID>-<GITHUB_RUN_ATTEMPT>`, refuses existing containers
 or volumes with that project label, checks the loopback host ports, builds the
-full Compose stack, and waits up to 300 seconds for healthy services. A local
+full Compose stack one application at a time, and waits up to 300 seconds for healthy services. A local
 manual invocation uses a UTC timestamp project suffix.
 
 The script creates CI-only credentials and `runtime.override.yml` under
@@ -146,16 +172,48 @@ The script creates CI-only credentials and `runtime.override.yml` under
 uploads the generated env file. The override only sets the three Java heap
 limits (`384m`, `256m`, `256m`) and two active JVM processors. The test receives
 the stack URLs and an empty `TEST_PLAYWRIGHT_CHANNEL`, so CI uses bundled
-Chromium. The JUnit gate requires at least one testcase and zero skipped,
-failed, or errored cases. The cleanup trap saves project logs, runs
+Chromium. The script runs the mandatory API contract group, the dedicated
+Selenium smoke, and the M0/R01/R04 Playwright journey against the same Compose
+project. Each JUnit report requires at least one testcase and zero skipped,
+failed, or errored cases. The Selenium step uses `DriverFactory` through
+Selenium Manager to resolve Chrome and its driver; Playwright continues to use
+its bundled Chromium. The cleanup trap saves project logs, runs
 `docker compose down --volumes --remove-orphans`, verifies that only the
 unique project resources are gone, and makes cleanup failure fail the job.
 
-The uploaded CI artifact contains the JUnit report, failure screenshots, and
-Compose logs. This job covers the new browser journey in a fresh runtime. Full
-backup/restore, restart, image-byte, and database recovery verification remains
+The uploaded CI artifact contains `api-junit.xml`, `selenium-junit.xml`,
+`ui-junit.xml`, the compatibility copy `junit.xml`, failure screenshots, and
+Compose logs. The legacy Selenium scenarios remain a separately runnable UI
+suite: they use the shared externally supplied account fixture and several
+historical data-dependent cases, so they remain outside this mandatory
+fresh-stack gate. Full backup/restore, restart, image-byte,
+and database recovery verification remains
 the responsibility of the local [`scripts/Test-ComposeRuntime.ps1`](../scripts/Test-ComposeRuntime.ps1)
 workflow.
+
+The Windows workflow also executes the same API 14, Selenium 1, and Playwright
+1 tests before restart and backup/restore verification. It writes
+`api-junit.xml`, `selenium-junit.xml`, and the compatible `browser-results.xml`,
+and rejects empty, failed, errored, or skipped reports. Builds run sequentially;
+the backend build JVM defaults to a 512 MiB heap and eight cached Spring test
+contexts, independently of the application runtime heap.
+
+On hosts with limited memory, the Windows workflow accepts
+`-ResourceMode Constrained -NoBuild` with separately built current-source
+images matching the run ID. Constrained mode refuses to build, because its
+budget applies to runtime services rather than Maven build processes. The
+default `Standard` mode retains its 4 GiB free
+commit-memory preflight. Constrained mode requires 2816 MiB: 1792 MiB of explicit
+service limits, 384 MiB reserved for the browser, and 640 MiB of headroom. It
+limits all seven services, sets each combined memory-plus-swap limit to the
+same value, and tunes the disposable MySQL instance and JVMs.
+Before restore, it stops the source applications, Redis, and RabbitMQ while
+keeping source MySQL available for the database snapshot checks. The same API,
+browser, restart, database hash, upload hash, and restored API checks still run.
+During restore, the browser reservation instead covers the 320 MiB source
+MySQL instance plus 64 MiB of phase allowance; the two full stacks never run
+together.
+This mode verifies correctness under resource limits; it is not a capacity test.
 
 To exercise the same entry point manually on a host with Docker and the test
 dependencies installed, run `bash scripts/ci/compose-browser-smoke.sh` from the

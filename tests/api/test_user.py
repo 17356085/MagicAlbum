@@ -1,48 +1,51 @@
-"""User follow and profile API tests."""
+"""User follow and profile API contracts against the deterministic CI seed."""
+
+from __future__ import annotations
 
 import pytest
 
-from tests.api.api_client import ApiClient
+from tests.api.conftest import Seed, items, json_body, require_status
 
 
-class TestFollowAPI:
-    """关注、取关和关注关系列表接口测试。"""
+def _follow(seed: Seed) -> None:
+    require_status(seed.owner.follow_user(seed.reader_id), (200,), "follow creation")
 
-    @pytest.fixture
-    def another_user_id(self, auth_api_client: ApiClient) -> int | None:
-        response = auth_api_client.list_users(page=1, size=5)
-        if response.status_code != 200:
-            return None
-        data = response.json()
-        items = data.get("items", []) or data.get("data", {}).get("items", [])
-        return items[0]["id"] if items else None
 
-    @pytest.mark.api
-    @pytest.mark.p1
-    def test_follow_and_unfollow_user(
-        self, auth_api_client: ApiClient, another_user_id: int | None
-    ) -> None:
-        if not another_user_id:
-            pytest.skip("无其他用户可用于测试")
-        follow_response = auth_api_client.follow_user(another_user_id)
-        assert follow_response.status_code == 200
-        unfollow_response = auth_api_client.unfollow_user(another_user_id)
-        assert unfollow_response.status_code == 200
+def _unfollow(seed: Seed) -> None:
+    require_status(seed.owner.unfollow_user(seed.reader_id), (200,), "follow cleanup")
 
-    @pytest.mark.api
-    def test_get_user_following(
-        self, auth_api_client: ApiClient, another_user_id: int | None
-    ) -> None:
-        if not another_user_id:
-            pytest.skip("无其他用户ID")
-        response = auth_api_client.get_user_following(another_user_id)
-        assert response.status_code == 200
 
-    @pytest.mark.api
-    def test_get_user_followers(
-        self, auth_api_client: ApiClient, another_user_id: int | None
-    ) -> None:
-        if not another_user_id:
-            pytest.skip("无其他用户ID")
-        response = auth_api_client.get_user_followers(another_user_id)
-        assert response.status_code == 200
+@pytest.mark.api
+@pytest.mark.p0
+def test_follow_and_unfollow_user(ci_seed: Seed) -> None:
+    _follow(ci_seed)
+    try:
+        following = ci_seed.owner.get_user_following(ci_seed.owner_id)
+        require_status(following, (200,), "following readback")
+        assert any(int(item.get("id") or 0) == ci_seed.reader_id for item in items(json_body(following, "following readback")))
+    finally:
+        _unfollow(ci_seed)
+
+
+@pytest.mark.api
+@pytest.mark.p0
+def test_get_user_following(ci_seed: Seed) -> None:
+    _follow(ci_seed)
+    try:
+        response = ci_seed.owner.get_user_following(ci_seed.owner_id)
+        require_status(response, (200,), "following listing")
+        assert any(int(item.get("id") or 0) == ci_seed.reader_id for item in items(json_body(response, "following listing")))
+    finally:
+        _unfollow(ci_seed)
+
+
+@pytest.mark.api
+@pytest.mark.p0
+def test_get_user_followers(ci_seed: Seed) -> None:
+    _follow(ci_seed)
+    try:
+        response = ci_seed.reader.get_user_followers(ci_seed.reader_id)
+        require_status(response, (200,), "followers listing")
+        assert any(int(item.get("id") or 0) == ci_seed.owner_id for item in items(json_body(response, "followers listing")))
+    finally:
+        _unfollow(ci_seed)

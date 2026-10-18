@@ -1,80 +1,61 @@
-"""Comment API tests."""
+"""Comment API contracts against the deterministic CI seed."""
+
+from __future__ import annotations
+
+from uuid import uuid4
 
 import pytest
 
-from tests.api.api_client import ApiClient
-from tests.utils.data_generator import unique_comment
+from tests.api.conftest import Seed, items, json_body, require_id, require_status
 
 
-class TestPostsAPI:
-    """评论创建、列表、删除和点赞接口测试。"""
+@pytest.mark.api
+@pytest.mark.p0
+def test_create_post(ci_seed: Seed) -> None:
+    response = ci_seed.owner.create_post(
+        ci_seed.thread_id,
+        f"CI API extra comment {uuid4().hex[:12]}",
+    )
+    require_status(response, (201,), "comment creation")
+    post_id = require_id(json_body(response, "comment creation"), "comment creation")
+    try:
+        assert post_id > 0
+    finally:
+        require_status(ci_seed.owner.delete_post(post_id), (204,), "created comment cleanup")
 
-    @pytest.fixture
-    def existing_thread(self, auth_api_client: ApiClient) -> int | None:
-        response = auth_api_client.list_threads(page=1, size=1)
-        if response.status_code != 200:
-            return None
-        data = response.json()
-        items = data.get("items", []) or data.get("data", {}).get("items", [])
-        return items[0]["id"] if items else None
 
-    @pytest.mark.api
-    def test_create_post(
-        self, auth_api_client: ApiClient, existing_thread: int | None
-    ) -> None:
-        if not existing_thread:
-            pytest.skip("无可用帖子")
-        response = auth_api_client.create_post(existing_thread, unique_comment())
-        assert response.status_code in (200, 201)
+@pytest.mark.api
+@pytest.mark.p0
+def test_list_posts(ci_seed: Seed) -> None:
+    response = ci_seed.owner.list_posts(ci_seed.thread_id, page=1, size=20)
+    require_status(response, (200,), "comment listing")
+    post_ids = {int(item.get("id") or 0) for item in items(json_body(response, "comment listing"))}
+    assert ci_seed.post_id in post_ids
 
-    @pytest.mark.api
-    def test_list_posts(
-        self, auth_api_client: ApiClient, existing_thread: int | None
-    ) -> None:
-        if not existing_thread:
-            pytest.skip("无可用帖子")
-        response = auth_api_client.list_posts(existing_thread, page=1, size=10)
-        assert response.status_code == 200
 
-    @pytest.mark.api
-    def test_delete_own_post(
-        self, auth_api_client: ApiClient, existing_thread: int | None
-    ) -> None:
-        if not existing_thread:
-            pytest.skip("无可用帖子")
+@pytest.mark.api
+@pytest.mark.p0
+def test_delete_own_post(ci_seed: Seed) -> None:
+    response = ci_seed.reader.create_post(
+        ci_seed.thread_id,
+        f"CI API delete comment {uuid4().hex[:12]}",
+    )
+    require_status(response, (201,), "deletable comment creation")
+    post_id = require_id(json_body(response, "deletable comment creation"), "deletable comment creation")
+    require_status(ci_seed.reader.delete_post(post_id), (204,), "own comment deletion")
 
-        create_response = auth_api_client.create_post(
-            existing_thread, unique_comment()
-        )
-        if create_response.status_code not in (200, 201):
-            pytest.skip("无法创建评论")
 
-        data = create_response.json()
-        post_id = data.get("id") or data.get("data", {}).get("id")
-        if not post_id:
-            pytest.skip("无法获取评论ID")
-
-        delete_response = auth_api_client.delete_post(post_id)
-        assert delete_response.status_code in (200, 204)
-
-    @pytest.mark.api
-    def test_like_and_unlike_post(
-        self, auth_api_client: ApiClient, existing_thread: int | None
-    ) -> None:
-        if not existing_thread:
-            pytest.skip("无可用帖子")
-
-        list_response = auth_api_client.list_posts(existing_thread, page=1, size=1)
-        if list_response.status_code != 200:
-            pytest.skip("无法获取评论列表")
-
-        data = list_response.json()
-        items = data.get("items", []) or data.get("data", {}).get("items", [])
-        if not items:
-            pytest.skip("无可用评论")
-
-        post_id = items[0]["id"]
-        like_response = auth_api_client.like_post(post_id)
-        assert like_response.status_code == 200
-        unlike_response = auth_api_client.unlike_post(post_id)
-        assert unlike_response.status_code == 200
+@pytest.mark.api
+@pytest.mark.p0
+def test_like_and_unlike_post(ci_seed: Seed) -> None:
+    liked = ci_seed.owner.like_post(ci_seed.post_id)
+    require_status(liked, (200,), "comment like")
+    assert json_body(liked, "comment like").get("liked") is True
+    try:
+        unliked = ci_seed.owner.unlike_post(ci_seed.post_id)
+        require_status(unliked, (200,), "comment unlike")
+        assert json_body(unliked, "comment unlike").get("liked") is False
+    finally:
+        # The endpoint is idempotent, so cleanup remains safe if the assertion
+        # above fails after the like was persisted.
+        ci_seed.owner.unlike_post(ci_seed.post_id)

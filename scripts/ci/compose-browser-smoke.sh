@@ -23,6 +23,9 @@ OVERRIDE_FILE="$ARTIFACT_DIR/runtime.override.yml"
 LOG_DIR="$ARTIFACT_DIR/logs"
 SCREENSHOT_DIR="$ARTIFACT_DIR/screenshots"
 JUNIT_FILE="$ARTIFACT_DIR/junit.xml"
+API_JUNIT_FILE="$ARTIFACT_DIR/api-junit.xml"
+SELENIUM_JUNIT_FILE="$ARTIFACT_DIR/selenium-junit.xml"
+UI_JUNIT_FILE="$ARTIFACT_DIR/ui-junit.xml"
 
 PROJECT=""
 COMPOSE_TOUCHED=0
@@ -234,7 +237,9 @@ EOF
 
 COMPOSE_TOUCHED=1
 compose config --quiet
-compose build
+for service in backend notification-service gateway frontend; do
+  compose build "$service"
+done
 compose up -d --wait --wait-timeout 300
 
 export TEST_BASE_URL="http://127.0.0.1:$frontend_port"
@@ -246,12 +251,40 @@ export TEST_PHONE=''
 export TEST_PASSWORD=''
 
 set +e
-python -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml "$JUNIT_FILE"
-pytest_status=$?
+python -m pytest -c pytest.ini \
+  tests/api/test_ci_contract.py \
+  tests/api/test_bookmarks.py \
+  tests/api/test_comments.py \
+  tests/api/test_threads.py \
+  tests/api/test_user.py \
+  -q --junitxml "$API_JUNIT_FILE"
+api_status=$?
 set -e
 
-[[ -f "$JUNIT_FILE" ]] || die "pytest did not produce a JUnit report: $JUNIT_FILE"
-validate_junit "$JUNIT_FILE"
-(( pytest_status == 0 )) || die "M0 browser journey exited with status $pytest_status"
+[[ -f "$API_JUNIT_FILE" ]] || die "API pytest did not produce a JUnit report: $API_JUNIT_FILE"
+validate_junit "$API_JUNIT_FILE"
+(( api_status == 0 )) || die "CI API contract suite exited with status $api_status"
+
+set +e
+python -m pytest -c pytest.ini tests/e2e/selenium/test_ci_smoke.py -q \
+  --selenium-browser=chrome --junitxml "$SELENIUM_JUNIT_FILE"
+selenium_status=$?
+set -e
+
+[[ -f "$SELENIUM_JUNIT_FILE" ]] || die "Selenium pytest did not produce a JUnit report: $SELENIUM_JUNIT_FILE"
+validate_junit "$SELENIUM_JUNIT_FILE"
+(( selenium_status == 0 )) || die "CI Selenium smoke exited with status $selenium_status"
+
+set +e
+python -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml "$UI_JUNIT_FILE"
+ui_status=$?
+set -e
+
+[[ -f "$UI_JUNIT_FILE" ]] || die "browser pytest did not produce a JUnit report: $UI_JUNIT_FILE"
+validate_junit "$UI_JUNIT_FILE"
+(( ui_status == 0 )) || die "M0 browser journey exited with status $ui_status"
+
+# Keep the historical artifact name for local tooling that already consumes it.
+cp -- "$UI_JUNIT_FILE" "$JUNIT_FILE"
 
 printf 'M0 browser Compose smoke passed for %s\n' "$PROJECT"

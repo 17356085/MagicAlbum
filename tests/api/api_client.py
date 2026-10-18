@@ -177,6 +177,11 @@ class ApiClient:
             f"{self.base_url}/threads/{thread_id}/like", headers=self.headers
         )
 
+    def get_thread_like(self, thread_id: int) -> httpx.Response:
+        return self._client.get(
+            f"{self.base_url}/threads/{thread_id}/like", headers=self.headers
+        )
+
     # ── Posts ────────────────────────────────────────────────
 
     def create_post(

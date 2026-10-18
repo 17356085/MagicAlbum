@@ -22,7 +22,8 @@ JVM 死锁和 Hikari 告警来自另一套采集窗口；出现 k6 通过并不�
 从仓库根目录启动完整隔离环境：
 
 ```bash
-docker compose -f perf/docker-compose.perf.yml up -d --build
+pwsh -File perf/New-PerfEnvironment.ps1
+docker compose --env-file perf/.env.perf -f perf/docker-compose.perf.yml up -d --build
 ```
 
 也可以先按 [`perf/README.md`](README.md) 的说明检查 Docker、端口和凭据配置。
@@ -33,10 +34,10 @@ docker compose -f perf/docker-compose.perf.yml up -d --build
 - Grafana：<http://localhost:3001>
 
 压测容器网络内的默认目标是 `http://nginx:8080`。数据库、Redis、RabbitMQ
-和 Grafana 的登录配置仅适用于本机隔离实验；共享或暴露环境前应先替换，
-不要把 Compose 里的示例凭据当作通用凭据。封装脚本不会透传 k6 的
-`PASSWORD`；需要显式合成账号密码时，请按 [`perf/README.md`](README.md)
-中的直接 k6 命令运行。
+和 Grafana 的凭据从私有 `perf/.env.perf` 注入，仅适用于本机隔离实验。
+封装脚本和直接命令使用同一份文件，Compose 将合成账号密码注入 k6，
+没有内置默认密码。已有私有文件时跳过生成命令，生成器会拒绝覆盖。
+新版项目及旧卷处理方式见 [`perf/README.md`](README.md)。
 
 ## 1. 阶梯并发测试
 

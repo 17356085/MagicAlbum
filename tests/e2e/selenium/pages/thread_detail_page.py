@@ -32,16 +32,16 @@ class ThreadDetailPage(BasePage):
     # 定位器
     # ═══════════════════════════════════════════════════════════
 
-    TITLE_XPATH = "//h1"
+    TITLE_XPATH = "//article//h1"
     CONTENT_CSS = ".prose, .markdown-body"
     AUTHOR_LINK_CSS = "a[href*='/users/']"
     NOT_FOUND_TEXT = "未找到帖子"
-    LIKE_BTN_XPATH = "//button[contains(@aria-label,'赞')]"
+    LIKE_BTN_XPATH = "//section[@aria-label='帖子互动']//button[.//span[normalize-space(.)='点赞' or normalize-space(.)='已点赞']]"
 
     # 评论区
     COMMENT_INPUT_CSS = "textarea[placeholder*='支持基础 Markdown']"
     COMMENT_SUBMIT_XPATH = "//button[contains(text(),'评论') or contains(text(),'发布')]"
-    COMMENT_CARDS_CSS = "ul.space-y-3 > li.rounded-md"
+    COMMENT_CARDS_CSS = "ul > li.ui-list-row"
 
     # ── 定位器属性 ─────────────────────────────────────────
 

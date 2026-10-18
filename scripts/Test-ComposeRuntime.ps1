@@ -5,10 +5,15 @@ param(
     [string]$ArtifactDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'outputs/m0-compose'),
     [string]$PythonExecutable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/.venv/Scripts/python.exe'),
     [string]$BrowserChannel = 'chrome',
+    [ValidateSet('Standard', 'Constrained')]
+    [string]$ResourceMode = 'Standard',
     [switch]$NoBuild
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ResourceMode -eq 'Constrained' -and -not $NoBuild) {
+    throw 'Constrained resource mode requires -NoBuild because the bounded memory budget excludes image build peaks'
+}
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
 if ($RunId -notmatch '^[a-f0-9]{10}$') { throw 'RunId must contain exactly ten lowercase hexadecimal characters' }
 $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
@@ -32,6 +37,8 @@ $checks = [System.Collections.Generic.List[object]]::new()
 $ownedProjects = [System.Collections.Generic.List[object]]::new()
 $succeeded = $false
 $snapshot = @{}
+$minimumFreeCommitKiB = if ($ResourceMode -eq 'Constrained') { [long](2816MB / 1KB) } else { [long](4GB / 1KB) }
+$containerBudgetMiB = if ($ResourceMode -eq 'Constrained') { 1792 } else { $null }
 
 function New-ComposeSecret {
     $bytes = [byte[]]::new(32)
@@ -43,6 +50,30 @@ function Confirm-Check([bool]$Passed, [string]$Name) {
     $checks.Add(@{Name = $Name; Passed = $Passed})
     if (-not $Passed) { throw "Compose verification failed: $Name" }
     Write-Host "PASS $Name"
+}
+
+function Assert-PytestJunitReport([string]$ReportPath, [string]$SuiteName, [int]$ExitCode) {
+    if ($ExitCode -ne 0) { throw "$SuiteName pytest run failed with exit code $ExitCode" }
+    if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) { throw "$SuiteName pytest run did not produce a JUnit report" }
+
+    try { [xml]$report = Get-Content -LiteralPath $ReportPath -Raw }
+    catch { throw "$SuiteName JUnit report is not valid XML" }
+
+    $suites = @($report.SelectNodes('//testsuite'))
+    if ($suites.Count -eq 0) { throw "$SuiteName JUnit report contains no test suites" }
+    foreach ($suite in $suites) {
+        if ([int]$suite.failures -or [int]$suite.errors -or [int]$suite.skipped) {
+            throw "$SuiteName JUnit report contains failures, errors, or skipped tests"
+        }
+    }
+    $testCases = @($report.SelectNodes('//testcase'))
+    if ($testCases.Count -lt 1) { throw "$SuiteName JUnit report contains no executed testcases" }
+    if (@($report.SelectNodes('//testcase/failure')).Count -or
+        @($report.SelectNodes('//testcase/error')).Count -or
+        @($report.SelectNodes('//testcase/skipped')).Count) {
+        throw "$SuiteName JUnit report contains testcase failures, errors, or skipped tests"
+    }
+    return $testCases.Count
 }
 
 function Invoke-VerificationCompose([string]$Project, [string]$EnvironmentFile, [string[]]$Arguments) {
@@ -74,7 +105,7 @@ function Assert-ProjectUnused([string]$Project) {
 New-Item -ItemType Directory -Path $ArtifactDirectory, $browserArtifacts, $browserTemporary -Force | Out-Null
 foreach ($project in @($sourceProject, $restoreProject)) { Assert-ProjectUnused $project }
 [IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'checks.json'), (ConvertTo-Json @{
-    RunId = $RunId; Succeeded = $false; Phase = 'preflight'; Checks = @(); CleanupErrors = @()
+    RunId = $RunId; ResourceMode = $ResourceMode; Succeeded = $false; Phase = 'preflight'; Checks = @(); CleanupErrors = @()
 }))
 $portKeys = @('MYSQL', 'REDIS', 'RABBITMQ', 'RABBITMQ_MANAGEMENT', 'BACKEND', 'NOTIFICATION', 'GATEWAY', 'FRONTEND')
 $ports = @(33306, 36379, 35673, 35674, 38080, 38081, 39090, 35173, 43306, 46379, 45673, 45674, 48080, 48081, 49090, 45173)
@@ -83,11 +114,17 @@ foreach ($port in $ports) {
 }
 $hostMemory = Get-CimInstance Win32_OperatingSystem
 [IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'host-memory-before.json'), (ConvertTo-Json @{
+    ResourceMode = $ResourceMode
+    MinimumFreeCommitKiB = $minimumFreeCommitKiB
+    ContainerBudgetMiB = $containerBudgetMiB
     FreePhysicalKiB = $hostMemory.FreePhysicalMemory
     FreeCommitKiB = $hostMemory.FreeVirtualMemory
     TotalCommitKiB = $hostMemory.TotalVirtualMemorySize
 }))
-if ([long]$hostMemory.FreeVirtualMemory -lt (4GB / 1KB)) {
+if ([long]$hostMemory.FreeVirtualMemory -lt $minimumFreeCommitKiB) {
+    if ($ResourceMode -eq 'Constrained') {
+        throw 'At least 2816 MiB of available host commit memory is required before starting the constrained isolated stack'
+    }
     throw 'At least 4 GiB of available host commit memory is required before starting the isolated stack'
 }
 
@@ -129,9 +166,76 @@ services:
   frontend:
     image: bluealbum-m0-frontend:$RunId
 "@
+    if ($ResourceMode -eq 'Constrained') {
+        # Keep Compose's $$ escape literal; never interpolate a process credential into the override.
+        $redisPasswordReference = '$$REDIS_PASSWORD'
+        $override = @"
+services:
+  mysql:
+    mem_limit: 320m
+    memswap_limit: 320m
+    cpus: 2.0
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=64M
+      - --innodb-log-buffer-size=8M
+      - --performance-schema=OFF
+      - --max-connections=32
+      - --thread-cache-size=8
+      - --table-open-cache=256
+      - --mysqlx=0
+  redis:
+    mem_limit: 48m
+    memswap_limit: 48m
+    cpus: 1.0
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$redisPasswordReference" --maxmemory 16mb --maxmemory-policy noeviction
+  rabbitmq:
+    mem_limit: 224m
+    memswap_limit: 224m
+    cpus: 2.0
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: '+S 2:2'
+  backend:
+    image: bluealbum-m0-backend:$RunId
+    mem_limit: 576m
+    memswap_limit: 576m
+    cpus: 2.0
+    environment:
+      JAVA_OPTS: '-Xms32m -Xmx224m -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=32m -XX:ActiveProcessorCount=2'
+  notification-service:
+    image: bluealbum-m0-notification:$RunId
+    mem_limit: 288m
+    memswap_limit: 288m
+    cpus: 2.0
+    environment:
+      JAVA_OPTS: '-Xms16m -Xmx96m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=32m -XX:MaxDirectMemorySize=16m -XX:ActiveProcessorCount=2'
+  gateway:
+    image: bluealbum-m0-gateway:$RunId
+    mem_limit: 288m
+    memswap_limit: 288m
+    cpus: 2.0
+    environment:
+      JAVA_OPTS: '-Xms16m -Xmx80m -XX:MaxMetaspaceSize=96m -XX:ReservedCodeCacheSize=32m -XX:MaxDirectMemorySize=16m -XX:ActiveProcessorCount=2'
+  frontend:
+    image: bluealbum-m0-frontend:$RunId
+    mem_limit: 48m
+    memswap_limit: 48m
+    cpus: 1.0
+    environment:
+      NGINX_ENTRYPOINT_WORKER_PROCESSES_AUTOTUNE: '1'
+"@
+    }
     [IO.File]::WriteAllText($overrideFile, $override)
     Invoke-VerificationCompose $sourceProject $sourceEnvironment @('config', '--quiet')
-    if (-not $NoBuild) { Invoke-VerificationCompose $sourceProject $sourceEnvironment @('build') }
+    if (-not $NoBuild) {
+        foreach ($service in @('backend', 'notification-service', 'gateway', 'frontend')) {
+            Invoke-VerificationCompose $sourceProject $sourceEnvironment @('build', $service)
+        }
+    }
     $ownedProjects.Add(@{Name = $sourceProject; Environment = $sourceEnvironment})
     Invoke-VerificationCompose $sourceProject $sourceEnvironment @('up', '-d', '--wait', '--wait-timeout', '300', '--no-build')
     Confirm-Check $true 'Complete source Compose stack is healthy'
@@ -149,17 +253,27 @@ services:
     }
     Push-Location $runtimeRoot
     try {
-        & $PythonExecutable -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml (Join-Path $ArtifactDirectory 'browser-results.xml')
-        if ($LASTEXITCODE -ne 0) { throw 'M0 browser journey failed; inspect browser artifacts' }
+        $apiReportPath = Join-Path $ArtifactDirectory 'api-junit.xml'
+        & $PythonExecutable -m pytest -c pytest.ini `
+            tests/api/test_ci_contract.py tests/api/test_bookmarks.py tests/api/test_comments.py `
+            tests/api/test_threads.py tests/api/test_user.py -q --junitxml $apiReportPath
+        $apiExitCode = $LASTEXITCODE
+        $null = Assert-PytestJunitReport $apiReportPath 'API 14' $apiExitCode
+        Confirm-Check $true 'API 14 contract tests execute with API read-back'
+
+        $seleniumReportPath = Join-Path $ArtifactDirectory 'selenium-junit.xml'
+        & $PythonExecutable -m pytest -c pytest.ini tests/e2e/selenium/test_ci_smoke.py `
+            --selenium-browser=chrome -q --junitxml $seleniumReportPath
+        $seleniumExitCode = $LASTEXITCODE
+        $null = Assert-PytestJunitReport $seleniumReportPath 'Selenium 1' $seleniumExitCode
+        Confirm-Check $true 'Selenium 1 smoke test executes with UI and API read-back'
+
+        $browserReportPath = Join-Path $ArtifactDirectory 'browser-results.xml'
+        & $PythonExecutable -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml $browserReportPath
+        $playwrightExitCode = $LASTEXITCODE
+        $null = Assert-PytestJunitReport $browserReportPath 'Playwright 1' $playwrightExitCode
+        Confirm-Check $true 'Playwright 1 browser journey executes with independent accounts and API read-back'
     } finally { Pop-Location }
-    [xml]$browserReport = Get-Content -LiteralPath (Join-Path $ArtifactDirectory 'browser-results.xml') -Raw
-    $executedBrowserTests = 0
-    foreach ($suite in $browserReport.SelectNodes('//testsuite')) {
-        if ([int]$suite.failures -or [int]$suite.errors -or [int]$suite.skipped) { throw 'M0 browser suite failed or skipped required coverage' }
-        $executedBrowserTests += [int]$suite.tests
-    }
-    if ($executedBrowserTests -lt 1) { throw 'M0 browser suite collected no executable tests' }
-    Confirm-Check $true 'Browser journey executes with independent accounts and API read-back'
 
     $sourceIds = @(& docker ps -q --filter "label=com.docker.compose.project=$sourceProject")
     if ($LASTEXITCODE -ne 0 -or -not $sourceIds.Count) { throw 'Cannot sample owned containers' }
@@ -177,7 +291,7 @@ services:
         Scope = 'Five sequential local samples; not a capacity benchmark'
     }))
 
-    $accountPassword = New-ComposeSecret
+    $accountPassword = 'Aa1!' + (New-ComposeSecret)
     $accountEmail = "backup-$RunId@example.test"
     $account = Send-VerificationRequest $sourceUrl POST '/users/register' @{
         username = "backup-$RunId"; email = $accountEmail; password = $accountPassword
@@ -226,7 +340,11 @@ services:
     $restartedThread = Send-VerificationRequest $sourceUrl GET "/threads/$($thread.id)" $null
     Confirm-Check ($restartedThread.title -eq $thread.title -and $restartedThread.content.Contains($image.url)) 'Application restart preserves persisted thread and image reference'
     Start-Sleep -Seconds 3
-    Invoke-VerificationCompose $sourceProject $sourceEnvironment @('stop', 'frontend', 'gateway', 'backend', 'notification-service')
+    if ($ResourceMode -eq 'Constrained') {
+        Invoke-VerificationCompose $sourceProject $sourceEnvironment @('stop', 'frontend', 'gateway', 'backend', 'notification-service', 'redis', 'rabbitmq')
+    } else {
+        Invoke-VerificationCompose $sourceProject $sourceEnvironment @('stop', 'frontend', 'gateway', 'backend', 'notification-service')
+    }
     $ownedProjects.Add(@{Name = $restoreProject; Environment = $restoreEnvironment})
     & (Join-Path $PSScriptRoot 'Test-ComposeBackup.ps1') -SourceProject $sourceProject -RestoreProject $restoreProject `
         -SourceEnvironmentFile $sourceEnvironment -RestoreEnvironmentFile $restoreEnvironment `
@@ -271,7 +389,7 @@ services:
     }
     $succeeded = $succeeded -and $cleanupErrors.Count -eq 0
     [IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'checks.json'), (ConvertTo-Json @{
-        RunId = $RunId; Succeeded = $succeeded; Checks = $checks.ToArray(); CleanupErrors = $cleanupErrors.ToArray()
+        RunId = $RunId; ResourceMode = $ResourceMode; Succeeded = $succeeded; Checks = $checks.ToArray(); CleanupErrors = $cleanupErrors.ToArray()
     } -Depth 6))
     if ($cleanupErrors.Count) { throw ($cleanupErrors -join '; ') }
 }

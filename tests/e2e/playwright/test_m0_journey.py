@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import string
 import time
@@ -207,10 +208,11 @@ def _register_and_login_ui(page: Page, identity: AccountIdentity) -> str:
     dialog.locator("#auth-register-confirm-password").fill(identity.password)
     dialog.locator("form").get_by_role("button", name="注册", exact=True).click()
 
-    # A real verification provider is outside this isolated browser contract.
-    # If it is enabled, report the boundary explicitly instead of faking a pass.
+    # The isolated Compose runner configures verification mode as off.  A
+    # mandatory browser journey must fail if that contract is changed; skipping
+    # would turn a missing registration capability into a false green run.
     if dialog.get_by_text("人工验证", exact=False).is_visible():
-        pytest.skip("浏览器注册需要人工验证；请在隔离 Compose 栈关闭外部验证码后重试")
+        pytest.fail("浏览器注册需要人工验证；隔离 Compose 栈必须关闭外部验证码")
     expect(page.get_by_role("status").filter(has_text="注册成功，请登录")).to_be_visible(timeout=10000)
 
     # Registration returns the modal to its default phone-password mode while
@@ -503,6 +505,11 @@ def test_m0_r01_r04_browser_journey() -> None:
                 lambda: _notification_pair(_read_notifications(client_a), thread_id),
             )
             reply_notification, like_notification = notifications
+            if (
+                str(reply_notification.get("targetType") or "").lower() != "post"
+                or int(reply_notification.get("targetId") or 0) != post_id
+            ):
+                pytest.fail("reply notification did not target the created comment")
 
             page_a.get_by_role("button", name="通知", exact=True).click()
             panel = page_a.get_by_role("dialog", name="通知")
@@ -521,7 +528,15 @@ def test_m0_r01_r04_browser_journey() -> None:
             reply_row = panel.locator("li").filter(has_text=str(reply_notification.get("title") or "")).first
             expect(reply_row).to_be_visible(timeout=10000)
             reply_row.get_by_role("button", name="查看", exact=True).click()
-            expect(page_a).to_have_url(f"**/threads/{thread_id}*", timeout=10000)
+            expect(page_a).to_have_url(
+                re.compile(
+                    rf"^{re.escape(BASE_URL)}/threads/{thread_id}(?:\?[^#]*)?#post-{post_id}$"
+                ),
+                timeout=10000,
+            )
+            comment_locator = page_a.locator(f"#post-{post_id}")
+            expect(comment_locator).to_be_visible(timeout=10000)
+            expect(comment_locator).to_contain_text(comment_content, timeout=10000)
             def read_reply_if_ready() -> dict[str, Any] | None:
                 current = _read_notification_state(client_a, int(reply_notification["id"]))
                 return current if current and current.get("read") is True else None

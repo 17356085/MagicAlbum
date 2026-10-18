@@ -11,7 +11,8 @@ SOAK_DURATION="${SOAK_DURATION:-30m}"
 WRITE_RATE="${WRITE_RATE:-0.2}"
 
 COMPOSE_FILE="${COMPOSE_FILE:-perf/docker-compose.perf.yml}"
-K6_COMMAND=(docker compose -f "$COMPOSE_FILE" --profile tools run --rm)
+PERF_ENV_FILE="${PERF_ENV_FILE:-perf/.env.perf}"
+K6_COMMAND=(docker compose --env-file "$PERF_ENV_FILE" -f "$COMPOSE_FILE" --profile tools run --rm)
 
 run_k6() {
   local name="$1"
@@ -52,6 +53,7 @@ Environment overrides:
   SOAK_VUS=50
   SOAK_DURATION=30m
   USERS_MULTIPLIER=2
+  PERF_ENV_FILE=perf/.env.perf
 
 Modes:
   step         Run 10 / 25 / 50 / 100 / 200 VU, each with a steady stage.

@@ -29,3 +29,5 @@ Java 主源码位于 `src/main/java`，测试位于 `src/test/java`，包声明�
 顶栏专用逻辑位于 `components/header/`，侧栏的标签、动态和最近浏览位于 `components/sidebar/`；页面和共享外壳只协调这些模块。帖子服务的缓存和读取 DTO 组装分别交给 `ThreadCache`、`ThreadDtoMapper`。审核的领域枚举放在 `moderation/model/`，持久化实体仍放在 `entity/`。可靠通知排队位于核心服务的 `notifications/outbox/`，收件箱持久化与事件去重位于独立通知服务。
 
 新增文件时不要复制整个构建目录、依赖目录或运行数据。`node_modules`、`target`、`dist`、依赖缓存及上传文件留在工具或运行配置约定的位置，不参与人工目录迁移。
+
+当前结构、跨模块边界与剩余设计风险见[全仓代码健康与结构设计审查](project-health-2026-10-18.md)。目录迁移前先确认规则与数据所有权，避免仅移动文件却保留原有依赖问题。

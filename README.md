@@ -129,6 +129,7 @@ Python 接口和浏览器测试需要单独准备测试环境及账号，见 [`t
 - [性能实验](./perf/README.md)：隔离压测配置和结果解释；历史数字不是当前性能承诺。
 - [通知投递与运维](./docs/engineering/notification-delivery.md)：Outbox、重试、租约、凭证与迁移边界。
 - [目录与文件归属](./docs/engineering/repository-layout.md)：共享工程目录及运行产物边界。
+- [手机号唯一性与迁移验证](./docs/engineering/phone-uniqueness.md)：MySQL 唯一约束、只读重复检查、冲突响应和隔离验收；已有库部署前先核对重复数据。
 - [产品开发与技术演进报告](./docs/engineering/development-roadmap.md)：后续里程碑、微服务边界、Go 媒体处理、搜索、观测及验收计划；属于建议方案。
 - [分阶段推进记录](./docs/engineering/stage-progress.md)：M0–M4 实施状态和下一阶段的验收要求。
 - [M0 完整容器验收](./docs/engineering/m0-runtime-verification.md)：隔离浏览器旅程、重启持久化、数据库与图片恢复，以及 CI 入口。

@@ -44,3 +44,15 @@
 ## 验收边界
 
 本轮本地验收不代表公网发布、生产历史数据迁移、真实 AI 调用、多实例一致性或容量达标。CI 入口已纳入仓库配置，但远端执行状态需要实际工作流结果确认。
+
+## 2026-10-17 本机工程/M0 完整运行复验
+
+`a101700009` 已在本机 `ResourceMode=Constrained` 下完成 M0 完整运行复验：源栈健康、12 项运行验收检查全部通过，`CleanupErrors=[]`。证据：`outputs/m0-compose/a101700009/checks.json`。
+
+本次 mandatory16 全部通过：API 14、Selenium 1、Playwright 1，三套报告均为 0 failure、0 error、0 skipped。证据：`outputs/m0-compose/a101700009/mandatory-test-summary.json`。
+
+资源模式边界保持明确：Standard 默认保留 4 GiB 可用提交内存门槛；Constrained 使用 2816 MiB 门槛，由七服务 1792 MiB cap、浏览器阶段 384 MiB 预留和 640 MiB 余量组成。恢复阶段仅保留源 MySQL 运行；资源证据记录源 MySQL 加恢复七服务共 8 个容器、2112 MiB 内存配额，memory 与 swap 配额相等且无 OOM。证据：`outputs/m0-compose/a101700009/restore-resource-verification.json`。
+
+恢复验证状态为 `PASSED`：恢复前核心库 16 张表、通知库 2 张表的比较通过；1 个上传文件、125 bytes、SHA-256 一致；应用重启持久性以及恢复账号、书签、图片回读均通过。证据：`outputs/m0-compose/a101700009/backup/m0-compose-backup-fad675f91a/verification-summary.json`。
+
+以上记录仅说明本机工程/M0 复验结果，不代表远端 CI、生产上线或更大范围产品验收；详见[2026-10-17 复验评审记录](review-2026-10-17.md)。

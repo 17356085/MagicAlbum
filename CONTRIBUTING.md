@@ -5,6 +5,7 @@
 - [目录与文件归属](docs/engineering/repository-layout.md)
 - [前后端编码与验证规范](docs/engineering/coding-standards.md)
 - [产品与界面约定](PRODUCT.md)
+- [2026-10-17 工程审查与优化记录](docs/engineering/review-2026-10-17.md)
 
 开始修改前，核对工作区已有改动与调用方。目录迁移必须同步更新引用、启动命令和文档；不要把重命名、业务改造、依赖升级和数据迁移混进同一批改动。
 

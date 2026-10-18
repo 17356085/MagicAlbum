@@ -27,7 +27,8 @@ function envJson(name, def) {
 
 const BASE_URL = __ENV.BASE_URL || "http://nginx:8080";
 const USERS = envInt("USERS", 200);
-const PASSWORD = __ENV.PASSWORD || "PerfPassw0rd!";
+const PASSWORD = __ENV.PASSWORD;
+if (!PASSWORD) throw new Error("PASSWORD must be supplied by the private performance environment");
 const WRITE_RATE = envFloat("WRITE_RATE", 0.2);
 const STAGES = envJson("STAGES", [
   { duration: "2m", target: 50 },
@@ -74,7 +75,7 @@ function registerUser(runId, idx) {
   });
 
   if (res.status !== 201 && res.status !== 409) {
-    fail(`register failed status=${res.status} body=${res.body}`);
+    fail(`register failed status=${res.status}`);
   }
   return { username, phone, email, password: PASSWORD };
 }
