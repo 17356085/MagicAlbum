@@ -4,6 +4,7 @@ import com.example.demo.threads.event.entity.ContentEventOutbox;
 import com.example.demo.threads.event.entity.ContentEventStatus;
 import com.example.demo.threads.event.entity.ContentEventType;
 import com.example.demo.threads.event.repo.ContentEventOutboxRepository;
+import com.example.demo.threads.maintenance.service.ContentWriteGateService;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -11,6 +12,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.UUID;
 
 @Service
@@ -20,15 +22,20 @@ public class ContentEventRecorder {
     private static final String REQUEST_ID_PATTERN = "[A-Za-z0-9._:-]+";
 
     private final ContentEventOutboxRepository repository;
+    private final ContentWriteGateService contentWriteGateService;
     private final Clock clock;
 
     @Autowired
-    public ContentEventRecorder(ContentEventOutboxRepository repository) {
-        this(repository, Clock.systemUTC());
+    public ContentEventRecorder(ContentEventOutboxRepository repository,
+                                ContentWriteGateService contentWriteGateService) {
+        this(repository, contentWriteGateService, Clock.systemUTC());
     }
 
-    ContentEventRecorder(ContentEventOutboxRepository repository, Clock clock) {
+    ContentEventRecorder(ContentEventOutboxRepository repository,
+                         ContentWriteGateService contentWriteGateService,
+                         Clock clock) {
         this.repository = repository;
+        this.contentWriteGateService = contentWriteGateService;
         this.clock = clock;
     }
 
@@ -48,6 +55,7 @@ public class ContentEventRecorder {
                                      long aggregateVersion,
                                      ContentEventType eventType,
                                      String requestId) {
+        contentWriteGateService.enter();
         requirePositive(aggregateId, "aggregateId");
         if (aggregateVersion <= 0) {
             throw new IllegalArgumentException("aggregateVersion must be positive");
@@ -63,9 +71,12 @@ public class ContentEventRecorder {
         event.setAggregateId(aggregateId);
         event.setAggregateVersion(aggregateVersion);
         event.setEventType(eventType);
-        event.setOccurredAt(clock.instant());
+        Instant occurredAt = clock.instant();
+        event.setOccurredAt(occurredAt);
         event.setRequestId(normalizeRequestId(requestId));
         event.setStatus(ContentEventStatus.PENDING);
+        event.setAttempts(0);
+        event.setAvailableAt(occurredAt);
         return repository.save(event);
     }
 

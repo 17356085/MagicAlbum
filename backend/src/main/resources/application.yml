@@ -42,6 +42,9 @@ spring:
       max-file-size: 10MB
       max-request-size: 12MB
   rabbitmq:
+    connection-timeout: ${RABBITMQ_CONNECTION_TIMEOUT:5s}
+    publisher-confirm-type: correlated
+    publisher-returns: true
     listener:
       simple:
         auto-startup: ${app.rabbit.enabled:false}
@@ -139,6 +142,30 @@ app:
       send-cooldown-seconds: ${COGNITO_SEND_COOLDOWN_SECONDS:60}
   rabbit:
     enabled: ${APP_RABBIT_ENABLED:false}
+  search:
+    enabled: ${APP_SEARCH_ENABLED:false}
+    consumer:
+      enabled: ${APP_SEARCH_CONSUMER_ENABLED:true}
+      max-attempts: ${APP_SEARCH_CONSUMER_MAX_ATTEMPTS:3}
+      backoff-ms: ${APP_SEARCH_CONSUMER_BACKOFF_MS:250}
+    elasticsearch:
+      url: ${ELASTICSEARCH_URL:http://127.0.0.1:9200}
+      api-key: ${ELASTICSEARCH_API_KEY:}
+      connect-timeout: ${ELASTICSEARCH_CONNECT_TIMEOUT:1s}
+      read-timeout: ${ELASTICSEARCH_READ_TIMEOUT:2s}
+      replicas: ${ELASTICSEARCH_REPLICAS:1}
+  content:
+    events:
+      enabled: ${APP_CONTENT_EVENTS_ENABLED:false}
+      publisher-scheduler-enabled: ${APP_CONTENT_EVENTS_PUBLISHER_SCHEDULER_ENABLED:true}
+      batch-size: ${APP_CONTENT_EVENTS_BATCH_SIZE:20}
+      max-attempts: ${APP_CONTENT_EVENTS_MAX_ATTEMPTS:5}
+      backoff-base: ${APP_CONTENT_EVENTS_BACKOFF_BASE:2s}
+      lease-duration: ${APP_CONTENT_EVENTS_LEASE_DURATION:30s}
+      confirm-timeout: ${APP_CONTENT_EVENTS_CONFIRM_TIMEOUT:5s}
+      connection-timeout: ${APP_CONTENT_EVENTS_CONNECTION_TIMEOUT:5s}
+      commit-margin: ${APP_CONTENT_EVENTS_COMMIT_MARGIN:2s}
+      poll-interval-ms: ${APP_CONTENT_EVENTS_POLL_INTERVAL_MS:2000}
   notifications:
     client:
       mode: ${NOTIFICATION_SERVICE_MODE:remote}

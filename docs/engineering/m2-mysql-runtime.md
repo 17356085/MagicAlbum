@@ -6,7 +6,10 @@ random run label and two empty databases:
 
 - `ba_content_upgrade_<runId>` is used by `ContentEventMySqlUpgradeAcceptance`.
   Flyway first migrates through `20261018.1`, inserts legal legacy user/section/thread
-  rows, then runs the complete migration and validation through `20261018.2`.
+  rows, migrates through `20261018.2` and inserts an existing content event, then
+  runs the complete migration and validation through `20261019.2`. It verifies
+  delivery-field backfill, claim indexes and the search-control singleton as well
+  as legacy rows and uniqueness constraints.
 - `ba_content_runtime_<runId>` is used by `ThreadContentEventIntegrationTest`.
   Spring is started with Flyway enabled, Hibernate `validate`, the MySQL driver and
   an explicit `SELECT DATABASE()`/product guard. The six integration scenarios prove

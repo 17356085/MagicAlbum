@@ -281,6 +281,8 @@ class ThreadContentEventIntegrationTest {
             assertThat(event.getSchemaVersion()).isEqualTo(1);
             assertThat(event.getAggregateType()).isEqualTo("THREAD");
             assertThat(event.getStatus()).isEqualTo(ContentEventStatus.PENDING);
+            assertThat(event.getAttempts()).isZero();
+            assertThat(event.getAvailableAt()).isNotNull();
             assertThat(event.getOccurredAt()).isNotNull();
         }
         String schemaFunction = expectMysql ? "DATABASE()" : "CURRENT_SCHEMA()";
@@ -291,7 +293,8 @@ class ThreadContentEventIntegrationTest {
                 String.class);
         assertThat(columns).containsExactlyInAnyOrder(
                 "ID", "EVENT_ID", "SCHEMA_VERSION", "AGGREGATE_TYPE", "AGGREGATE_ID",
-                "AGGREGATE_VERSION", "EVENT_TYPE", "OCCURRED_AT", "REQUEST_ID", "STATUS");
+                "AGGREGATE_VERSION", "EVENT_TYPE", "OCCURRED_AT", "REQUEST_ID", "STATUS",
+                "ATTEMPTS", "AVAILABLE_AT", "LEASE_OWNER", "LEASE_UNTIL", "PUBLISHED_AT", "LAST_ERROR");
     }
 
     private void updateConcurrently(Long threadId,

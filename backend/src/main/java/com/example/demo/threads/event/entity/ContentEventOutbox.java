@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.PrePersist;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -23,7 +24,11 @@ import java.time.Instant;
                 @UniqueConstraint(name = "uk_content_event_outbox_aggregate_version",
                         columnNames = {"aggregate_id", "aggregate_version"})
         },
-        indexes = @Index(name = "idx_content_event_outbox_status_id", columnList = "status, id")
+        indexes = {
+                @Index(name = "idx_content_event_outbox_status_id", columnList = "status, id"),
+                @Index(name = "idx_content_event_outbox_delivery_claim", columnList = "status, available_at, id"),
+                @Index(name = "idx_content_event_outbox_delivery_lease", columnList = "status, lease_until, id")
+        }
 )
 public class ContentEventOutbox {
     @Id
@@ -60,6 +65,34 @@ public class ContentEventOutbox {
     @JdbcTypeCode(SqlTypes.VARCHAR)
     @Column(nullable = false, length = 16)
     private ContentEventStatus status;
+
+    @Column(nullable = false)
+    private int attempts;
+
+    @Column(name = "available_at", nullable = false)
+    private Instant availableAt;
+
+    @Column(name = "lease_owner", length = 64)
+    private String leaseOwner;
+
+    @Column(name = "lease_until")
+    private Instant leaseUntil;
+
+    @Column(name = "published_at")
+    private Instant publishedAt;
+
+    @Column(name = "last_error", length = 64)
+    private String lastError;
+
+    @PrePersist
+    void initializeDeliveryFields() {
+        if (status == null) {
+            status = ContentEventStatus.PENDING;
+        }
+        if (availableAt == null) {
+            availableAt = occurredAt == null ? Instant.now() : occurredAt;
+        }
+    }
 
     public Long getId() {
         return id;
@@ -139,5 +172,53 @@ public class ContentEventOutbox {
 
     public void setStatus(ContentEventStatus status) {
         this.status = status;
+    }
+
+    public int getAttempts() {
+        return attempts;
+    }
+
+    public void setAttempts(int attempts) {
+        this.attempts = attempts;
+    }
+
+    public Instant getAvailableAt() {
+        return availableAt;
+    }
+
+    public void setAvailableAt(Instant availableAt) {
+        this.availableAt = availableAt;
+    }
+
+    public String getLeaseOwner() {
+        return leaseOwner;
+    }
+
+    public void setLeaseOwner(String leaseOwner) {
+        this.leaseOwner = leaseOwner;
+    }
+
+    public Instant getLeaseUntil() {
+        return leaseUntil;
+    }
+
+    public void setLeaseUntil(Instant leaseUntil) {
+        this.leaseUntil = leaseUntil;
+    }
+
+    public Instant getPublishedAt() {
+        return publishedAt;
+    }
+
+    public void setPublishedAt(Instant publishedAt) {
+        this.publishedAt = publishedAt;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
     }
 }

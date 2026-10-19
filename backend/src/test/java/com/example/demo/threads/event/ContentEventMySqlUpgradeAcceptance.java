@@ -57,6 +57,12 @@ class ContentEventMySqlUpgradeAcceptance {
                     .as("the pre-content-event target must not contain content_version")
                     .isZero();
 
+            Flyway contentEvents = flyway(url, username, password).target("20261018.2").load();
+            contentEvents.migrate();
+            long versionedThreadId = insertVersionedThread(connection, legacyThreadId);
+            String eventId = UUID.randomUUID().toString();
+            insertEvent(connection, eventId, versionedThreadId, 1L);
+
             Flyway complete = flyway(url, username, password).load();
             complete.migrate();
             complete.validate();
@@ -71,15 +77,21 @@ class ContentEventMySqlUpgradeAcceptance {
             assertIndex(connection, "uk_content_event_outbox_event_id");
             assertIndex(connection, "uk_content_event_outbox_aggregate_version");
             assertIndex(connection, "idx_content_event_outbox_status_id");
-            assertFlywayVersion(connection, "20261018.2");
+            assertIndex(connection, "idx_content_event_outbox_delivery_claim");
+            assertIndex(connection, "idx_content_event_outbox_delivery_lease");
+            assertFlywayVersion(connection, "20261019.2");
+            assertThat(count(connection, "SELECT COUNT(*) FROM content_event_outbox WHERE event_id=? "
+                    + "AND attempts=0 AND available_at=occurred_at AND status='PENDING' "
+                    + "AND lease_owner IS NULL AND lease_until IS NULL AND published_at IS NULL "
+                    + "AND last_error IS NULL", eventId)).isEqualTo(1);
+            assertThat(count(connection, "SELECT COUNT(*) FROM content_search_control "
+                    + "WHERE id=1 AND ready=0 AND pause_owner IS NULL AND active_index IS NULL")).isEqualTo(1);
 
-            String eventId = UUID.randomUUID().toString();
-            insertEvent(connection, eventId, legacyThreadId, 1L);
-            assertThatThrownBy(() -> insertEvent(connection, eventId, legacyThreadId, 2L))
+            assertThatThrownBy(() -> insertEvent(connection, eventId, versionedThreadId, 2L))
                     .isInstanceOf(SQLException.class)
                     .satisfies(error -> assertThat(((SQLException) error).getSQLState())
                             .startsWith("23"));
-            assertThatThrownBy(() -> insertEvent(connection, UUID.randomUUID().toString(), legacyThreadId, 1L))
+            assertThatThrownBy(() -> insertEvent(connection, UUID.randomUUID().toString(), versionedThreadId, 1L))
                     .isInstanceOf(SQLException.class)
                     .satisfies(error -> assertThat(((SQLException) error).getSQLState())
                             .startsWith("23"));
@@ -155,6 +167,17 @@ class ContentEventMySqlUpgradeAcceptance {
                 throw new SQLException("The legacy fixture did not return a generated id");
             }
             return keys.getLong(1);
+        }
+    }
+
+    private static long insertVersionedThread(Connection connection, long originalId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "INSERT INTO threads (section_id,author_id,title,content_md,spoiler,status,content_version) "
+                        + "SELECT section_id,author_id,'Versioned legacy title','Versioned body',FALSE,'NORMAL',1 "
+                        + "FROM threads WHERE id=?", Statement.RETURN_GENERATED_KEYS)) {
+            statement.setLong(1, originalId);
+            statement.executeUpdate();
+            return generatedId(statement);
         }
     }
 

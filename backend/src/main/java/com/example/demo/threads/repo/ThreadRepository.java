@@ -17,6 +17,12 @@ import java.util.Optional;
 
 public interface ThreadRepository extends JpaRepository<com.example.demo.threads.entity.Thread, Long> {
 
+    List<com.example.demo.threads.entity.Thread> findByIdGreaterThanOrderByIdAsc(Long id, Pageable pageable);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_READ)
+    @Query("SELECT t FROM Thread t WHERE t.id = :id")
+    Optional<com.example.demo.threads.entity.Thread> findByIdForSearchProjection(@Param("id") Long id);
+
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM Thread t WHERE t.id = :id")
     Optional<com.example.demo.threads.entity.Thread> findByIdForInteraction(@Param("id") Long id);

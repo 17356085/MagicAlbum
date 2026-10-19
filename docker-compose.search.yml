@@ -1,0 +1,40 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.10
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # Development-only setting. The service has no published port and is
+      # reachable only by services on the Compose network.
+      xpack.security.enabled: "false"
+    mem_limit: 1g
+    memswap_limit: 1g
+    volumes:
+      - elasticsearchdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error
+          "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"
+          >/dev/null
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 30s
+
+  backend:
+    environment:
+      APP_CONTENT_EVENTS_ENABLED: "true"
+      APP_SEARCH_ENABLED: "true"
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_REPLICAS: "0"
+      # An async broker outage must not withdraw the authoritative HTTP API.
+      MANAGEMENT_HEALTH_RABBIT_ENABLED: "false"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+volumes:
+  elasticsearchdata:

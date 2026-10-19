@@ -6,6 +6,7 @@ import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.service.ThreadService;
+import com.example.demo.search.service.ThreadSearchService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
@@ -27,9 +28,11 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/v1/threads")
 public class ThreadsController {
     private final ThreadService threadService;
+    private final ThreadSearchService threadSearchService;
 
-    public ThreadsController(ThreadService threadService) {
+    public ThreadsController(ThreadService threadService, ThreadSearchService threadSearchService) {
         this.threadService = threadService;
+        this.threadSearchService = threadSearchService;
     }
 
     @PostMapping
@@ -49,7 +52,7 @@ public class ThreadsController {
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
-        Page<ThreadDto> p = threadService.list(q, tag, sectionId, page, size);
+        Page<ThreadDto> p = threadSearchService.list(q, tag, sectionId, page, size);
         return ResponseEntity.ok(PageResponse.from(p));
     }
 

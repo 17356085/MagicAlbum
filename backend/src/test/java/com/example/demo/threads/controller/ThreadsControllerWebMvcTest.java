@@ -2,6 +2,7 @@ package com.example.demo.threads.controller;
 
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.service.ThreadService;
+import com.example.demo.search.service.ThreadSearchService;
 import com.example.demo.auth.JwtTokenProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +40,9 @@ class ThreadsControllerWebMvcTest {
     ThreadService threadService;
 
     @MockitoBean
+    ThreadSearchService threadSearchService;
+
+    @MockitoBean
     JwtTokenProvider jwtTokenProvider;
 
     @BeforeEach
@@ -60,7 +64,7 @@ class ThreadsControllerWebMvcTest {
         dto.setTitle("T1");
         dto.setCreatedAt(Instant.parse("2025-01-01T00:00:01Z"));
 
-        when(threadService.list(eq(null), eq(null), eq(null), eq(1), eq(10)))
+        when(threadSearchService.list(eq(null), eq(null), eq(null), eq(1), eq(10)))
                 .thenReturn(new PageImpl<>(List.of(dto), PageRequest.of(0, 10), 1));
 
         mockMvc.perform(get("/api/v1/threads").param("page", "1").param("size", "10"))
@@ -74,7 +78,7 @@ class ThreadsControllerWebMvcTest {
 
     @Test
     void list_should_report_effective_page_metadata_when_service_clamps_size() throws Exception {
-        when(threadService.list(eq(null), eq(null), eq(null), eq(2), eq(20)))
+        when(threadSearchService.list(eq(null), eq(null), eq(null), eq(2), eq(20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(1, 10), 11));
 
         mockMvc.perform(get("/api/v1/threads").param("page", "2").param("size", "20"))
