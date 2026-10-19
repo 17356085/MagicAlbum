@@ -97,6 +97,20 @@ def test_content_and_header_fit(page: Page, width: int, dark: bool, path: str) -
 
 
 @pytest.mark.ui
+@pytest.mark.parametrize("width", (320, 390, 1280))
+def test_optional_tags_are_entered_through_visible_disclosure(page: Page, width: int) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    install_fixtures(page)
+    page.goto(BASE_URL + "/threads/new", wait_until="networkidle")
+    tags = page.get_by_label("标签", exact=True)
+    expect(tags).to_be_hidden()
+    page.get_by_text("标签（可选）", exact=True).click()
+    expect(tags).to_be_visible()
+    tags.fill("社区, 阅读")
+    expect(tags).to_have_value("社区, 阅读")
+
+
+@pytest.mark.ui
 @pytest.mark.parametrize("width", (320, 390))
 def test_mobile_search_escape_restores_trigger(page: Page, width: int) -> None:
     page.set_viewport_size({"width": width, "height": 844})

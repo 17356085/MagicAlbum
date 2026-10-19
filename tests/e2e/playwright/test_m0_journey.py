@@ -439,6 +439,8 @@ def test_m0_r01_r04_browser_journey() -> None:
             )
             page_a.locator("#thread-create-section").select_option(str(section_id))
             page_a.locator("#thread-create-title").fill(thread_title)
+            page_a.get_by_text("标签（可选）", exact=True).click()
+            expect(page_a.get_by_label("标签", exact=True)).to_be_visible()
             page_a.locator("#thread-create-tags").fill("m0journey")
             page_a.locator("textarea[placeholder='请输入帖子正文，支持 Markdown']").fill(thread_content)
             page_a.get_by_role("button", name="发布", exact=True).click()

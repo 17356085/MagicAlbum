@@ -6,7 +6,9 @@
 
 浏览器发出的 `X-Request-Id` 先由 Gateway 校验：只接受长度不超过 128、由字母、数字、`.`、`_`、`:`、`-` 组成的值；缺失或不合法时由 Gateway 生成 UUID。Gateway 会把最终值转发给核心服务，并在响应中返回它。
 
-核心服务和 notification-service 各自有独立的 `RequestCorrelationFilter`。过滤器把合法值放进当前线程的 MDC，并在请求结束时写出 `request_id`、HTTP 方法、匹配到的路由模板、状态和 `duration_ms`，最后清理 MDC。没有拿到 Spring MVC 路由模板时只写固定的 `route=unmatched`。过滤器不记录原始 URI、查询字符串、请求体或路径令牌，因此类似 S3 签名 URL 的令牌不会出现在这条请求日志中。
+核心服务和 notification-service 各自有独立的 `RequestCorrelationFilter`。过滤器把合法值放进当前线程的 MDC，并在过滤器调用返回时写出 `request_id`、HTTP 方法、匹配到的路由模板、状态和 `duration_ms`，最后清理 MDC。没有拿到 Spring MVC 路由模板时只写固定的 `route=unmatched`。过滤器不记录原始 URI、查询字符串、请求体或路径令牌，因此类似 S3 签名 URL 的令牌不会出现在这条请求日志中。
+
+`duration_ms` 衡量本次过滤器调用，不能当作 SSE 等异步流的完整会话耗时；流建立时的 200 也不证明后续流处理成功。MDC 不会自动跨线程传播，当前通知 Outbox 配送器已显式恢复关联值，其他异步任务需要另行传递和验证。
 
 核心服务的 Outbox 入队从已校验的 MDC 值保存 nullable `request_id`。配送器从每一行的 request ID 设置本次投递 MDC；历史行缺少该值时使用合法的 event ID 作为稳定回退值。每次投递结束都会恢复进入投递前的 MDC 值。核心服务通过 `RemoteNotificationService` 发往 notification-service 的列表、已读和内部创建请求都会带上合法的 `X-Request-Id`，所以内部 HTTP 接收端可以用相同 ID 对照日志。request ID 只用于关联，不代替浏览器 Bearer JWT 或内部服务凭证；这两类凭证仍在各自的安全过滤器中校验。
 
