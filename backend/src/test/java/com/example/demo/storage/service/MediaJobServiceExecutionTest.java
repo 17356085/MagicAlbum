@@ -210,7 +210,7 @@ class MediaJobServiceExecutionTest {
         assertThat(deliveries.published(second)).isTrue();
         jdbc.update("update media_processing_job set updated_at=? where job_id=?", java.sql.Timestamp.from(Instant.now().minusSeconds(121)), fixture.jobId());
         deliveries.recover(fixture.jobId());
-        assertThat(deliveries.claim().orElseThrow().eventId()).isEqualTo(first.eventId());
+        assertThat(awaitRecoveredDelivery().eventId()).isEqualTo(first.eventId());
     }
 
     @Test
@@ -224,7 +224,7 @@ class MediaJobServiceExecutionTest {
 
         maintenance().recoverJobs();
 
-        assertThat(deliveries.claim().orElseThrow().eventId()).isEqualTo(delivery.eventId());
+        assertThat(awaitRecoveredDelivery().eventId()).isEqualTo(delivery.eventId());
     }
 
     @Test
@@ -255,7 +255,20 @@ class MediaJobServiceExecutionTest {
                 java.sql.Timestamp.from(Instant.now().minusSeconds(121)), fixture.jobId());
         maintenance().recoverJobs();
 
-        assertThat(deliveries.claim().orElseThrow().eventId()).isEqualTo(delivery.eventId());
+        assertThat(awaitRecoveredDelivery().eventId()).isEqualTo(delivery.eventId());
+    }
+
+    private MediaDeliveryTransactions.Delivery awaitRecoveredDelivery() {
+        // Recovery schedules available_at="now". Assert scheduler-visible readiness
+        // without requiring the next wall-clock read to exceed DB timestamp rounding.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            var delivery = deliveries.claim();
+            if (delivery.isPresent()) return delivery.orElseThrow();
+            java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
+        }
+        throw new AssertionError("Recovered outbox did not become publishable: "
+                + jdbc.queryForList("select status,available_at from media_request_outbox"));
     }
 
     private MediaMaintenance maintenance() {
@@ -321,7 +334,7 @@ class MediaJobServiceExecutionTest {
                     insert into media_request_outbox(event_id, asset_id, job_id, job_version,
                         preset, processor_version, occurred_at, status, attempts, available_at)
                     values (?, ?, ?, 1, 'preview', '1', ?, 'PENDING', 0, ?)
-                    """, eventId, assetId, jobId, java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
+                    """, eventId, assetId, jobId, java.sql.Timestamp.from(now), java.sql.Timestamp.from(now.minusSeconds(60)));
             return null;
         });
         return new Fixture(assetId, jobId, new MediaRequestEnvelope(

@@ -53,14 +53,18 @@
         </div>
         <ul v-else>
           <li v-for="user in users" :key="String(user.id)" class="ui-list-row">
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <details class="governance-member">
+            <summary class="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 class="font-semibold text-[var(--ui-ink)]">{{ user.username }}</h3>
                 <p class="text-xs text-[var(--ui-muted)]">成员 #{{ user.id }}<span v-if="user.admin"> · 管理员</span></p>
               </div>
-              <span v-if="user.postingRestricted" class="ui-tag text-red-700 dark:text-red-300">发帖受限</span>
-              <span v-else class="ui-tag">正常发帖</span>
-            </div>
+              <span class="flex flex-wrap items-center gap-2">
+                <span v-if="user.postingRestricted" class="ui-tag text-red-700 dark:text-red-300">发帖受限</span>
+                <span v-else class="ui-tag">正常发帖</span>
+                <span class="text-sm font-medium text-[var(--ui-accent)]">管理权限 <span aria-hidden="true">⌄</span></span>
+              </span>
+            </summary>
 
             <div class="governance-user-grid mt-5">
               <section class="governance-control">
@@ -101,6 +105,7 @@
                 <button type="button" class="ui-button mt-3" :disabled="pendingKey !== null" @click="savePostingRestriction(user)">保存发帖限制</button>
               </section>
             </div>
+            </details>
           </li>
         </ul>
 
@@ -417,6 +422,9 @@ onBeforeUnmount(() => { lifecycle += 1; usersSeq += 1; sectionsSeq += 1; auditSe
 
 <style scoped>
 .governance-user-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+.governance-member summary { min-height: 48px; list-style: none; cursor: pointer; }
+.governance-member summary::-webkit-details-marker { display: none; }
+.governance-member summary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 4px; border-radius: 4px; }
 .governance-control { min-width: 0; padding: 1rem; border: 1px solid var(--ui-border); border-radius: 10px; background: color-mix(in srgb, var(--ui-subtle) 45%, var(--ui-surface)); }
 .governance-control h4 { color: var(--ui-ink); font-size: .95rem; font-weight: 650; }
 .governance-control label, .governance-section-form label { display: block; margin-bottom: .4rem; color: var(--ui-ink); font-size: .875rem; font-weight: 600; }

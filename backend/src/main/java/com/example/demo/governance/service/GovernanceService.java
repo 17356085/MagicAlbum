@@ -186,15 +186,9 @@ public class GovernanceService {
      */
     @Transactional
     public void assertCanWrite(Long actor, Long sectionId) {
-        if (actor == null) {
-            throw failure(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
-        User user = userRepository.findByIdForInteraction(actor).orElse(null);
-        if (user == null) {
-            throw failure(HttpStatus.UNAUTHORIZED, "Authentication required");
-        }
+        lockActor(actor);
         Section section = sectionId == null ? null
-                : sectionGovernanceRepository.findByIdForUpdate(sectionId).orElse(null);
+                : sectionGovernanceRepository.findByIdForWriting(sectionId).orElse(null);
         if (section == null) {
             throw failure(HttpStatus.NOT_FOUND, "Section not found");
         }
@@ -207,6 +201,18 @@ public class GovernanceService {
         }
         if (readArchived(section)) {
             throw failure(HttpStatus.FORBIDDEN, "Section is archived");
+        }
+    }
+
+    /** Serialize natural-key operations by actor without imposing posting restrictions. */
+    @Transactional
+    public void lockActor(Long actor) {
+        if (actor == null) {
+            throw failure(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        User user = userRepository.findByIdForInteraction(actor).orElse(null);
+        if (user == null) {
+            throw failure(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
     }
 
@@ -230,6 +236,7 @@ public class GovernanceService {
         }
         if (!adminRoleRepository.existsById(userId)) {
             adminRoleRepository.save(new CommunityAdminRole(userId));
+            auditInternal(userId, "ADMIN_BOOTSTRAPPED", "USER", userId, "Configured initial administrator bootstrap");
         }
         state.setBootstrapped(true);
         stateRepository.save(state);
@@ -468,7 +475,10 @@ public class GovernanceService {
     }
 
     private Set<Long> normalizeSectionIds(Collection<Long> sectionIds) {
-        if (sectionIds == null || sectionIds.isEmpty()) {
+        if (sectionIds == null) {
+            throw failure(HttpStatus.BAD_REQUEST, "sectionIds is required; use an empty array to revoke scopes");
+        }
+        if (sectionIds.isEmpty()) {
             return Set.of();
         }
         LinkedHashSet<Long> normalized = new LinkedHashSet<>();

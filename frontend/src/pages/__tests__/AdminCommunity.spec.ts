@@ -43,6 +43,14 @@ describe('AdminCommunity', () => {
     expect(localStorage.getItem('accessToken')).toBe('admin-session-a')
   })
 
+  it('starts member controls collapsed behind a native keyboard-accessible summary', async () => {
+    const view = await createWrapper()
+    const details = view.get('details.governance-member')
+    expect(details.attributes('open')).toBeUndefined()
+    expect(details.get('summary').text()).toContain('管理权限')
+    expect(details.get('summary').text()).toContain('member')
+  })
+
   it('rejects blank section reasons and keeps a failed submission editable', async () => {
     const view = await createWrapper()
     await view.get('#section-name').setValue('新分区')

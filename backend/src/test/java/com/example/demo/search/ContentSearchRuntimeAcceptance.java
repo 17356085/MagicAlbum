@@ -354,6 +354,7 @@ class ContentSearchRuntimeAcceptance {
     }
 
     private void verifyLateCommitRebuild(Actor actor) throws Exception {
+        Actor independent = actor("earlier-commit");
         var executor = Executors.newFixedThreadPool(2);
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -370,7 +371,10 @@ class ContentSearchRuntimeAcceptance {
                 }
             }));
             assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
-            long higherId = create(actor, "M2EarlierCommitNeedle", "M2EarlierCommitNeedle body");
+            // Different authors avoid serializing on the user policy lock. Sharing the same
+            // section also proves that normal content writers hold a shared section lock.
+            long higherId = create(new Actor(independent.user(), actor.section()),
+                    "M2EarlierCommitNeedle", "M2EarlierCommitNeedle body");
             assertThat(higherId).isGreaterThan(lowId.get());
             var rebuilding = executor.submit(rebuild::rebuild);
             java.lang.Thread.sleep(150);

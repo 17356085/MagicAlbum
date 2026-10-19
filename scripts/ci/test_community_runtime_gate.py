@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
@@ -52,6 +53,8 @@ class CommunityRuntimeGuards(unittest.TestCase):
         self.assertFalse(runtime.env_file.exists())
 
     def test_report_requires_exact_names_no_duplicates_no_skips_and_cleanup(self):
+        self.assertEqual(len(gate.PLANNED_CASES), 23)
+        self.assertEqual(len(gate.PLANNED_BROWSER_CASES), 8)
         reporter = gate.M4Reporter()
         self.assertFalse(gate.validate_report(reporter, "passed"))
         reporter.cases = [gate.CaseResult(name, "passed", 0) for name in gate.PLANNED_CASES]
@@ -61,6 +64,62 @@ class CommunityRuntimeGuards(unittest.TestCase):
         self.assertFalse(gate.validate_report(reporter, "passed"))
         reporter.cases = [gate.CaseResult(name, "skipped" if i == 0 else "passed", 0) for i, name in enumerate(gate.PLANNED_CASES)]
         self.assertFalse(gate.validate_report(reporter, "passed"))
+
+    def test_report_list_uses_sql_total_and_exact_first_page_cardinality(self):
+        acceptance = object.__new__(gate.CommunityAcceptance)
+        identity = SimpleNamespace(user_id=101)
+        response = SimpleNamespace(status_code=200)
+        item = {
+            "id": 1,
+            "reporterId": 2,
+            "targetType": "THREAD",
+            "targetId": 3,
+            "reason": "SPAM",
+            "status": "PENDING",
+            "createdAt": "2026-10-20T00:00:00Z",
+        }
+        acceptance._api_request = lambda *args, **kwargs: (
+            response,
+            {"items": [item], "page": 1, "size": 50, "total": 1},
+        )
+        acceptance._status = gate.CommunityAcceptance._status.__get__(acceptance)
+        acceptance._dict = gate.CommunityAcceptance._dict.__get__(acceptance)
+        acceptance.sql_report_list_total = lambda current, status: 1
+        page = gate.CommunityAcceptance.list_reports(acceptance, identity, "PENDING")
+        self.assertEqual(len(page["items"]), min(page["total"], 50))
+        acceptance.sql_report_list_total = lambda current, status: 2
+        with self.assertRaises(gate.GateFailure):
+            gate.CommunityAcceptance.list_reports(acceptance, identity, "PENDING")
+
+    def test_report_list_sql_total_uses_current_admin_role_and_moderator_scope(self):
+        identity = SimpleNamespace(user_id=101)
+        queries = []
+
+        class SqlProbe:
+            def sql_count(self, query, label):
+                queries.append((query, label))
+                if "community_admin_role" in query:
+                    return 1
+                return 4
+
+        admin_total = gate.CommunityAcceptance.sql_report_list_total(SqlProbe(), identity, "PENDING")
+        self.assertEqual(admin_total, 4)
+        self.assertIn("content_reports", queries[-1][0])
+        self.assertIn("status='PENDING'", queries[-1][0])
+
+        queries.clear()
+
+        class ScopedSqlProbe:
+            def sql_count(self, query, label):
+                queries.append((query, label))
+                if "community_admin_role" in query:
+                    return 0
+                return 2
+
+        scoped_total = gate.CommunityAcceptance.sql_report_list_total(ScopedSqlProbe(), identity, "HIDDEN")
+        self.assertEqual(scoped_total, 2)
+        self.assertIn("community_moderator_scope", queries[-1][0])
+        self.assertIn("status='HIDDEN'", queries[-1][0])
 
     def test_failed_bootstrap_writes_failed_evidence_and_deletes_private_env(self):
         base = gate.ComposeRuntime

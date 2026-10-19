@@ -107,6 +107,64 @@ class ModerationGovernanceIntegrationTest {
     }
 
     @Test
+    void moderatorLosesScopeWhenTheAuthorMovesTheParentThread() throws Exception {
+        Section destination = section();
+        Thread thread = thread(section);
+        Post post = new Post(); post.setAuthorId(owner); post.setThreadId(thread.getId());
+        post.setContentMd("reply"); post.setStatus("NORMAL"); post = postRows.save(post);
+        Long report = report(ReportTargetType.POST, post.getId());
+        adminPut("/users/" + moderator + "/moderator-sections",
+                "{\"sectionIds\":[" + section.getId() + "],\"reason\":\"负责原分区\"}");
+        UpdateThreadRequest move = new UpdateThreadRequest(); move.setSectionId(destination.getId());
+        threads.update(owner, thread.getId(), move);
+        assertThat(reports.listForReviewer(moderator, ReportStatus.PENDING, 1, 20).getContent()).isEmpty();
+        assertStatus(403, () -> reports.resolve(moderator, report, resolution(ReportAction.HIDE)));
+        reports.resolve(admin, report, resolution(ReportAction.HIDE));
+        assertThat(postRows.findById(post.getId()).orElseThrow().getStatus()).isEqualTo("HIDDEN");
+    }
+
+    @Test
+    void invalidRoleUpdatesDoNotPartiallyReplaceScopesOrAppendAudit() {
+        governance.setModeratorSections(admin, moderator, java.util.List.of(section.getId()), "负责分区");
+        Long before = jdbc.queryForObject("SELECT COUNT(*) FROM community_audit", Long.class);
+        assertStatus(400, () -> governance.setModeratorSections(admin, moderator, null, "缺少分区数组"));
+        assertStatus(404, () -> governance.setModeratorSections(admin, moderator,
+                java.util.List.of(section.getId(), Long.MAX_VALUE), "错误的分区"));
+        assertThat(governance.access(moderator).moderatedSectionIds()).containsExactly(section.getId());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM community_audit", Long.class)).isEqualTo(before);
+    }
+
+    @Test
+    void concurrentDuplicateReportsReturnTheSamePersistedMetadata() throws Exception {
+        Thread thread = thread(section);
+        var barrier = new java.util.concurrent.CyclicBarrier(2);
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Long> create = () -> {
+                barrier.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return report(ReportTargetType.THREAD, thread.getId());
+            };
+            var first = pool.submit(create);
+            var second = pool.submit(create);
+            assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .isEqualTo(second.get(10, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM content_reports WHERE reporter_id=? AND target_type='THREAD' AND target_id=?",
+                Long.class, owner, thread.getId())).isEqualTo(1);
+    }
+
+    @Test
+    void expiredRestrictionsAllowPostingAndInvalidExpiryDoesNotChangePolicy() {
+        governance.setPostingRestriction(admin, owner, true, null, "短期复核");
+        assertStatus(400, () -> governance.setPostingRestriction(admin, owner, true,
+                java.time.Instant.now().minusSeconds(10), "错误的期限"));
+        assertThat(governance.access(owner).postingRestricted()).isTrue();
+        jdbc.update("UPDATE community_posting_restriction SET restricted_until=? WHERE user_id=?",
+                java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(10)), owner);
+        assertThat(governance.access(owner).postingRestricted()).isFalse();
+        assertThat(threads.create(owner, createThread()).getId()).isNotNull();
+    }
+
+    @Test
     void authorDeletionCannotBeRestoredByModeration() {
         Thread thread = thread(section);
         Long report = report(ReportTargetType.THREAD, thread.getId());

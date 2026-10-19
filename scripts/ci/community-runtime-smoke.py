@@ -13,6 +13,7 @@ Docker.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import dataclasses
 import datetime as dt
 import importlib.util
@@ -413,6 +414,32 @@ class CommunityAcceptance(BaseAcceptance):
         self._status(response, 200, f"read thread {thread_id}")
         return self._dict(body, "thread read")
 
+    def list_posts(self, identity: Identity, thread_id: int) -> dict[str, Any]:
+        response, body = self._api_request(
+            "GET", f"/threads/{thread_id}/posts", identity, params={"page": 1, "size": 50}
+        )
+        self._status(response, 200, f"read posts for thread {thread_id}")
+        value = self._dict(body, f"posts for thread {thread_id}")
+        if (
+            not isinstance(value.get("items"), list)
+            or value.get("page") != 1
+            or value.get("size") != 50
+            or not isinstance(value.get("total"), int)
+        ):
+            raise GateFailure(f"posts for thread {thread_id} page shape was invalid")
+        return value
+
+    def post_content(self, identity: Identity, thread_id: int, post_id: int, label: str) -> str:
+        page = self.list_posts(identity, thread_id)
+        for item in page["items"]:
+            value = self._dict(item, f"{label} post item")
+            if value.get("id") == post_id:
+                content = value.get("content")
+                if not isinstance(content, str):
+                    raise GateFailure(f"{label} post omitted string content")
+                return content
+        raise GateFailure(f"{label} post {post_id} was missing from its thread readback")
+
     def update_thread(self, identity: Identity, thread_id: int, **patch: Any) -> Any:
         response, body = self._api_request("PATCH", f"/threads/{thread_id}", identity, json=patch)
         return response, body
@@ -456,12 +483,45 @@ class CommunityAcceptance(BaseAcceptance):
         value = self._dict(body, f"reports {status}")
         if not isinstance(value.get("items"), list) or value.get("page") != 1 or value.get("size") != 50 or not isinstance(value.get("total"), int):
             raise GateFailure(f"reports {status} page shape was invalid")
+        sql_total = self.sql_report_list_total(identity, status)
+        if value["total"] != sql_total:
+            raise GateFailure(
+                f"reports {status} total {value['total']} did not match current SQL total {sql_total}"
+            )
+        expected_page_items = min(sql_total, 50)
+        if len(value["items"]) != expected_page_items:
+            raise GateFailure(
+                f"reports {status} page returned {len(value['items'])} items, expected {expected_page_items} from SQL total {sql_total}"
+            )
         for item in value["items"]:
             report = self._dict(item, "report item")
             for key in ("id", "reporterId", "targetType", "targetId", "reason", "status", "createdAt"):
                 if key not in report:
                     raise GateFailure(f"report item omitted {key}")
         return value
+
+    def sql_report_list_total(self, identity: Identity, status: str) -> int:
+        status_sql = sql_literal(status)
+        admin_rows = self.sql_count(
+            f"SELECT COUNT(*) FROM community_admin_role WHERE user_id={identity.user_id}",
+            "current report-list admin role",
+        )
+        if admin_rows not in (0, 1):
+            raise GateFailure(f"current report-list admin role returned {admin_rows} rows")
+        if admin_rows == 1:
+            return self.sql_count(
+                f"SELECT COUNT(*) FROM content_reports WHERE status={status_sql}",
+                "current admin report-list total",
+            )
+        return self.sql_count(
+            "SELECT COUNT(*) FROM content_reports r "
+            "LEFT JOIN posts p ON r.target_type='POST' AND p.id=r.target_id "
+            "JOIN threads t ON t.id=CASE WHEN r.target_type='THREAD' THEN r.target_id ELSE p.thread_id END "
+            f"WHERE r.status={status_sql} AND EXISTS ("
+            "SELECT 1 FROM community_moderator_scope ms "
+            f"WHERE ms.user_id={identity.user_id} AND ms.section_id=t.section_id)",
+            "current moderator report-list total",
+        )
 
     def resolve_report(self, identity: Identity, report_id: int, action: str, reason: str) -> tuple[Any, Any]:
         return self._api_request(
@@ -625,8 +685,6 @@ class CommunityAcceptance(BaseAcceptance):
             {"sectionIds": [section_a], "reason": "M4 grant alpha scope"},
             "grant moderator alpha scope",
         )
-        moderator = self.login_identity(moderator, "moderator after grant")
-        self.identities["moderator"] = moderator
         access = self.governance(moderator)
         if section_a not in [int(value) for value in access["moderatedSectionIds"]]:
             raise GateFailure("moderator governance did not expose granted section")
@@ -636,6 +694,20 @@ class CommunityAcceptance(BaseAcceptance):
         # The beta scope is granted and revoked later around a real report.  A
         # moderator cannot resolve a report outside the current scope.
         self.readback["crossSectionScope"] = {"alpha": section_a, "beta": section_b}
+        ordinary = self.identities['ordinary']
+        movable = self.create_thread(ordinary, section_a, 'current-parent-scope')
+        comment = self.create_post(ordinary, int(movable['id']), 'current-parent-scope')
+        report = self.create_report(self.identities['other'], 'POST', int(comment['id']), 'current-parent-scope')
+        report_id = int(report['id'])
+        self._report_item(self.list_reports(moderator, 'PENDING'), report_id, 'PENDING')
+        response, _ = self.update_thread(ordinary, int(movable['id']), sectionId=section_b)
+        self._status(response, 200, 'move parent outside moderator scope')
+        if any(row['id'] == report_id for row in self.list_reports(moderator, 'PENDING')['items']):
+            raise GateFailure('comment report retained its old parent section scope')
+        response, _ = self.resolve_report(moderator, report_id, 'HIDE', 'M4 old parent scope')
+        self._status(response, 403, 'old moderator token after parent section move')
+        response, _ = self.resolve_report(admin, report_id, 'DISMISS', 'M4 parent scope verified')
+        self._status(response, 200, 'admin closes moved-parent fixture')
 
     def thread_post_inheritance_and_write_guards(self) -> None:
         ordinary = self.identities.get("ordinary")
@@ -670,12 +742,17 @@ class CommunityAcceptance(BaseAcceptance):
         restricted = self.governance(self.login_identity(ordinary, "ordinary restricted"))
         if not restricted["postingRestricted"]:
             raise GateFailure("posting restriction was not visible in governance/me")
+        restricted_post_before = self.post_content(ordinary, self.threads["a"], self.posts["a"], "restricted post before edit")
         response, _ = self.update_thread(ordinary, self.threads["a"], content="M4 restricted edit")
         self._status(response, 403, "restricted thread edit")
         response, _ = self._api_request("POST", "/threads", ordinary, json={"sectionId": int(self.sections["a"]["id"]), "title": "M4 blocked", "content": "M4 blocked"})
         self._status(response, 403, "restricted thread create")
         response, _ = self._api_request("POST", f"/threads/{self.threads['a']}/posts", ordinary, json={"contentMd": "M4 blocked post"})
         self._status(response, 403, "restricted post create")
+        response, _ = self.update_post(ordinary, self.posts["a"], "restricted edit")
+        self._status(response, 403, "restricted post edit")
+        if self.post_content(ordinary, self.threads["a"], self.posts["a"], "restricted post after edit") != restricted_post_before:
+            raise GateFailure("restricted post edit changed the persisted content")
         self._status(self._api_request("GET", f"/threads/{self.threads['a']}", ordinary)[0], 200, "restricted read")
         self.manage_user(
             admin,
@@ -690,6 +767,11 @@ class CommunityAcceptance(BaseAcceptance):
         response, _ = self.update_thread(ordinary, self.threads["a"], content="M4 writable after lift")
         self._status(response, 200, "thread edit after restriction lift")
         archive_id = int(self.sections["archived"]["id"])
+        archived_thread_before = self.get_thread(ordinary, self.threads["archived"])
+        archived_post = self.create_post(ordinary, self.threads["archived"], "archived-post")
+        self.posts["archived"] = int(archived_post["id"])
+        archived_post_before = self.post_content(ordinary, self.threads["archived"], self.posts["archived"], "archived post before archive")
+        archived_post_count_before = self.list_posts(ordinary, self.threads["archived"])["total"]
         updated_archive = self.update_section(
             admin,
             archive_id,
@@ -699,8 +781,22 @@ class CommunityAcceptance(BaseAcceptance):
         if updated_archive.get("archived") is not True:
             raise GateFailure("section archive did not persist")
         self._status(self._api_request("GET", f"/threads/{self.threads['archived']}", ordinary)[0], 200, "archived thread read")
+        response, _ = self.update_thread(ordinary, self.threads["archived"], content="M4 archived edit blocked")
+        self._status(response, 403, "archived thread edit")
+        archived_thread_after = self.get_thread(ordinary, self.threads["archived"])
+        for key in ("title", "content"):
+            if archived_thread_after.get(key) != archived_thread_before.get(key):
+                raise GateFailure(f"archived thread {key} changed after a rejected edit")
         response, _ = self._api_request("POST", "/threads", ordinary, json={"sectionId": archive_id, "title": "M4 archived blocked", "content": "M4 archived blocked"})
         self._status(response, 403, "archived thread create")
+        response, _ = self._api_request("POST", f"/threads/{self.threads['archived']}/posts", ordinary, json={"contentMd": "M4 archived post blocked"})
+        self._status(response, 403, "archived post create")
+        if self.list_posts(ordinary, self.threads["archived"])["total"] != archived_post_count_before:
+            raise GateFailure("archived post create changed the persisted post count")
+        response, _ = self.update_post(ordinary, self.posts["archived"], "archived edit")
+        self._status(response, 403, "archived post edit")
+        if self.post_content(ordinary, self.threads["archived"], self.posts["archived"], "archived post after edit") != archived_post_before:
+            raise GateFailure("archived post edit changed the persisted content")
         response, _ = self.update_thread(ordinary, self.threads["a"], sectionId=archive_id)
         self._status(response, 403, "move thread into archived section")
 
@@ -760,6 +856,8 @@ class CommunityAcceptance(BaseAcceptance):
         self.reports["parent"] = int(parent_report["id"])
         response, _ = self.resolve_report(admin, self.reports["post_a"], "HIDE", "M4 hide child")
         self._status(response, 200, "hide child post")
+        if self.get_thread(ordinary, self.threads['a']).get('replyCount') != 0:
+            raise GateFailure('hidden comment remained in the reply count')
         response, _ = self.resolve_report(admin, self.reports["parent"], "HIDE", "M4 hide parent")
         self._status(response, 200, "hide parent thread")
         response, _ = self.resolve_report(admin, self.reports["post_a"], "RESTORE", "M4 restore child while parent hidden")
@@ -768,6 +866,8 @@ class CommunityAcceptance(BaseAcceptance):
         self._status(response, 200, "restore parent thread")
         response, _ = self.resolve_report(admin, self.reports["post_a"], "RESTORE", "M4 restore child after parent")
         self._status(response, 200, "restore child after parent")
+        if self.get_thread(ordinary, self.threads['a']).get('replyCount') != 1:
+            raise GateFailure('restored comment did not return to the reply count')
         deleted = self.create_thread(ordinary, int(self.sections["a"]["id"]), "author-deleted")
         deleted_id = int(deleted["id"])
         report = self.create_report(other, "THREAD", deleted_id, "author-deleted")
@@ -787,13 +887,9 @@ class CommunityAcceptance(BaseAcceptance):
         # resolve it there, revoke beta, and prove the scope denial immediately.
         beta_id = int(self.sections["b"]["id"])
         self.manage_user(admin, moderator.user_id, "moderator-sections", {"sectionIds": [int(self.sections["a"]["id"]), beta_id], "reason": "M4 grant beta scope"}, "grant moderator beta scope")
-        moderator = self.login_identity(moderator, "moderator beta scope")
-        self.identities["moderator"] = moderator
         response, _ = self.resolve_report(moderator, self.reports["thread_b"], "HIDE", "M4 moderator beta hide")
         self._status(response, 200, "moderator hide beta report")
         self.manage_user(admin, moderator.user_id, "moderator-sections", {"sectionIds": [int(self.sections["a"]["id"])], "reason": "M4 revoke beta scope"}, "revoke moderator beta scope")
-        moderator = self.login_identity(moderator, "moderator after beta revoke")
-        self.identities["moderator"] = moderator
         response, _ = self.resolve_report(moderator, self.reports["thread_b"], "RESTORE", "M4 cross-section restore")
         self._status(response, 403, "moderator cross-section restore")
         response, _ = self.resolve_report(admin, self.reports["thread_b"], "RESTORE", "M4 admin beta restore")
@@ -840,6 +936,55 @@ class CommunityAcceptance(BaseAcceptance):
             raise GateFailure("repeating a report action inserted a duplicate audit row")
         response, _ = self.resolve_report(admin, report_id, "RESTORE", "M4 restore after idempotency")
         self._status(response, 200, "restore after idempotency")
+        race_thread = self.create_thread(self.identities["ordinary"], int(self.sections["a"]["id"]), "concurrent-report-idempotency")
+        race_thread_id = int(race_thread["id"])
+        race_reporter = self.identities["other"]
+        race_details = ("M4 concurrent report detail A", "M4 concurrent report detail B")
+
+        def create_concurrent_report(detail: str) -> tuple[int, dict[str, Any]]:
+            response, body = self._api_request(
+                "POST",
+                "/reports",
+                race_reporter,
+                json={
+                    "targetType": "THREAD",
+                    "targetId": race_thread_id,
+                    "reason": "SPAM",
+                    "detail": detail,
+                },
+            )
+            return response.status_code, self._dict(body, "concurrent report response")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            concurrent_results = list(executor.map(create_concurrent_report, race_details))
+        if any(status != 201 for status, _ in concurrent_results):
+            raise GateFailure(f"concurrent duplicate reports did not both return 201: {[status for status, _ in concurrent_results]}")
+        concurrent_ids = {int(body.get("id", -1)) for _, body in concurrent_results}
+        if len(concurrent_ids) != 1:
+            raise GateFailure(f"concurrent duplicate reports returned different ids: {sorted(concurrent_ids)}")
+        returned_details = {body.get("detail") for _, body in concurrent_results}
+        if len(returned_details) != 1 or not returned_details.issubset(set(race_details)):
+            raise GateFailure(
+                "concurrent duplicate reports did not return one original detail: "
+                + repr(sorted((str(detail) for detail in returned_details)))
+            )
+        race_detail = next(iter(returned_details))
+        for _, body in concurrent_results:
+            if body.get("detail") != race_detail or body.get("reason") != "SPAM" or body.get("status") != "PENDING":
+                raise GateFailure("concurrent duplicate report did not return the original report metadata")
+        race_count = self.sql_count(
+            f"SELECT COUNT(*) FROM content_reports WHERE reporter_id={race_reporter.user_id} "
+            f"AND target_type='THREAD' AND target_id={race_thread_id}",
+            "concurrent duplicate report SQL count",
+        )
+        if race_count != 1:
+            raise GateFailure(f"concurrent duplicate reports persisted {race_count} rows instead of one")
+        detail_rows = self.runtime.sql(
+            f"SELECT detail FROM content_reports WHERE reporter_id={race_reporter.user_id} "
+            f"AND target_type='THREAD' AND target_id={race_thread_id}"
+        )
+        if len(detail_rows) != 1 or detail_rows[0][0] != race_detail:
+            raise GateFailure("concurrent duplicate report SQL detail did not match the returned original metadata")
         target_type = "THREAD"
         target_id = self.threads.get("a")
         if target_id is None:
@@ -847,9 +992,15 @@ class CommunityAcceptance(BaseAcceptance):
         rows = self.runtime.sql(
             f"SELECT actor_id,reason,request_id FROM community_audit WHERE target_type={sql_literal(target_type)} AND target_id={target_id} ORDER BY occurred_at DESC LIMIT 20"
         )
-        if not rows or not any(row[0] == str(admin.user_id) and row[1] for row in rows):
-            raise GateFailure("audit SQL readback did not expose actor and reason")
-        self.readback["audit"] = {"reportId": report_id, "hideRows": after, "lastRows": rows[:5]}
+        if not rows or not any(row[0] == str(admin.user_id) and row[1] and row[2] for row in rows):
+            raise GateFailure("audit SQL readback did not expose actor, reason and request correlation")
+        self.readback["audit"] = {
+            "reportId": report_id,
+            "hideRows": after,
+            "lastRows": rows[:5],
+            "concurrentReportId": next(iter(concurrent_ids)),
+            "concurrentReportSqlCount": race_count,
+        }
 
     def last_admin_revocation_and_restart(self) -> None:
         primary = self.primary_admin
@@ -905,9 +1056,10 @@ class CommunityAcceptance(BaseAcceptance):
                 "localStorage.setItem('accessToken', %s);"
                 "localStorage.setItem('currentUser', %s);"
                 "localStorage.setItem('theme', %s);"
+                "if (document.documentElement) {"
                 "document.documentElement.classList.toggle('dark', %s === 'dark');"
                 "document.documentElement.dataset.theme = %s;"
-                "document.documentElement.style.colorScheme = %s;"
+                "document.documentElement.style.colorScheme = %s; }"
             )
             % (token_json, json.dumps(user_json), theme_json, theme_json, theme_json, theme_json)
         )
@@ -948,10 +1100,25 @@ class CommunityAcceptance(BaseAcceptance):
                 page.get_by_role('heading', name='社区管理', exact=True).wait_for()
                 if "无权" in page.locator("body").inner_text():
                     raise GateFailure("admin community UI reported access denied")
+                ordinary = self.identities['ordinary']
+                page.get_by_label('搜索用户名', exact=True).fill(ordinary.username)
+                page.get_by_role('button', name='搜索', exact=True).click()
+                row = page.locator('li.ui-list-row').filter(has=page.get_by_role('heading', name=ordinary.username, exact=True))
+                row.locator('summary').click()
+                scope = row.get_by_label(self.sections['a']['name'], exact=True)
+                reason = row.locator(f'#moderator-reason-{ordinary.user_id}')
+                for enabled in (True, False):
+                    scope.set_checked(enabled)
+                    reason.fill('M4 browser scope grant' if enabled else 'M4 browser scope revoke')
+                    with page.expect_response(lambda response: '/moderator-sections' in response.url and response.request.method == 'PUT', timeout=int(self.browser_timeout * 1000)):
+                        row.get_by_role('button', name='保存分区授权', exact=True).click()
+                    page.get_by_text('版主分区授权已保存。', exact=True).wait_for()
+                    access = self.governance(ordinary)
+                    if (int(self.sections['a']['id']) in access['moderatedSectionIds']) != enabled:
+                        raise GateFailure('browser scope change did not persist for the existing user token')
                 forms = page.locator("form.governance-section-form")
-                if forms.count() == 0:
-                    raise GateFailure("admin community UI exposed no semantic section management form")
                 form = forms.first
+                form.wait_for(state='visible', timeout=int(self.browser_timeout * 1000))
                 name_field = form.get_by_label("名称", exact=True)
                 slug_field = form.get_by_label("Slug", exact=True)
                 reason_field = form.get_by_label(re.compile(r"变更理由", re.I), exact=False)
@@ -972,7 +1139,8 @@ class CommunityAcceptance(BaseAcceptance):
                 if not any(marker in json.dumps(row, ensure_ascii=False) for row in rows):
                     raise GateFailure("community form submission did not read back through the sections API")
                 self._assert_browser_layout(page, "admin community")
-                page.screenshot(path=str(self.runtime.screenshot_dir / f"community-{viewport}-{theme}.png"), full_page=True)
+                page.evaluate('window.scrollTo(0, 0)')
+                page.screenshot(path=str(self.runtime.screenshot_dir / f"community-{viewport}-{theme}.png"))
             except PlaywrightTimeoutError as exc:
                 raise GateFailure(f"admin community browser action timed out: {safe_text(exc)}") from exc
             finally:
@@ -1025,7 +1193,8 @@ class CommunityAcceptance(BaseAcceptance):
                 if page.locator('html').evaluate("node => node.classList.contains('dark')") != (theme == 'night'):
                     raise GateFailure('reports screenshot theme does not match its label')
                 self._assert_browser_layout(page, "admin reports")
-                page.screenshot(path=str(self.runtime.screenshot_dir / f"reports-{viewport}-{theme}.png"), full_page=True)
+                page.evaluate('window.scrollTo(0, 0)')
+                page.screenshot(path=str(self.runtime.screenshot_dir / f"reports-{viewport}-{theme}.png"))
             except PlaywrightTimeoutError as exc:
                 raise GateFailure(f"admin reports browser action timed out: {safe_text(exc)}") from exc
             finally:

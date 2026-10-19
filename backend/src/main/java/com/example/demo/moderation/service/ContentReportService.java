@@ -68,6 +68,9 @@ public class ContentReportService {
 
         // A replay of the same idempotency key returns the original metadata, even if
         // the target changed after the report was first accepted.
+        // Serialize same-reporter requests before the first lookup, so MySQL's
+        // consistent snapshot starts after a competing insert has committed.
+        if (governance != null) governance.lockActor(reporterId);
         ContentReport existing = reportRepository
                 .findByReporterIdAndTargetTypeAndTargetId(
                         reporterId, request.getTargetType(), request.getTargetId())

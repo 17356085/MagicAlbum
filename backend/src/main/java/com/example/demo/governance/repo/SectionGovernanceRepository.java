@@ -14,6 +14,11 @@ import java.util.Optional;
  * query here avoids changing the sections module's public repository contract.
  */
 public interface SectionGovernanceRepository extends JpaRepository<Section, Long> {
+    /** Concurrent content writers may share the section; archiving needs the exclusive lock below. */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("select section from Section section where section.id = :id")
+    Optional<Section> findByIdForWriting(@Param("id") Long id);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select section from Section section where section.id = :id")
     Optional<Section> findByIdForUpdate(@Param("id") Long id);

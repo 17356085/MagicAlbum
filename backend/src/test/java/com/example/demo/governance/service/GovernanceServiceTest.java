@@ -115,12 +115,26 @@ class GovernanceServiceTest {
     }
 
     @Test
+    void initial_admin_grant_records_audit_with_generated_request_identity() {
+        CommunityState state = new CommunityState();
+        when(stateRepository.findByIdForUpdate(CommunityState.SINGLETON_ID)).thenReturn(Optional.of(state));
+        when(userRepository.findByIdForInteraction(42L)).thenReturn(Optional.of(user(42L)));
+        service.bootstrapAdmin(42L);
+        var audit = org.mockito.ArgumentCaptor.forClass(com.example.demo.governance.entity.CommunityAudit.class);
+        verify(auditRepository).save(audit.capture());
+        assertEquals("ADMIN_BOOTSTRAPPED", audit.getValue().getAction());
+        assertEquals(42L, audit.getValue().getActorId());
+        assertFalse(audit.getValue().getRequestId().isBlank());
+        assertTrue(state.isBootstrapped());
+    }
+
+    @Test
     void write_gate_locks_user_before_section_and_rejects_restriction() {
         User user = user(7L);
         Section section = new Section();
         section.setId(9L);
         when(userRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(user));
-        when(sectionGovernanceRepository.findByIdForUpdate(9L)).thenReturn(Optional.of(section));
+        when(sectionGovernanceRepository.findByIdForWriting(9L)).thenReturn(Optional.of(section));
         when(restrictionRepository.findById(7L)).thenReturn(Optional.of(
                 new com.example.demo.governance.entity.CommunityPostingRestriction(7L, null)));
 
@@ -130,7 +144,7 @@ class GovernanceServiceTest {
         assertEquals(HttpStatus.FORBIDDEN.value(), failure.getStatusCode().value());
         InOrder order = inOrder(userRepository, sectionGovernanceRepository);
         order.verify(userRepository).findByIdForInteraction(7L);
-        order.verify(sectionGovernanceRepository).findByIdForUpdate(9L);
+        order.verify(sectionGovernanceRepository).findByIdForWriting(9L);
     }
 
     private static User user(Long id) {
