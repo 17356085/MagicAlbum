@@ -27,6 +27,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/my/posts', name: 'my-posts', component: () => import('@/pages/MyPosts.vue'), meta: { requiresAuth: true } },
   { path: '/my/bookmarks', name: 'my-bookmarks', component: () => import('@/pages/MyBookmarks.vue'), meta: { requiresAuth: true } },
   { path: '/admin/reports', name: 'admin-reports', component: () => import('@/pages/AdminReports.vue'), meta: { requiresAuth: true } },
+  { path: '/admin/community', name: 'admin-community', component: () => import('@/pages/AdminCommunity.vue'), meta: { requiresAuth: true } },
   { path: '/history', name: 'history', component: () => import('@/pages/RecentHistory.vue') },
 ]
 
@@ -69,7 +70,7 @@ const pageTitles: Record<string, string> = {
   users: '搜索用户', 'user-profile': '个人主页', 'user-following': '关注', 'user-followers': '粉丝',
   'thread-create': '发帖', 'thread-edit': '编辑帖子', 'thread-detail': '帖子',
   settings: '设置', 'my-threads': '我的帖子', 'my-posts': '我的评论', 'my-bookmarks': '我的收藏',
-  'admin-reports': '举报审核', history: '最近浏览', me: '我的',
+  'admin-reports': '举报审核', 'admin-community': '社区管理', history: '最近浏览', me: '我的',
   'auth-oauth-callback': '授权登录', 'auth-qr-confirm': '确认登录',
 }
 

@@ -2,6 +2,7 @@ package com.example.demo.posts.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.demo.common.RedisKeys;
+import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.dto.PostLikeResponse;
@@ -42,6 +43,10 @@ import java.util.regex.Pattern;
 
 @Service
 public class PostService {
+    private GovernanceService governance;
+
+    @Autowired
+    public void setGovernanceService(GovernanceService governance) { this.governance = governance; }
     private static final Duration THREAD_POSTS_CACHE_TTL = Duration.ofMinutes(2);
     private static final Pattern MENTION_PATTERN = Pattern.compile("(?<![\\w.])@([A-Za-z0-9_\\-]{3,64})");
 
@@ -156,7 +161,7 @@ public class PostService {
         if (!userRepository.existsById(authorId)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户不存在或已注销");
         }
-        com.example.demo.threads.entity.Thread thread = findNormalThread(threadId);
+        com.example.demo.threads.entity.Thread thread = lockThreadForWriting(authorId, threadId);
         String content = req.getContentMd();
         if (content == null || content.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "内容不能为空");
@@ -241,6 +246,11 @@ public class PostService {
 
     @Transactional
     public PostDto update(Long userId, Long postId, UpdatePostRequest req) {
+        if (governance != null) {
+            Long parentThread = postRepository.findThreadIdByPostId(postId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+            lockThreadForWriting(userId, parentThread);
+        }
         Post post = findPostForInteraction(postId);
         findNormalThread(post.getThreadId());
         if (!post.getAuthorId().equals(userId)) {
@@ -272,11 +282,38 @@ public class PostService {
 
     @Transactional
     public void hideForModeration(Long postId) {
-        Post post = findPostForInteraction(postId);
+        Post post = postRepository.findByIdForInteraction(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
         findNormalThread(post.getThreadId());
+        if ("HIDDEN".equals(post.getStatus())) return;
+        if (!"NORMAL".equals(post.getStatus())) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在");
         post.setStatus("HIDDEN");
         postRepository.save(post);
         evictThreadCachesAfterCommit(post.getThreadId());
+    }
+
+    @Transactional
+    public void restoreForModeration(Long postId) {
+        Post post = postRepository.findByIdForInteraction(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        findNormalThread(post.getThreadId());
+        if ("NORMAL".equals(post.getStatus())) return;
+        if (!"HIDDEN".equals(post.getStatus())) throw new ResponseStatusException(HttpStatus.CONFLICT, "只能恢复审核隐藏的内容");
+        post.setStatus("NORMAL");
+        postRepository.save(post);
+        evictThreadCachesAfterCommit(post.getThreadId());
+    }
+
+    private com.example.demo.threads.entity.Thread lockThreadForWriting(Long actor, Long threadId) {
+        if (governance == null) return findNormalThread(threadId);
+        Long section = threadRepository.findSectionIdByThreadId(threadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        governance.assertCanWrite(actor, section);
+        var thread = threadRepository.findByIdForInteraction(threadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        if (!section.equals(thread.getSectionId())) throw new ResponseStatusException(HttpStatus.CONFLICT, "帖子分区已变化，请刷新后重试");
+        if (!"NORMAL".equals(thread.getStatus())) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        return thread;
     }
 
     private PostDto toDto(Post p) {

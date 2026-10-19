@@ -15,6 +15,8 @@ import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.threads.service.ThreadService;
 import com.example.demo.moderation.repo.ContentReportRepository;
+import com.example.demo.governance.service.GovernanceService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -27,6 +29,10 @@ import java.time.Instant;
 
 @Service
 public class ContentReportService {
+    private GovernanceService governance;
+
+    @Autowired
+    public void setGovernanceService(GovernanceService governance) { this.governance = governance; }
 
     private static final String NORMAL_STATUS = "NORMAL";
     private static final int MAX_PAGE_SIZE = 50;
@@ -105,12 +111,26 @@ public class ContentReportService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "处理参数不合法");
         }
 
+        String reason = request.getReason() == null ? "" : request.getReason().trim();
+        if (reason.isEmpty() || reason.length() > 500) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "处理理由需为1至500字");
+        if (governance != null) {
+            governance.lockPolicy();
+            governance.requireManager(reviewerId);
+        }
+
         ContentReport report = reportRepository.findByIdForUpdate(reportId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "举报不存在"));
+        if (governance != null) lockAndCheckScope(reviewerId, report, request.getAction());
         ReportStatus resultingStatus = resultingStatus(request.getAction());
 
-        if (report.getStatus() != null && report.getStatus() != ReportStatus.PENDING) {
-            if (report.getStatus() == resultingStatus) {
+        if (request.getAction() == ReportAction.RESTORE) {
+            if (report.getStatus() == ReportStatus.RESTORED && java.util.Objects.equals(reason, report.getResolutionReason())) {
+                return toResolutionResponse(report);
+            }
+            if (report.getStatus() != ReportStatus.HIDDEN) throw new ResponseStatusException(HttpStatus.CONFLICT, "只能恢复审核隐藏的内容");
+            restoreTarget(report);
+        } else if (report.getStatus() != null && report.getStatus() != ReportStatus.PENDING) {
+            if (report.getStatus() == resultingStatus && java.util.Objects.equals(reason, report.getResolutionReason())) {
                 return toResolutionResponse(report);
             }
             throw new ResponseStatusException(HttpStatus.CONFLICT, "举报已经被处理");
@@ -123,7 +143,40 @@ public class ContentReportService {
         report.setReviewerId(reviewerId);
         report.setResolvedAt(Instant.now());
         report.setStatus(resultingStatus);
+        report.setResolutionReason(reason);
+        if (governance != null) governance.audit(reviewerId, "REPORT_" + request.getAction().name(),
+                report.getTargetType().name(), report.getTargetId(), reason);
         return toResolutionResponse(reportRepository.save(report));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ReportResponse> listForReviewer(Long actor, ReportStatus status, int page, int size) {
+        if (governance == null) return list(status, page, size);
+        governance.requireManager(actor);
+        var access = governance.access(actor);
+        if (access.admin()) return list(status, page, size);
+        if (access.moderatedSectionIds().isEmpty()) return Page.empty();
+        var pageable = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), MAX_PAGE_SIZE));
+        return reportRepository.findScoped((status == null ? ReportStatus.PENDING : status).name(),
+                access.moderatedSectionIds(), pageable).map(this::toResponse);
+    }
+
+    private void lockAndCheckScope(Long actor, ContentReport report, ReportAction action) {
+        Long threadId = report.getTargetType() == ReportTargetType.THREAD ? report.getTargetId()
+                : postRepository.findThreadIdByPostId(report.getTargetId()).orElse(null);
+        if (threadId == null && action == ReportAction.DISMISS && governance.isAdmin(actor)) return;
+        Thread thread = threadId == null ? null : threadRepository.findByIdForInteraction(threadId).orElse(null);
+        if (thread == null) {
+            if (action == ReportAction.DISMISS && governance.isAdmin(actor)) return;
+            throw targetNotFound();
+        }
+        governance.requireScope(actor, thread.getSectionId());
+    }
+
+    private void restoreTarget(ContentReport report) {
+        if (report.getTargetType() == ReportTargetType.THREAD) threadService.restoreForModeration(report.getTargetId());
+        else if (report.getTargetType() == ReportTargetType.POST) postService.restoreForModeration(report.getTargetId());
+        else throw targetNotFound();
     }
 
     private void requireNormalTarget(ReportTargetType targetType, Long targetId) {
@@ -158,7 +211,11 @@ public class ContentReportService {
     }
 
     private ReportStatus resultingStatus(ReportAction action) {
-        return action == ReportAction.HIDE ? ReportStatus.HIDDEN : ReportStatus.DISMISSED;
+        return switch (action) {
+            case HIDE -> ReportStatus.HIDDEN;
+            case DISMISS -> ReportStatus.DISMISSED;
+            case RESTORE -> ReportStatus.RESTORED;
+        };
     }
 
     private String normalizeDetail(String detail) {
@@ -180,7 +237,7 @@ public class ContentReportService {
     }
 
     private ReportResponse toResponse(ContentReport report) {
-        return new ReportResponse(
+        ReportResponse response = new ReportResponse(
                 report.getId(),
                 report.getReporterId(),
                 report.getTargetType(),
@@ -191,10 +248,12 @@ public class ContentReportService {
                 report.getCreatedAt(),
                 targetThreadId(report)
         );
+        response.setResolutionReason(report.getResolutionReason());
+        return response;
     }
 
     private ReportResolutionResponse toResolutionResponse(ContentReport report) {
-        return new ReportResolutionResponse(
+        ReportResolutionResponse response = new ReportResolutionResponse(
                 report.getId(),
                 report.getReporterId(),
                 report.getTargetType(),
@@ -207,6 +266,8 @@ public class ContentReportService {
                 report.getReviewerId(),
                 report.getResolvedAt()
         );
+        response.setResolutionReason(report.getResolutionReason());
+        return response;
     }
 
     private Long targetThreadId(ContentReport report) {

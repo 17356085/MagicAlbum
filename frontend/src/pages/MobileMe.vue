@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useHeaderTheme } from '@/components/header/useHeaderTheme'
 import { safeBack as navigateBackSafely } from '@/utils/router'
 import { setPendingAuthRedirect } from '@/utils/authStorage'
+import { getStoredAccessToken } from '@/utils/authStorage'
+import { getGovernanceMe, type GovernanceMe } from '@/api/governance'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const { isLoggedIn, user } = storeToRefs(authStore)
 const { isDark, themeLabel, toggleTheme } = useHeaderTheme()
 const logoutDialog = ref<HTMLDialogElement | null>(null)
+const governanceAccess = ref<GovernanceMe | null>(null)
+let governanceRequestSeq = 0
 
 const userId = computed(() => user.value?.id ?? user.value?.userId ?? null)
 const displayName = computed(() => user.value?.nickname || user.value?.username || '我的账户')
@@ -20,6 +24,26 @@ const profileLink = computed(() => (
     ? { name: 'users' }
     : { name: 'user-profile', params: { id: userId.value } }
 ))
+const isAdmin = computed(() => governanceAccess.value?.admin === true)
+const canReviewReports = computed(() => isAdmin.value || (governanceAccess.value?.moderatedSectionIds.length || 0) > 0)
+
+async function loadGovernanceLinks(): Promise<void> {
+  const requestSeq = ++governanceRequestSeq
+  governanceAccess.value = null
+  if (!isLoggedIn.value) return
+  const token = getStoredAccessToken()
+  const generation = authStore.getAuthGeneration()
+  try {
+    const access = await getGovernanceMe()
+    if (requestSeq === governanceRequestSeq && isLoggedIn.value && getStoredAccessToken() === token && authStore.isAuthGenerationCurrent(generation)) {
+      governanceAccess.value = access
+    }
+  } catch (_) {
+    if (requestSeq === governanceRequestSeq) governanceAccess.value = null
+  }
+}
+
+function onAuthStateChanged(): void { void loadGovernanceLinks() }
 
 function safeBack(): void {
   navigateBackSafely(router)
@@ -61,6 +85,16 @@ function confirmLogout(): void {
   authStore.logout()
   closeLogoutDialog()
 }
+
+onMounted(() => {
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
+  void loadGovernanceLinks()
+})
+
+onBeforeUnmount(() => {
+  governanceRequestSeq += 1
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
+})
 </script>
 
 <template>
@@ -102,6 +136,8 @@ function confirmLogout(): void {
         <router-link to="/my/threads" class="mobile-me__link">我的帖子<span aria-hidden="true">›</span></router-link>
         <router-link to="/my/posts" class="mobile-me__link">我的评论<span aria-hidden="true">›</span></router-link>
         <router-link to="/my/bookmarks" class="mobile-me__link">我的收藏<span aria-hidden="true">›</span></router-link>
+        <router-link v-if="canReviewReports" to="/admin/reports" class="mobile-me__link">举报审核<span aria-hidden="true">›</span></router-link>
+        <router-link v-if="isAdmin" to="/admin/community" class="mobile-me__link">社区管理<span aria-hidden="true">›</span></router-link>
       </div>
 
       <div class="mobile-me__links" aria-label="常用入口">

@@ -183,7 +183,7 @@ class ContentReportControllerWebMvcTest {
 
         mockMvc.perform(post("/api/v1/admin/reports/31/resolve")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"action\":\"HIDE\"}"))
+                        .content("{\"action\":\"HIDE\",\"reason\":\"审核说明\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(31))
                 .andExpect(jsonPath("$.targetType").value("THREAD"))

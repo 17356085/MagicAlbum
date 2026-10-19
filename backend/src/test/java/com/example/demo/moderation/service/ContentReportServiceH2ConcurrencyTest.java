@@ -61,10 +61,24 @@ class ContentReportServiceH2ConcurrencyTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    @Autowired private com.example.demo.user.repo.UserRepository users;
+    @Autowired private com.example.demo.governance.service.GovernanceService governance;
+    private Long reviewerId;
+
     @BeforeEach
     void clearRows() {
         reportRepository.deleteAll();
         threadRepository.deleteAll();
+        var reviewer = users.findByUsername("moderation-reviewer").orElseGet(() -> {
+            var user = new com.example.demo.user.entity.User();
+            user.setUsername("moderation-reviewer");
+            user.setEmail("moderation-reviewer@example.test");
+            user.setPhone("13700000001");
+            user.setPasswordHash("test-only-hash");
+            return users.save(user);
+        });
+        reviewerId = reviewer.getId();
+        governance.bootstrapAdmin(reviewerId);
     }
 
     @Test
@@ -119,7 +133,7 @@ class ContentReportServiceH2ConcurrencyTest {
         transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         try {
             ReportResolutionResponse response = transaction.execute(status ->
-                    reportService.resolve(42L, reportId, request(action)));
+                    reportService.resolve(reviewerId, reportId, request(action)));
             return ResolutionAttempt.success(response);
         } catch (ResponseStatusException ex) {
             return ResolutionAttempt.conflict(ex);
@@ -129,6 +143,7 @@ class ContentReportServiceH2ConcurrencyTest {
     private ResolveReportRequest request(ReportAction action) {
         ResolveReportRequest request = new ResolveReportRequest();
         request.setAction(action);
+        request.setReason("审核说明");
         return request;
     }
 

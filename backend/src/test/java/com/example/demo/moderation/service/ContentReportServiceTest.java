@@ -268,6 +268,7 @@ class ContentReportServiceTest {
     private ResolveReportRequest resolveRequest(ReportAction action) {
         ResolveReportRequest request = new ResolveReportRequest();
         request.setAction(action);
+        request.setReason("审核说明");
         return request;
     }
 
@@ -284,6 +285,7 @@ class ContentReportServiceTest {
         report.setReason(ReportReason.SPAM);
         report.setDetail("spam detail");
         report.setStatus(status);
+        if (status != ReportStatus.PENDING) report.setResolutionReason("审核说明");
         report.setCreatedAt(Instant.parse("2026-10-07T00:00:00Z"));
         return report;
     }

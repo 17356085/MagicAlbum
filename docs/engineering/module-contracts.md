@@ -16,7 +16,7 @@
 | notifications | `notifications` | core 通知 Outbox 以及独立 notification-service 的收件箱、已读、去重 |
 | storage | `storage` | 图片校验、存储 provider、资源归属、媒体任务与请求 Outbox、租约及派生对象清理 |
 | ai | `ai` | AI 调用、摘要缓存和用量；帖子摘要状态仍由 content 的帖子记录承载 |
-| governance | `moderation`、`admin` | 举报、管理权限和审核流程；隐藏由内容 owner 执行，恢复尚未实现 |
+| governance | `moderation`、`admin`、`governance` | 持久化角色、版主范围、发言限制、分区管理及审计；隐藏与恢复由内容 owner 执行 |
 | infrastructure | `common`、`config`、`bootstrap` | 配置、基础设施适配、Redis/RabbitMQ wiring 和本地种子数据 |
 
 上述映射存放在 [`config/java-domain-couplings.json`](../../config/java-domain-couplings.json)。未登记的 backend 包根按自身名称视为独立域，不能通过遗漏配置绕过检查。
@@ -45,7 +45,7 @@
 | notifications | core `NotificationClient`/`NotificationService`/`NotificationOutbox`；独立服务 `/api/v1/notifications` 和内部创建接口 | core Outbox `enqueue` 要求调用方已有事务；消费端持久化后才确认；独立服务以 `eventId` 唯一键幂等 | 用户通知查询按当前用户；内部接口使用独立 service token | core 客户端读取 user 通知偏好是公开 Service 入口；通知 Outbox 不能伪装成 M2 内容事件 |
 | storage | 上传、owner 状态/取消/重试及私有 worker 接口；`MediaAssetStatus` | 上传意图、确认/失败、任务领取/候选/接受各自短事务；对象写入在事务外，任务与请求 Outbox 同事务 | 用户 JWT 只授权 owner API；独立服务令牌与当前租约约束 worker；默认关闭媒体登记/处理 | 旧 URL 保持原语义，不自动迁移历史对象；新状态只在启用登记后建立，见 M3 契约 |
 | ai | `/api/v1/ai/**`；`AiService`、摘要缓存和 RabbitMQ 摘要 listener | 帖子更新把摘要状态置为 `PENDING`；listener 使用租约和条件更新避免旧结果覆盖 | 摘要读取应遵守 content 当前可见性；现有 controller 仍有直接读取 Thread 的历史对 | AI controller 读取 thread Entity/Repository 已在精确白名单；M2/M4 新调用应改为 content owner DTO |
-| governance | 举报和管理接口；`ContentReportService`、`AdminAccessService` | 举报由 governance Service 持久化；隐藏由 `ThreadService`/`PostService` 等 content owner 执行；恢复命令尚未实现 | 管理权限由 admin；目标内容授权由 content owner 再检查 | 举报 Service 读取 post/thread Entity/Repository，admin 读取 user Entity/Repository，均按源文件+目标白名单保留 |
+| governance | 举报、`/api/v1/governance/**`；`ContentReportService`、`GovernanceService`、`AdminAccessService` | 当前数据库角色与范围决定权限；角色/限制/分区管理及审计同事务提交；隐藏/恢复由 content owner 执行 | 版主继承父线程当前分区；作者写入检查发言限制与分区归档；管理员引导只执行一次 | M4A 为用户与分区行锁、分区配置保存增加五条精确依赖，理由和锁顺序见 M4A 记录；不允许治理直接写帖子/评论表 |
 | infrastructure | 本地种子、配置、公共 Redis/RabbitMQ 适配 | 不拥有业务事务；只参与被调用 owner 的事务 | 不绕过 owner 授权 | 本地种子直接读写多个域 Repository 是启动夹具，精确白名单保留；新增业务代码不得仿效 |
 
 ## 3. M2 内容事件边界

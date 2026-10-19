@@ -141,7 +141,7 @@
             <span>设置</span>
           </router-link>
         </li>
-        <li v-if="isAdmin">
+        <li v-if="canReviewReports">
           <router-link
             to="/admin/reports"
             class="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
@@ -151,6 +151,18 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.5 8.25 4.75v5.5c0 4.696-3.5 8.969-8.25 10.25C7.5 21.469 4 17.196 4 12.5V7l8-4.75z" />
             </svg>
             <span>举报审核</span>
+          </router-link>
+        </li>
+        <li v-if="isAdmin">
+          <router-link
+            to="/admin/community"
+            class="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            :class="isAdminCommunityActive ? 'text-brandDay-600 bg-brandDay-50 dark:text-brandNight-400 dark:bg-brandNight-900/20' : 'text-gray-700 dark:text-gray-200'"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-5 w-5 opacity-70 group-hover:opacity-100">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.75a3 3 0 00-3-3H9a3 3 0 00-3 3m12-12.75a3 3 0 11-6 0 3 3 0 016 0zM21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>社区管理</span>
           </router-link>
         </li>
       </ul>
@@ -164,7 +176,8 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { listSections } from '@/api/sections'
-import { getAdminStatus } from '@/api/admin'
+import { getGovernanceMe, type GovernanceMe } from '@/api/governance'
+import { getStoredAccessToken } from '@/utils/authStorage'
 import PopularTagsPanel from '@/components/sidebar/PopularTagsPanel.vue'
 import FollowingFeedPanel from '@/components/sidebar/FollowingFeedPanel.vue'
 import RecentVisitsPanel from '@/components/sidebar/RecentVisitsPanel.vue'
@@ -181,24 +194,30 @@ const isMyThreadsActive = computed(() => route.name === 'my-threads' || route.pa
 const isMyPostsActive = computed(() => route.name === 'my-posts' || route.path === '/my/posts')
 const isMyBookmarksActive = computed(() => route.name === 'my-bookmarks' || route.path === '/my/bookmarks')
 const isAdminReportsActive = computed(() => route.name === 'admin-reports' || route.path === '/admin/reports')
-const isAdmin = ref(false)
+const isAdminCommunityActive = computed(() => route.name === 'admin-community' || route.path === '/admin/community')
+const governanceAccess = ref<GovernanceMe | null>(null)
+const isAdmin = computed(() => governanceAccess.value?.admin === true)
+const canReviewReports = computed(() => isAdmin.value || (governanceAccess.value?.moderatedSectionIds.length || 0) > 0)
 let adminRequestSeq = 0
 
-async function loadAdminVisibility(): Promise<void> {
+async function loadGovernanceVisibility(): Promise<void> {
   const requestSeq = ++adminRequestSeq
   if (!isLoggedIn.value) {
-    isAdmin.value = false
+    governanceAccess.value = null
     return
   }
 
+  const token = getStoredAccessToken()
+  const generation = authStore.getAuthGeneration()
+
   try {
-    const allowed = await getAdminStatus()
-    if (requestSeq === adminRequestSeq && isLoggedIn.value) {
-      isAdmin.value = allowed
+    const access = await getGovernanceMe()
+    if (requestSeq === adminRequestSeq && isLoggedIn.value && getStoredAccessToken() === token && authStore.isAuthGenerationCurrent(generation)) {
+      governanceAccess.value = access
     }
   } catch (_) {
     if (requestSeq === adminRequestSeq) {
-      isAdmin.value = false
+      governanceAccess.value = null
     }
   }
 }
@@ -231,16 +250,16 @@ function toggleSections(): void {
 
 function onAuthStateChanged(): void {
   adminRequestSeq += 1
-  isAdmin.value = false
+  governanceAccess.value = null
   if (isLoggedIn.value) {
-    loadAdminVisibility()
+    loadGovernanceVisibility()
   }
 }
 
 onMounted(() => {
   // 默认加载分区
   loadSectionsData()
-  loadAdminVisibility()
+  loadGovernanceVisibility()
   window.addEventListener('auth-state-changed', onAuthStateChanged)
 })
 

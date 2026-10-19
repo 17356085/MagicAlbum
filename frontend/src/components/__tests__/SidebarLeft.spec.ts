@@ -6,7 +6,7 @@ import SidebarLeft from '../SidebarLeft.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const mocks = vi.hoisted(() => ({
-  getAdminStatus: vi.fn(),
+  getGovernanceMe: vi.fn(),
   listSections: vi.fn(),
   listPopularTags: vi.fn(),
   listTags: vi.fn(),
@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
 }))
 
-vi.mock('@/api/admin', () => ({ getAdminStatus: mocks.getAdminStatus }))
+vi.mock('@/api/governance', () => ({ getGovernanceMe: mocks.getGovernanceMe }))
 vi.mock('@/api/sections', () => ({ listSections: mocks.listSections }))
 vi.mock('@/api/tags', () => ({ listPopularTags: mocks.listPopularTags, listTags: mocks.listTags }))
 vi.mock('@/api/followingFeed', () => ({ listFollowingFeed: mocks.listFollowingFeed }))
@@ -41,6 +41,7 @@ async function createWrapper() {
     routes: [
       { path: '/discover', name: 'discover', component: { template: '<div />' } },
       { path: '/admin/reports', name: 'admin-reports', component: { template: '<div />' } },
+      { path: '/admin/community', name: 'admin-community', component: { template: '<div />' } },
     ],
   })
   await router.push('/discover')
@@ -67,33 +68,46 @@ describe('SidebarLeft admin visibility', () => {
   })
 
   it('hides the admin link when server verification says the account is not an admin', async () => {
-    mocks.getAdminStatus.mockRejectedValue({ response: { status: 403 } })
+    mocks.getGovernanceMe.mockRejectedValue({ response: { status: 403 } })
     const { wrapper } = await createWrapper()
 
     await flushPromises()
 
-    expect(mocks.getAdminStatus).toHaveBeenCalledWith()
+    expect(mocks.getGovernanceMe).toHaveBeenCalledWith()
     expect(wrapper.find('a[href="/admin/reports"]').exists()).toBe(false)
   })
 
   it('shows the admin link only after server verification succeeds', async () => {
-    mocks.getAdminStatus.mockResolvedValue(true)
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     const { wrapper } = await createWrapper()
 
     await flushPromises()
 
     expect(wrapper.get('a[href="/admin/reports"]').text()).toContain('举报审核')
+    expect(wrapper.get('a[href="/admin/community"]').text()).toContain('社区管理')
+  })
+
+  it('shows a reviewer link for a scoped moderator without showing community management', async () => {
+    mocks.getGovernanceMe.mockResolvedValue({ admin: false, moderatedSectionIds: [3], postingRestricted: false, restrictedUntil: null })
+    const { wrapper } = await createWrapper()
+
+    await flushPromises()
+
+    expect(wrapper.find('a[href="/admin/reports"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/admin/community"]').exists()).toBe(false)
   })
 
   it('clears the admin link immediately when authentication changes', async () => {
-    mocks.getAdminStatus.mockResolvedValue(true)
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     const { wrapper, auth } = await createWrapper()
     await flushPromises()
     expect(wrapper.find('a[href="/admin/reports"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/admin/community"]').exists()).toBe(true)
 
     auth.clearAuthState()
     await flushPromises()
 
     expect(wrapper.find('a[href="/admin/reports"]').exists()).toBe(false)
+    expect(wrapper.find('a[href="/admin/community"]').exists()).toBe(false)
   })
 })

@@ -7,6 +7,10 @@ import com.example.demo.moderation.model.ReportTargetType;
 import java.time.Instant;
 
 public class ReportResponse {
+    private String resolutionReason;
+
+    public String getResolutionReason() { return resolutionReason; }
+    public void setResolutionReason(String resolutionReason) { this.resolutionReason = resolutionReason; }
 
     private Long id;
     private Long reporterId;

@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ThreadRepository extends JpaRepository<com.example.demo.threads.entity.Thread, Long> {
+    @Query("SELECT t.sectionId FROM Thread t WHERE t.id = :id")
+    Optional<Long> findSectionIdByThreadId(@Param("id") Long id);
 
     List<com.example.demo.threads.entity.Thread> findByIdGreaterThanOrderByIdAsc(Long id, Pageable pageable);
 

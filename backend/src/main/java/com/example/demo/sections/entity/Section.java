@@ -32,6 +32,9 @@ public class Section {
     @Column(nullable = false)
     private Boolean visible = true;
 
+    @Column(nullable = false)
+    private Boolean archived = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -39,6 +42,7 @@ public class Section {
     public void prePersist() {
         if (createdAt == null) createdAt = Instant.now();
         if (visible == null) visible = true;
+        if (archived == null) archived = false;
     }
 
     public Long getId() { return id; }
@@ -53,6 +57,8 @@ public class Section {
     public void setRules(String rules) { this.rules = rules; }
     public Boolean getVisible() { return visible; }
     public void setVisible(Boolean visible) { this.visible = visible; }
+    public Boolean getArchived() { return archived; }
+    public void setArchived(Boolean archived) { this.archived = archived; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
 }

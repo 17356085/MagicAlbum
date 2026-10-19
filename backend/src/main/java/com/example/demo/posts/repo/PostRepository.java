@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<com.example.demo.posts.entity.Post, Long> {
+    @Query("SELECT p.threadId FROM Post p WHERE p.id = :id")
+    Optional<Long> findThreadIdByPostId(@Param("id") Long id);
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Post p WHERE p.id = :id")

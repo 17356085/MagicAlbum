@@ -2,6 +2,7 @@ package com.example.demo.threads.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.demo.ai.service.AiSummaryCacheService;
+import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.common.RedisKeys;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.sections.repo.SectionRepository;
@@ -44,6 +45,10 @@ import java.util.Objects;
 
 @Service
 public class ThreadService {
+    private GovernanceService governance;
+
+    @Autowired
+    public void setGovernanceService(GovernanceService governance) { this.governance = governance; }
     private static final int MAX_CONTENT_CHARS = 10_000;
     private static final Logger log = LoggerFactory.getLogger(ThreadService.class);
 
@@ -151,6 +156,7 @@ public class ThreadService {
 
     @Transactional
     public ThreadDto create(Long authorId, CreateThreadRequest req) {
+        if (governance != null) governance.assertCanWrite(authorId, req.getSectionId());
         // 校验分区存在
         Long sectionId = req.getSectionId();
         if (sectionId == null || !sectionRepository.existsById(sectionId)) {
@@ -437,8 +443,18 @@ public class ThreadService {
 
     @Transactional
     public ThreadDto update(Long userId, Long threadId, UpdateThreadRequest req) {
+        Long initialSection = null;
+        if (governance != null) {
+            initialSection = threadRepository.findSectionIdByThreadId(threadId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+            java.util.stream.Stream.of(initialSection, req.getSectionId() == null ? initialSection : req.getSectionId())
+                    .distinct().sorted().forEach(sectionId -> governance.assertCanWrite(userId, sectionId));
+        }
         Thread t = threadRepository.findByIdForInteraction(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        if (initialSection != null && !initialSection.equals(t.getSectionId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "帖子分区已变化，请刷新后重试");
+        }
         if (t.getStatus() == null || !"NORMAL".equals(t.getStatus())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
@@ -522,11 +538,27 @@ public class ThreadService {
 
     @Transactional
     public void hideForModeration(Long threadId) {
-        Thread thread = findNormalThreadForInteraction(threadId);
+        Thread thread = threadRepository.findByIdForInteraction(threadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        if ("HIDDEN".equals(thread.getStatus())) return;
+        if (!"NORMAL".equals(thread.getStatus())) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         thread.setStatus("HIDDEN");
         advanceContentVersion(thread);
         threadRepository.save(thread);
         recordContentEvent(thread, ContentEventType.THREAD_HIDDEN);
+        evictThreadCachesAfterCommit(threadId);
+    }
+
+    @Transactional
+    public void restoreForModeration(Long threadId) {
+        Thread thread = threadRepository.findByIdForInteraction(threadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+        if ("NORMAL".equals(thread.getStatus())) return;
+        if (!"HIDDEN".equals(thread.getStatus())) throw new ResponseStatusException(HttpStatus.CONFLICT, "只能恢复审核隐藏的内容");
+        thread.setStatus("NORMAL");
+        advanceContentVersion(thread);
+        threadRepository.save(thread);
+        recordContentEvent(thread, ContentEventType.THREAD_UPSERTED);
         evictThreadCachesAfterCommit(threadId);
     }
 

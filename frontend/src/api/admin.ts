@@ -2,7 +2,8 @@ import api from './client'
 import { decodePageResponse } from './pagination'
 import type { Id, PageResult } from '@/types'
 
-export type AdminReportAction = 'DISMISS' | 'HIDE'
+export type AdminReportAction = 'DISMISS' | 'HIDE' | 'RESTORE'
+export type AdminReportStatus = 'PENDING' | 'HIDDEN' | 'DISMISSED' | 'RESTORED'
 
 export interface AdminReport {
   id: Id
@@ -16,6 +17,9 @@ export interface AdminReport {
   /** Optional context returned for POST reports. It is never inferred from targetId. */
   threadId?: Id | null
   targetThreadId?: Id | null
+  resolutionReason?: string | null
+  reviewerId?: Id | null
+  resolvedAt?: string | null
 }
 
 export type AdminReportsPage = PageResult<AdminReport>
@@ -34,7 +38,7 @@ export async function listAdminReports({
   page = 1,
   size = 20,
 }: {
-  status?: string
+  status?: AdminReportStatus | string
   page?: number
   size?: number
 } = {}): Promise<AdminReportsPage> {
@@ -44,6 +48,14 @@ export async function listAdminReports({
   return decodePageResponse<AdminReport>(data, { page, size, endpoint: '/admin/reports' })
 }
 
-export async function resolveAdminReport(id: Id, action: AdminReportAction): Promise<void> {
-  await api.post(`/admin/reports/${id}/resolve`, { action })
+export function validateAdminReportReason(reason: string): string {
+  const normalized = String(reason ?? '').trim()
+  if (normalized.length < 1 || normalized.length > 500) {
+    throw new Error('处理理由必须填写，长度为 1–500 个字符。')
+  }
+  return normalized
+}
+
+export async function resolveAdminReport(id: Id, action: AdminReportAction, reason: string): Promise<void> {
+  await api.post(`/admin/reports/${id}/resolve`, { action, reason: validateAdminReportReason(reason) })
 }

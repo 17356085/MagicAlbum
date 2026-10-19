@@ -7,11 +7,31 @@
     "notifications": ["notifications"],
     "storage": ["storage"],
     "ai": ["ai"],
-    "governance": ["admin", "moderation"],
+    "governance": ["admin", "moderation", "governance"],
     "infrastructure": ["bootstrap", "common", "config"]
   },
   "guardedLayers": ["entity", "repo"],
   "allowedCrossDomainDependencies": [
+    {
+      "source": "backend/src/main/java/com/example/demo/governance/repo/SectionGovernanceRepository.java",
+      "target": "com.example.demo.sections.entity.Section"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
+      "target": "com.example.demo.sections.entity.Section"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
+      "target": "com.example.demo.sections.repo.SectionRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
     {
       "source": "backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java",
       "target": "com.example.demo.user.entity.User"

@@ -3,15 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AdminReports from '../AdminReports.vue'
 
 const mocks = vi.hoisted(() => ({
-  getAdminStatus: vi.fn(),
+  getGovernanceMe: vi.fn(),
   listAdminReports: vi.fn(),
   resolveAdminReport: vi.fn(),
+  validateAdminReportReason: vi.fn((reason: string) => {
+    const value = reason.trim()
+    if (!value) throw new Error('处理理由必须填写')
+    return value
+  }),
 }))
 
 vi.mock('@/api/admin', () => ({
-  getAdminStatus: mocks.getAdminStatus,
   listAdminReports: mocks.listAdminReports,
   resolveAdminReport: mocks.resolveAdminReport,
+  validateAdminReportReason: mocks.validateAdminReportReason,
+}))
+
+vi.mock('@/api/governance', () => ({
+  getGovernanceMe: mocks.getGovernanceMe,
 }))
 
 const RouterLinkStub = {
@@ -40,7 +49,7 @@ describe('AdminReports', () => {
   })
 
   it('shows access denied on a server 403 without logging out or loading reports', async () => {
-    mocks.getAdminStatus.mockRejectedValue({ response: { status: 403 } })
+    mocks.getGovernanceMe.mockRejectedValue({ response: { status: 403 } })
     const wrapper = createWrapper()
 
     await flushPromises()
@@ -50,7 +59,7 @@ describe('AdminReports', () => {
   })
 
   it('renders Chinese enum labels and only links reports to known thread targets', async () => {
-    mocks.getAdminStatus.mockResolvedValue(true)
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     mocks.listAdminReports.mockResolvedValue({
       items: [
         {
@@ -104,7 +113,7 @@ describe('AdminReports', () => {
   })
 
   it('confirms, locks, resolves, and refreshes the queue', async () => {
-    mocks.getAdminStatus.mockResolvedValue(true)
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     mocks.listAdminReports
       .mockResolvedValueOnce({
         items: [{
@@ -132,19 +141,23 @@ describe('AdminReports', () => {
     expect(hideButton).toBeDefined()
 
     await dismissButton!.trigger('click')
-    expect(window.confirm).toHaveBeenCalledWith('确认驳回举报 #17 吗？')
+    const reason = wrapper.get('#resolution-reason-17')
+    await reason.setValue('确认是重复广告')
+    const resolutionForm = wrapper.findAll('form').find((form) => form.find('#resolution-reason-17').exists())
+    expect(resolutionForm).toBeDefined()
+    await resolutionForm!.trigger('submit')
     expect(dismissButton!.attributes('disabled')).toBeDefined()
     expect(hideButton!.attributes('disabled')).toBeDefined()
     await flushPromises()
 
-    expect(mocks.resolveAdminReport).toHaveBeenCalledWith(17, 'DISMISS')
+    expect(mocks.resolveAdminReport).toHaveBeenCalledWith(17, 'DISMISS', '确认是重复广告')
     expect(mocks.listAdminReports).toHaveBeenCalledTimes(2)
-    expect(wrapper.get('[role="status"]').text()).toContain('驳回举报成功')
+    expect(wrapper.text()).toContain('驳回举报成功')
     expect(wrapper.text()).toContain('当前没有待处理举报')
   })
 
   it('offers a retryable list error after admin access succeeds', async () => {
-    mocks.getAdminStatus.mockResolvedValue(true)
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     mocks.listAdminReports.mockRejectedValueOnce(new Error('network failure')).mockResolvedValueOnce(emptyPage)
     const wrapper = createWrapper()
 

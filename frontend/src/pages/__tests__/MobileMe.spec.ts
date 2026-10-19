@@ -8,6 +8,8 @@ import { useAuthStore } from '@/stores/auth'
 import { getPendingAuthRedirect } from '@/utils/authStorage'
 
 const page = { template: '<div />' }
+const mocks = vi.hoisted(() => ({ getGovernanceMe: vi.fn() }))
+vi.mock('@/api/governance', () => ({ getGovernanceMe: mocks.getGovernanceMe }))
 let dialogShowModal: PropertyDescriptor | undefined
 let dialogClose: PropertyDescriptor | undefined
 const showModalMock = vi.fn(function (this: HTMLDialogElement) {
@@ -36,6 +38,8 @@ async function createWrapper(loggedIn: boolean) {
       { path: '/my/threads', name: 'my-threads', component: page },
       { path: '/my/posts', name: 'my-posts', component: page },
       { path: '/my/bookmarks', name: 'my-bookmarks', component: page },
+      { path: '/admin/reports', name: 'admin-reports', component: page },
+      { path: '/admin/community', name: 'admin-community', component: page },
       { path: '/history', name: 'history', component: page },
     ],
   })
@@ -48,6 +52,8 @@ async function createWrapper(loggedIn: boolean) {
 describe('MobileMe', () => {
   beforeEach(() => {
     localStorage.clear()
+    mocks.getGovernanceMe.mockReset()
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     document.documentElement.classList.remove('dark')
     dialogShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal')
     dialogClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
@@ -101,6 +107,9 @@ describe('MobileMe', () => {
     expect(wrapper.find('a[href="/my/threads"]').exists()).toBe(true)
     expect(wrapper.find('a[href="/my/posts"]').exists()).toBe(true)
     expect(wrapper.find('a[href="/my/bookmarks"]').exists()).toBe(true)
+    await nextTick()
+    expect(wrapper.find('a[href="/admin/reports"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/admin/community"]').exists()).toBe(true)
     expect(wrapper.find('a[href="/settings"]').exists()).toBe(true)
 
     await wrapper.get('button.mobile-me__logout').trigger('click')

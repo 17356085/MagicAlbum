@@ -30,6 +30,6 @@ public class SectionsController {
         Page<Section> p = sectionService.list(q, page, size);
         return ResponseEntity.ok(PageResponse.from(p.map(section -> new SectionDto(section.getId(),
                 section.getName(), section.getSlug(), section.getDescription(), section.getRules(),
-                section.getVisible(), section.getCreatedAt()))));
+                section.getVisible(), section.getCreatedAt(), section.getArchived()))));
     }
 }

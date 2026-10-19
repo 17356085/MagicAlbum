@@ -32,12 +32,12 @@ describe('admin API', () => {
       size: 20,
       total: 21,
     })
-    await resolveAdminReport(17, 'HIDE')
+    await resolveAdminReport(17, 'HIDE', '  重复广告  ')
 
     expect(apiMock.get).toHaveBeenNthCalledWith(1, '/admin/me')
     expect(apiMock.get).toHaveBeenNthCalledWith(2, '/admin/reports', {
       params: { status: 'PENDING', page: 2, size: 20 },
     })
-    expect(apiMock.post).toHaveBeenCalledWith('/admin/reports/17/resolve', { action: 'HIDE' })
+    expect(apiMock.post).toHaveBeenCalledWith('/admin/reports/17/resolve', { action: 'HIDE', reason: '重复广告' })
   })
 })

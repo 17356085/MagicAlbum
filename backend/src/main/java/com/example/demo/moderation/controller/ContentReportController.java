@@ -1,6 +1,8 @@
 package com.example.demo.moderation.controller;
 
 import com.example.demo.admin.security.AdminAccessService;
+import com.example.demo.governance.service.GovernanceService;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.example.demo.moderation.dto.CreateReportRequest;
 import com.example.demo.moderation.dto.ReportPageResponse;
 import com.example.demo.moderation.dto.ReportResponse;
@@ -29,6 +31,10 @@ public class ContentReportController {
 
     private final ContentReportService reportService;
     private final AdminAccessService adminAccessService;
+    private GovernanceService governance;
+
+    @Autowired(required = false)
+    public void setGovernanceService(GovernanceService governance) { this.governance = governance; }
 
     public ContentReportController(ContentReportService reportService,
                                    AdminAccessService adminAccessService) {
@@ -49,8 +55,10 @@ public class ContentReportController {
             @RequestParam(value = "size", defaultValue = "20") int size
     ) {
         Long adminId = currentUserIdOrNull();
-        adminAccessService.requireAdmin(adminId);
-        Page<ReportResponse> result = reportService.list(status, page, size);
+        if (governance == null) adminAccessService.requireAdmin(adminId);
+        else governance.requireManager(adminId);
+        Page<ReportResponse> result = governance == null ? reportService.list(status, page, size)
+                : reportService.listForReviewer(adminId, status, page, size);
         return ResponseEntity.ok(new ReportPageResponse(
                 result.getContent(),
                 result.getNumber() + 1,
@@ -65,7 +73,8 @@ public class ContentReportController {
             @Valid @RequestBody ResolveReportRequest request
     ) {
         Long adminId = currentUserIdOrNull();
-        adminAccessService.requireAdmin(adminId);
+        if (governance == null) adminAccessService.requireAdmin(adminId);
+        else governance.requireManager(adminId);
         return ResponseEntity.ok(reportService.resolve(adminId, reportId, request));
     }
 

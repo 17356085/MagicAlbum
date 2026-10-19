@@ -62,6 +62,12 @@ public class ContentReport {
     @Column(name = "resolved_at")
     private Instant resolvedAt;
 
+    @Column(name = "resolution_reason", length = 500)
+    private String resolutionReason;
+
+    public String getResolutionReason() { return resolutionReason; }
+    public void setResolutionReason(String resolutionReason) { this.resolutionReason = resolutionReason; }
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

@@ -1,8 +1,10 @@
 package com.example.demo.admin.security;
 
+import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,12 +24,25 @@ import java.util.Objects;
 public class AdminAccessService {
 
     private final UserRepository userRepository;
+    private final GovernanceService governanceService;
     private final String configuredEmail;
     private volatile Long resolvedAdminUserId;
 
+    /**
+     * Kept for the existing focused unit tests. Production wiring uses the
+     * three-argument constructor so persisted governance roles are authoritative.
+     */
     public AdminAccessService(UserRepository userRepository,
                               @Value("${app.admin.email:}") String configuredEmail) {
+        this(userRepository, null, configuredEmail);
+    }
+
+    @Autowired
+    public AdminAccessService(UserRepository userRepository,
+                              GovernanceService governanceService,
+                              @Value("${app.admin.email:}") String configuredEmail) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
+        this.governanceService = governanceService;
         this.configuredEmail = normalize(configuredEmail);
     }
 
@@ -59,10 +74,18 @@ public class AdminAccessService {
                     "Configured app.admin.email matched a user without a persisted id; startup aborted");
         }
         resolvedAdminUserId = userId;
+        if (governanceService != null) {
+            governanceService.bootstrapAdmin(userId);
+        }
     }
 
     public boolean isAdmin(Long userId) {
-        return userId != null && userId.equals(resolvedAdminUserId);
+        if (userId == null) {
+            return false;
+        }
+        return governanceService == null
+                ? userId.equals(resolvedAdminUserId)
+                : governanceService.isAdmin(userId);
     }
 
     public void requireAdmin(Long userId) {

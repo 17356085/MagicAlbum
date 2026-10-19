@@ -1,5 +1,6 @@
 package com.example.demo.admin.security;
 
+import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -24,6 +26,9 @@ class AdminAccessServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private GovernanceService governanceService;
 
     @Test
     void blank_configuration_disables_admin_without_a_user_lookup() {
@@ -79,6 +84,31 @@ class AdminAccessServiceTest {
                 ResponseStatusException.class,
                 () -> service.requireAdmin(null));
         assertEquals(HttpStatus.UNAUTHORIZED.value(), unauthenticated.getStatusCode().value());
+    }
+
+    @Test
+    void production_constructor_bootstraps_only_the_configured_existing_user() {
+        when(userRepository.findAllByEmailIgnoreCase("owner@example.com"))
+                .thenReturn(List.of(user(42L, "owner@example.com")));
+        when(governanceService.isAdmin(42L)).thenReturn(true);
+
+        AdminAccessService service = new AdminAccessService(
+                userRepository, governanceService, "owner@example.com");
+
+        service.resolveConfiguredAdmin();
+
+        verify(governanceService).bootstrapAdmin(42L);
+        assertTrue(service.isAdmin(42L));
+    }
+
+    @Test
+    void missing_bootstrap_email_does_not_consume_governance_state() {
+        AdminAccessService service = new AdminAccessService(
+                userRepository, governanceService, "  ");
+
+        service.resolveConfiguredAdmin();
+
+        verifyNoInteractions(userRepository, governanceService);
     }
 
     private User user(Long id, String email) {
