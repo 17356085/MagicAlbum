@@ -29,6 +29,10 @@ app:
       issuer: ${NOTIFICATION_JWT_ISSUER:${JWT_ISSUER:}}
     internal-service-token: ${NOTIFICATION_INTERNAL_SERVICE_TOKEN:${INTERNAL_SERVICE_TOKEN:}}
 
+logging:
+  pattern:
+    level: "%5p [requestId=%X{requestId:-none}]"
+
 management:
   endpoints:
     web:

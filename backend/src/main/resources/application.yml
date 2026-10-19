@@ -47,6 +47,8 @@ spring:
         auto-startup: ${app.rabbit.enabled:false}
 
 logging:
+  pattern:
+    level: "%5p [requestId=%X{requestId:-none}]"
   level:
     root: INFO
     org.springframework.web: INFO

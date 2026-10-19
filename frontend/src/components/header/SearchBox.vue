@@ -1,8 +1,9 @@
 <template>
-  <div ref="searchRoot" class="relative flex shrink-0 items-center md:mx-4 md:flex-1">
+  <div ref="searchRoot" class="relative flex shrink-0 items-center lg:mx-4 lg:flex-1">
     <button
+      ref="searchTrigger"
       type="button"
-      class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded p-1.5 text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:text-gray-200 dark:hover:bg-gray-700 dark:focus:ring-accentCyan-400 md:hidden"
+      class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded p-1.5 text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brandDay-600 dark:text-gray-200 dark:hover:bg-gray-700 dark:focus:ring-accentCyan-400 lg:hidden"
       aria-label="搜索"
       title="搜索"
       aria-controls="header-search-panel"
@@ -16,25 +17,27 @@
 
     <div
       id="header-search-panel"
+      @keydown.esc="onPanelEscape"
+      class="mobile-search-panel"
       :class="[
         mobileSearchOpen
           ? 'fixed inset-x-2 top-14 z-50 mt-2 block w-auto max-w-none rounded-lg border border-gray-200 bg-white p-2 shadow-xl dark:border-gray-700 dark:bg-gray-900'
           : 'hidden',
-        'md:static md:inset-x-auto md:top-auto md:mt-0 md:block md:w-auto md:max-w-none md:flex-1 md:rounded-none md:border-0 md:bg-transparent md:p-0 md:shadow-none',
+        'lg:static lg:inset-x-auto lg:top-auto lg:mt-0 lg:block lg:w-auto lg:max-w-none lg:flex-1 lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none',
       ]"
     >
-      <div class="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
-        <div class="inline-flex w-full rounded-lg bg-gray-50 p-1 text-xs dark:border-gray-700 dark:bg-gray-800 md:w-auto">
+      <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
+        <div class="inline-flex w-full rounded-lg bg-gray-50 p-1 text-xs dark:border-gray-700 dark:bg-gray-800 lg:w-auto">
           <button
             type="button"
-            class="flex-1 rounded px-3 py-1 whitespace-nowrap md:flex-none md:px-4"
+            class="flex min-h-11 flex-1 items-center justify-center rounded px-3 py-1 whitespace-nowrap lg:flex-none lg:px-4"
             :class="searchType === 'threads' ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/40 dark:text-brandNight-200' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
             :aria-pressed="searchType === 'threads'"
             @click="emit('update:search-type', 'threads')"
           >搜帖子</button>
           <button
             type="button"
-            class="flex-1 rounded px-3 py-1 whitespace-nowrap md:flex-none md:px-4"
+            class="flex min-h-11 flex-1 items-center justify-center rounded px-3 py-1 whitespace-nowrap lg:flex-none lg:px-4"
             :class="searchType === 'users' ? 'bg-brandDay-50 text-brandDay-700 dark:bg-brandNight-900/40 dark:text-brandNight-200' : 'hover:bg-gray-100 dark:hover:bg-gray-700'"
             :aria-pressed="searchType === 'users'"
             @click="emit('update:search-type', 'users')"
@@ -47,7 +50,7 @@
             :value="searchQuery"
             type="text" aria-label="搜索关键词"
             :placeholder="searchType === 'users' ? '搜索用户名/昵称' : '搜索帖子标题或内容'"
-            class="ui-field pr-12 text-sm"
+            class="ui-field min-h-12 pr-14 text-base"
             @input="onSearchInput"
             @keydown="onInputKeydown"
             @focus="emit('input-focus')"
@@ -55,7 +58,7 @@
           />
           <button
             type="button"
-            class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded bg-brandDay-600 p-2 text-white hover:bg-brandDay-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 motion-safe:transition-colors motion-safe:transition-transform motion-safe:duration-150 active:scale-95 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
+            class="absolute right-1 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded bg-brandDay-600 p-2 text-white hover:bg-brandDay-700 focus:outline-none focus:ring-2 focus:ring-brandDay-600 motion-safe:transition-colors motion-safe:transition-transform motion-safe:duration-150 active:scale-95 dark:bg-brandNight-600 dark:hover:bg-brandNight-700 dark:focus:ring-accentCyan-400"
             aria-label="搜索"
             title="搜索"
             @click="emitSearch"
@@ -143,6 +146,7 @@ const emit = defineEmits<{
 }>()
 
 const searchRoot = ref<HTMLElement | null>(null)
+const searchTrigger = ref<HTMLButtonElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const mobileSearchOpen = ref(false)
 
@@ -157,8 +161,16 @@ function toggleMobileSearch(): void {
   }
 }
 
-function closeMobileSearch(): void {
+function closeMobileSearch(restoreFocus = false): void {
   mobileSearchOpen.value = false
+  if (restoreFocus) void nextTick(() => searchTrigger.value?.focus())
+}
+
+function onPanelEscape(event: KeyboardEvent): void {
+  if (!mobileSearchOpen.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  closeMobileSearch(true)
 }
 
 function emitSearch(): void {
@@ -173,7 +185,7 @@ function onSearchInput(event: Event): void {
 
 function onInputKeydown(event: KeyboardEvent): void {
   emit('input-keydown', event)
-  if (event.key === 'Enter' || event.key === 'Escape') {
+  if (event.key === 'Enter') {
     closeMobileSearch()
   }
 }
@@ -187,3 +199,15 @@ function onDocumentPointerDown(event: PointerEvent): void {
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown))
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
 </script>
+
+<style scoped>
+.mobile-search-panel {
+  top: calc(56px + env(safe-area-inset-top, 0px));
+}
+
+@media (min-width: 1024px) {
+  .mobile-search-panel {
+    top: auto;
+  }
+}
+</style>

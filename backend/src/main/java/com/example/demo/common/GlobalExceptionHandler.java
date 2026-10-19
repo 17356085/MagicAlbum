@@ -53,7 +53,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
         String message = resolveDataIntegrityMessage(ex);
         // Database exception text may contain SQL values, including notification payloads.
-        log.warn("Data integrity violation mapped to business error: {}", message);
+        log.warn("Data integrity violation mapped to business error");
         return build(HttpStatus.CONFLICT, message);
     }
 
@@ -61,9 +61,11 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleResponseStatus(ResponseStatusException ex) {
         String message = ex.getReason() == null ? "请求失败" : ex.getReason();
         if (ex.getStatusCode().is5xxServerError()) {
-            log.error("Request failed with status={} message={}", ex.getStatusCode().value(), message, ex);
+            log.error("Request failed with status={} exception={}",
+                    ex.getStatusCode().value(), ex.getClass().getSimpleName());
         } else {
-            log.debug("Request failed with status={} message={}", ex.getStatusCode().value(), message);
+            log.debug("Request failed with status={} exception={}",
+                    ex.getStatusCode().value(), ex.getClass().getSimpleName());
         }
         return build(HttpStatus.valueOf(ex.getStatusCode().value()), message);
     }
@@ -75,7 +77,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleUnknown(Exception ex) {
-        log.error("Unhandled server exception", ex);
+        log.error("Unhandled server exception type={}", ex.getClass().getSimpleName());
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "服务器内部错误");
     }
 

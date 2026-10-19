@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "domainRoots": {
+    "identity": ["auth", "user"],
+    "content": ["posts", "sections", "tags", "threads"],
+    "interaction": ["bookmarks"],
+    "notifications": ["notifications"],
+    "storage": ["storage"],
+    "ai": ["ai"],
+    "governance": ["admin", "moderation"],
+    "infrastructure": ["bootstrap", "common", "config"]
+  },
+  "guardedLayers": ["entity", "repo"],
+  "allowedCrossDomainDependencies": [
+    {
+      "source": "backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/ai/controller/AiController.java",
+      "target": "com.example.demo.threads.entity.Thread"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/ai/controller/AiController.java",
+      "target": "com.example.demo.threads.repo.ThreadRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/apple/AppleOAuthHandler.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/AuthService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/AuthService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/github/GithubOAuthHandler.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/google/GoogleOAuthHandler.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/AuthOAuthService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/AuthOAuthService.java",
+      "target": "com.example.demo.user.repo.UserProfileRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/AuthOAuthService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/OAuthUserProvisioningService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/OAuthUserProvisioningService.java",
+      "target": "com.example.demo.user.entity.UserProfile"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/OAuthUserProvisioningService.java",
+      "target": "com.example.demo.user.repo.UserProfileRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/oauth/common/OAuthUserProvisioningService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/otp/CognitoOtpAuthService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/otp/CognitoOtpAuthService.java",
+      "target": "com.example.demo.user.entity.UserProfile"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/otp/CognitoOtpAuthService.java",
+      "target": "com.example.demo.user.repo.UserProfileRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/otp/CognitoOtpAuthService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/qr/AuthQrService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/auth/service/qr/AuthQrService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bookmarks/service/ThreadBookmarkService.java",
+      "target": "com.example.demo.threads.entity.Thread"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bookmarks/service/ThreadBookmarkService.java",
+      "target": "com.example.demo.threads.repo.ThreadRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.sections.entity.Section"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.sections.repo.SectionRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.threads.entity.Thread"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.threads.repo.ThreadRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.user.entity.UserProfile"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.user.repo.UserProfileRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/bootstrap/local/seed/LocalThreadSeedText.java",
+      "target": "com.example.demo.sections.entity.Section"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
+      "target": "com.example.demo.posts.entity.Post"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
+      "target": "com.example.demo.posts.repo.PostRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
+      "target": "com.example.demo.threads.entity.Thread"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
+      "target": "com.example.demo.threads.repo.ThreadRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
+      "target": "com.example.demo.threads.entity.Thread"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
+      "target": "com.example.demo.threads.repo.ThreadRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
+      "target": "com.example.demo.user.entity.User"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/threads/service/ThreadService.java",
+      "target": "com.example.demo.sections.repo.SectionRepository"
+    },
+    {
+      "source": "backend/src/main/java/com/example/demo/threads/service/ThreadService.java",
+      "target": "com.example.demo.user.repo.UserRepository"
+    }
+  ]
+}

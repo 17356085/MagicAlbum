@@ -31,13 +31,22 @@ const inheritedSubmitting = inject(commentSubmissionKey, ref(false))
 const isSubmitting = computed(() => props.isSubmitting || inheritedSubmitting.value)
 const isBusy = computed(() => isSubmitting.value || props.isUploading)
 const inputClass = computed(() =>
-  `${props.widthClass} ui-field h-[140px] resize-none text-sm leading-6`,
+  `${props.widthClass} ui-field h-[120px] min-h-[120px] resize-none overflow-y-auto text-base leading-6 lg:h-[140px] lg:min-h-[140px]`,
 )
+
+function requestLogin(): void {
+  try {
+    window.dispatchEvent(new CustomEvent('open-login-modal', { detail: { source: 'comment-composer' } }))
+  } catch (_) {}
+}
 </script>
 
 <template>
   <div>
-    <div v-if="!isLoggedIn" class="ui-muted text-sm">登录后可发表评论</div>
+    <div v-if="!isLoggedIn" class="flex flex-wrap items-center gap-2 text-sm">
+      <span class="ui-muted">登录后可发表评论</span>
+      <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" @click="requestLogin">立即登录</button>
+    </div>
     <div v-else>
       <textarea
         v-if="!previewMode"
@@ -50,7 +59,7 @@ const inputClass = computed(() =>
       />
       <div
         v-else
-        :class="`${widthClass} ui-field ui-scroll h-[140px] overflow-auto px-3 py-2 text-sm prose max-w-none dark:prose-invert`"
+        :class="`${widthClass} ui-field ui-scroll h-[120px] min-h-[120px] overflow-auto px-3 py-3 text-base prose max-w-none dark:prose-invert lg:h-[140px] lg:min-h-[140px]`"
         role="region"
         aria-label="评论预览"
         v-html="previewHtml"
@@ -58,22 +67,22 @@ const inputClass = computed(() =>
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <label class="inline-flex cursor-pointer items-center gap-2 rounded-lg text-xs focus-within:ring-2 focus-within:ring-[var(--ui-accent)] focus-within:ring-offset-2">
           <input type="file" accept="image/*" class="sr-only" aria-label="添加评论图片" :disabled="isBusy" @change="emit('upload-image', $event)" />
-          <span class="ui-button min-h-9 px-3 py-1 text-xs">添加图片</span>
+          <span class="ui-button flex min-h-11 items-center px-3 py-2 text-sm">添加图片</span>
         </label>
-        <button type="button" class="ui-button min-h-9 px-3 py-1 text-xs" :disabled="isBusy" :aria-pressed="previewMode" @click="emit('update:previewMode', !previewMode)">
+        <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="isBusy" :aria-pressed="previewMode" @click="emit('update:previewMode', !previewMode)">
           {{ isUploading ? '上传中...' : (previewMode ? '退出预览' : '预览') }}
         </button>
         <button
           type="button"
           :disabled="isBusy"
-          class="ui-button-primary min-h-9 px-3 py-1 text-xs disabled:opacity-60"
+          class="ui-button-primary min-h-12 px-3 py-2 text-sm disabled:opacity-60"
           @click="emit('submit')"
         >
           {{ isSubmitting ? '发送中...' : (isUploading ? '上传中...' : '发送评论') }}
         </button>
         <span v-if="replyToPostId != null" class="ui-muted text-xs">
           回复：#{{ replyToPostId }}
-          <button type="button" class="ui-button min-h-8 px-2 py-1 text-xs" :disabled="isBusy" @click="emit('cancel-reply')">取消</button>
+          <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="isBusy" @click="emit('cancel-reply')">取消</button>
         </span>
       </div>
     </div>

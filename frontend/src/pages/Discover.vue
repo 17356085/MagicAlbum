@@ -178,11 +178,11 @@ function getAuthorAvatarUrl(thread: Thread): string {
 </script>
 
 <template>
-  <div class="ui-page mx-auto max-w-5xl">
+  <div class="ui-page discover-page mx-auto max-w-5xl">
     <header class="ui-page-header">
       <div class="min-w-0">
         <h1 class="ui-title">发现</h1>
-        <p class="ui-description">浏览社区里正在发生的讨论，按分区、关键词或标签找到下一篇想读的帖子。</p>
+        <p class="ui-description hidden lg:block">浏览社区里正在发生的讨论，按分区、关键词或标签找到下一篇想读的帖子。</p>
       </div>
       <div v-if="sectionId !== null && currentSectionName" class="ui-muted text-sm">当前分区：{{ currentSectionName }}</div>
     </header>
@@ -211,12 +211,12 @@ function getAuthorAvatarUrl(thread: Thread): string {
     <div v-else class="ui-panel overflow-hidden">
       <ul>
         <li v-for="t in items" :key="t.id" class="ui-list-row">
-          <div class="flex min-w-0 flex-col items-start gap-5 md:flex-row">
-            <div v-if="firstImageUrl(t.content)" class="h-40 w-full shrink-0 overflow-hidden rounded-lg border border-[var(--ui-border)] bg-[var(--ui-subtle)] md:w-56">
+          <div class="flex min-w-0 flex-col items-start gap-5 lg:flex-row">
+            <div v-if="firstImageUrl(t.content)" class="order-2 h-40 w-full shrink-0 overflow-hidden rounded-lg border border-[var(--ui-border)] bg-[var(--ui-subtle)] md:order-none md:w-56">
               <img :src="firstImageUrl(t.content)" alt="帖子图片" loading="lazy" class="h-full w-full object-contain" />
             </div>
 
-            <div class="min-w-0 flex-1">
+            <div class="order-1 w-full min-w-0 flex-1 md:order-none">
               <router-link :to="`/threads/${t.id}`" class="group block">
                 <h2 class="mb-2 line-clamp-2 break-words text-lg font-semibold leading-snug text-[var(--ui-ink)] group-hover:text-[var(--ui-accent)]" v-html="renderTitleMarkdownHtml(t.title)" />
               </router-link>
@@ -233,7 +233,7 @@ function getAuthorAvatarUrl(thread: Thread): string {
               </div>
 
               <div class="mt-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[var(--ui-muted)]">
-                <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="inline-flex min-w-0 items-center gap-2 text-[var(--ui-ink)] hover:text-[var(--ui-accent)]">
+                <router-link :to="t.authorId ? ('/users/' + t.authorId) : '/users'" class="inline-flex max-w-full min-w-0 items-center gap-2 text-[var(--ui-ink)] hover:text-[var(--ui-accent)]">
                   <img
                     :src="getAuthorAvatarUrl(t) || `https://api.dicebear.com/7.x/initials/svg?seed=${t.authorNickname || t.authorUsername || t.authorId || 'U'}`"
                     class="h-6 w-6 rounded-full bg-[var(--ui-subtle)] object-cover"
@@ -256,7 +256,8 @@ function getAuthorAvatarUrl(thread: Thread): string {
         <div class="ui-muted text-xs">共 {{ total }} 条 · 每页 {{ size }} 条</div>
         <nav class="flex min-w-0 flex-wrap items-center gap-2" aria-label="帖子分页">
           <button class="ui-button min-h-9 px-3 py-1" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <label class="ui-muted flex items-center gap-2 text-sm">
+          <span class="ui-muted text-sm lg:hidden" aria-live="polite">{{ page }} / {{ totalPages }}</span>
+          <label class="ui-muted hidden items-center gap-2 text-sm lg:flex">
             <span>第</span>
             <input
               v-model="inputPage"
@@ -278,4 +279,8 @@ function getAuthorAvatarUrl(thread: Thread): string {
   </template>
 
 <style scoped>
+@media (max-width: 1023px) {
+  .discover-page h2 { overflow-wrap: anywhere; font-size: 17px; line-height: 1.5; }
+  .discover-page nav[aria-label="帖子分页"] { width: 100%; justify-content: space-between; }
+}
 </style>

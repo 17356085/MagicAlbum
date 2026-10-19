@@ -194,7 +194,8 @@ public class ThreadService {
         try {
             rabbitTemplate.convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, threadId);
         } catch (Exception e) {
-            log.warn("Failed to send summary generation task for thread {}: {}", threadId, e.getMessage());
+            log.warn("Failed to send summary generation task for thread {}: {}",
+                    threadId, e.getClass().getSimpleName());
         }
     }
 

@@ -29,17 +29,20 @@ def test_header_entry_points_fit_at_required_viewports(page: Page, width: int, h
 
     header = page.locator("header").first
     expect(header).to_be_visible()
-    expect(page.get_by_role("button", name="登录")).to_be_visible()
-    expect(page.get_by_role("link", name="发帖")).to_be_visible()
     expect(page.get_by_role("button", name="通知")).to_be_visible()
 
-    if width < 768:
+    if width < 1024:
+        expect(header.get_by_role("button", name="登录")).to_be_hidden()
+        expect(page.get_by_role("navigation", name="移动端导航").get_by_role("link", name="我的", exact=True)).to_be_visible()
+        expect(page.locator(".mobile-create")).to_be_visible()
         search_trigger = header.locator('button[aria-label="搜索"]:visible').first
         expect(search_trigger).to_be_visible()
         search_trigger.click()
         search_input = header.locator('input[placeholder="搜索帖子标题或内容"]:visible')
         expect(search_input).to_be_visible()
     else:
+        expect(page.get_by_role("button", name="登录")).to_be_visible()
+        expect(header.get_by_role("link", name="发帖")).to_be_visible()
         search_input = header.locator('input[placeholder="搜索帖子标题或内容"]:visible')
         expect(search_input).to_be_visible()
 
@@ -54,20 +57,20 @@ def test_header_entry_points_fit_at_required_viewports(page: Page, width: int, h
 @pytest.mark.ui
 @pytest.mark.parametrize("width,height", MOBILE_VIEWPORTS)
 def test_mobile_navigation_links_are_reachable(page: Page, width: int, height: int) -> None:
-    """移动导航提供发现、分区、排行榜和关注动态入口。"""
+    """移动底栏提供五个稳定的页面入口。"""
     page.set_viewport_size({"width": width, "height": height})
     page.goto(f"{BASE_URL}/discover", wait_until="domcontentloaded")
 
     mobile_nav = page.get_by_role("navigation", name="移动端导航")
     expect(mobile_nav).to_be_visible()
-    for label in ("发现", "分区", "排行榜", "关注动态"):
+    for label in ("发现", "分区", "排行", "动态", "我的"):
         expect(mobile_nav.get_by_role("link", name=label)).to_be_visible()
 
     mobile_nav.get_by_role("link", name="分区").click()
     expect(page).to_have_url(re.compile(r"/sections/?$"))
     page.goto(f"{BASE_URL}/discover", wait_until="domcontentloaded")
 
-    feed_link = mobile_nav.get_by_role("link", name="关注动态")
+    feed_link = mobile_nav.get_by_role("link", name="动态", exact=True)
     expect(feed_link).to_have_attribute("href", "/feed")
     _assert_no_horizontal_overflow(page)
 

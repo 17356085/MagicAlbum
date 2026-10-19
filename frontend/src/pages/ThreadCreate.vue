@@ -73,7 +73,7 @@ const draftKey = computed(() => {
 })
 const draftMessage = ref('')
 // 通用草稿：面向整个 form 对象，防抖自动保存
-const { draftHasData, saveDraft, restoreDraft, clearDraft, refreshDraft, startAutoSave, stopAutoSave } = useDraft(draftKey, {
+const { draftHasData, saveDraft, flushAutoSave, restoreDraft, clearDraft, refreshDraft, startAutoSave, stopAutoSave } = useDraft(draftKey, {
   sourceRef: form,
   autoSaveMs: 800,
   serialize: (val) => JSON.stringify({
@@ -165,7 +165,7 @@ function restoreActiveDraft(): void {
 function switchDraftContext(): void {
   // Stop the old watcher before clearing the form; otherwise the reset itself
   // would be scheduled as the previous account's draft.
-  stopAutoSave()
+  stopAutoSave({ flush: true })
   activeSubmissionId = null
   submissionSequence += 1
   editorOperationSequence += 1
@@ -313,8 +313,7 @@ function onSaveDraft(): void {
     showDraftMessage('请等待当前编辑操作完成')
     return
   }
-  saveDraft()
-  showDraftMessage('草稿已保存到本机浏览器')
+  showDraftMessage(saveDraft() ? '草稿已保存到本机浏览器' : '草稿保存失败，请稍后重试')
 }
 
 function onClearDraft(): void {
@@ -325,6 +324,10 @@ function onClearDraft(): void {
 function onLoginClick(): void {
   error.value = '请先登录后再发帖'
   requestLogin()
+}
+
+function flushDraftOnPageHide(): void {
+  flushAutoSave()
 }
 
 // 标准化美化：调用通用 beautifyMarkdown
@@ -356,6 +359,7 @@ async function beautifyContent(): Promise<void> {
 onMounted(() => {
   mounted = true
   loadSections()
+  window.addEventListener('pagehide', flushDraftOnPageHide)
   // 草稿检测与自动恢复
   restoreActiveDraft()
   startAutoSave()
@@ -383,7 +387,8 @@ onUnmounted(() => {
     stopAuthWatch()
     stopAuthWatch = null
   }
-  stopAutoSave()
+  window.removeEventListener('pagehide', flushDraftOnPageHide)
+  stopAutoSave({ flush: true })
   clearDraftMessageTimer()
 })
 
@@ -392,19 +397,33 @@ onUnmounted(() => {
 
 <template>
   <div class="ui-page">
-    <header class="ui-page-header">
-      <div class="min-w-0">
-        <h1 class="ui-title">发帖</h1>
-        <p class="ui-description">选择分区，写下标题和正文，再发布到社区。</p>
+    <header
+      class="ui-page-header sticky grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 bg-[var(--ui-bg)] lg:static lg:flex lg:min-h-0 lg:bg-transparent"
+      style="top: calc(56px + env(safe-area-inset-top)); z-index: var(--ui-z-navigation);"
+    >
+      <div class="min-w-0 flex-1">
+        <div class="flex min-w-0 items-center gap-2">
+          <h1 class="ui-title truncate">发帖</h1>
+        </div>
+        <p class="ui-description hidden lg:block">选择分区，写下标题和正文，再发布到社区。</p>
       </div>
+      <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 lg:hidden">
+        <button type="button" class="ui-button min-h-11 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="onSaveDraft">保存草稿</button>
+        <button type="button" class="ui-button-primary min-h-12 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="submit">
+          {{ submitting ? '发布中...' : '发布' }}
+        </button>
+      </div>
+      <span v-if="error" class="ui-error col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="alert" aria-live="assertive">{{ error }}</span>
+      <span v-else-if="success" class="col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 lg:hidden" role="status" aria-live="polite">{{ success }}</span>
+      <span v-else-if="draftMessage" class="ui-muted col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="status" aria-live="polite">{{ draftMessage }}</span>
     </header>
 
-    <div class="ui-panel p-4 sm:p-6">
+    <div class="ui-panel p-4 lg:p-6">
 
       <div class="space-y-4">
         <div>
           <label for="thread-create-section" class="mb-1 block text-sm font-medium">分区</label>
-          <select id="thread-create-section" v-model="form.sectionId" :disabled="loading || submitting" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
+          <select id="thread-create-section" v-model="form.sectionId" :disabled="loading || submitting" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
             <option value="" disabled>请选择分区</option>
             <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
@@ -413,24 +432,30 @@ onUnmounted(() => {
 
         <div>
           <label for="thread-create-title" class="mb-1 block text-sm font-medium">标题</label>
-          <input id="thread-create-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
+          <input id="thread-create-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
         </div>
 
-        <div>
-          <label for="thread-create-tags" class="mb-1 block text-sm font-medium">标签</label>
-          <input
-            id="thread-create-tags"
-            v-model="form.tags" :disabled="submitting"
-            type="text"
-            class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
-            placeholder="用空格或逗号分隔，最多 5 个"
-          />
-          <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
-            <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
-              #{{ tag }}
-            </span>
+        <details class="rounded-xl border border-[var(--ui-border)] px-3">
+          <summary class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
+            <span>标签（可选）</span>
+            <span v-if="parsedTags.length" class="ui-muted text-xs">已设置 {{ parsedTags.length }} 个</span>
+          </summary>
+          <div class="pb-3">
+            <label for="thread-create-tags" class="sr-only">标签</label>
+            <input
+              id="thread-create-tags"
+              v-model="form.tags" :disabled="submitting"
+              type="text"
+              class="ui-field min-h-11 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
+              placeholder="用空格或逗号分隔，最多 5 个"
+            />
+            <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
+              <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
+                #{{ tag }}
+              </span>
+            </div>
           </div>
-        </div>
+        </details>
 
         <div>
           <label class="mb-1 block text-sm font-medium">内容（支持 Markdown）</label>
@@ -440,30 +465,32 @@ onUnmounted(() => {
             :rows="16"
             :uploading="isUploading"
             :upload-progress="uploadProgress"
-           :upload-image="uploadThreadImage"
-           :disabled="submitting"
+            :upload-image="uploadThreadImage"
+            :disabled="submitting"
+            :preview-default-collapsed="true"
+            :mobile-preview-exclusive="true"
             placeholder="请输入帖子正文，支持 Markdown"
             preview-label="正文预览"
           />
         </div>
 
-        <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 sm:flex-row sm:flex-wrap sm:items-center">
-          <button type="button" class="ui-button" :disabled="editorBusy" @click="onSaveDraft">保存到本机</button>
-          <button type="button" class="ui-button" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
-          <button :disabled="editorBusy" class="ui-button-primary" @click="submit">
+        <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 lg:flex-row lg:flex-wrap lg:items-center">
+          <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="editorBusy" @click="onSaveDraft">保存到本机</button>
+          <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
+          <button type="button" :disabled="editorBusy" class="ui-button-primary min-h-12 px-3 py-2 text-sm hidden lg:inline-flex" @click="submit">
             {{ submitting ? '发布中...' : '发布' }}
           </button>
           <div v-if="!isLoggedIn" class="flex flex-wrap items-center gap-2 text-sm ui-muted">
             <span>请先登录后再发帖</span>
             <button
               type="button"
-              class="ui-button px-2.5 py-1 text-xs"
+              class="ui-button min-h-11 px-3 py-2 text-sm"
               @click="onLoginClick"
             >
               立即登录
             </button>
           </div>
-          <span v-if="success" class="text-sm text-emerald-700 dark:text-emerald-300" role="status" aria-live="polite">{{ success }}</span>
+          <span v-if="success" class="hidden text-sm text-emerald-700 dark:text-emerald-300 lg:inline" role="status" aria-live="polite">{{ success }}</span>
           <router-link
             v-if="createdThreadId != null"
             :to="`/threads/${createdThreadId}`"
@@ -471,9 +498,9 @@ onUnmounted(() => {
           >
             查看帖子
           </router-link>
-          <span v-if="error" class="ui-error py-2 text-sm" role="alert" aria-live="assertive">{{ error }}</span>
-          <span v-if="draftMessage" class="ui-muted text-xs" role="status" aria-live="polite">{{ draftMessage }}</span>
-          <button v-if="draftHasData" type="button" class="ui-button px-2.5 py-1 text-xs" @click="onClearDraft">清除草稿</button>
+          <span v-if="error" class="ui-error hidden py-2 text-sm lg:inline" role="alert" aria-live="assertive">{{ error }}</span>
+          <span v-if="draftMessage" class="ui-muted hidden text-xs lg:inline" role="status" aria-live="polite">{{ draftMessage }}</span>
+          <button v-if="draftHasData" type="button" class="ui-button min-h-11 px-3 py-2 text-sm" @click="onClearDraft">清除草稿</button>
         </div>
       </div>
     </div>

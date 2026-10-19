@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.servlet.HandlerMapping;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -31,19 +32,34 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
         MDC.put("requestId", requestId);
         response.setHeader(REQUEST_ID, requestId);
         long started = System.nanoTime();
+        boolean failed = false;
         try {
             filterChain.doFilter(request, response);
+        } catch (ServletException | IOException | RuntimeException exception) {
+            failed = true;
+            throw exception;
         } finally {
+            int status = failed && !response.isCommitted() && response.getStatus() < 400
+                    ? HttpServletResponse.SC_INTERNAL_SERVER_ERROR : response.getStatus();
             log.info(
-                    "request_id={} method={} path={} status={} duration_ms={} service=notification",
+                    "request_id={} method={} route={} status={} duration_ms={} service=notification",
                     requestId,
                     request.getMethod(),
-                    request.getRequestURI(),
-                    response.getStatus(),
+                    routePattern(request),
+                    status,
                     (System.nanoTime() - started) / 1_000_000L
             );
             MDC.remove("requestId");
         }
+    }
+
+    private String routePattern(HttpServletRequest request) {
+        Object pattern = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        if (pattern instanceof String value && !value.isBlank()
+                && value.startsWith("/") && !value.contains("?")) {
+            return value;
+        }
+        return "unmatched";
     }
 
     private String normalize(String value) {

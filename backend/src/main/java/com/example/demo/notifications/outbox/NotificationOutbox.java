@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Index;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
@@ -19,7 +20,8 @@ import java.time.Instant;
 @Entity
 @Table(
         name = "notification_outbox",
-        uniqueConstraints = @UniqueConstraint(name = "uk_notification_outbox_event_id", columnNames = "event_id")
+        uniqueConstraints = @UniqueConstraint(name = "uk_notification_outbox_event_id", columnNames = "event_id"),
+        indexes = @Index(name = "idx_notification_outbox_status_created_at", columnList = "status, created_at")
 )
 public class NotificationOutbox {
     @Id
@@ -28,6 +30,9 @@ public class NotificationOutbox {
 
     @Column(name = "event_id", nullable = false, length = 36, updatable = false)
     private String eventId;
+
+    @Column(name = "request_id", length = 128, updatable = false)
+    private String requestId;
 
     @Column(name = "recipient_user_id", nullable = false)
     private Long recipientUserId;
@@ -109,6 +114,14 @@ public class NotificationOutbox {
 
     public void setEventId(String eventId) {
         this.eventId = eventId;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
     }
 
     public Long getRecipientUserId() {

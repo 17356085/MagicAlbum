@@ -32,7 +32,7 @@ function createWrapper() {
     global: {
       stubs: {
         MarkdownTextareaEditor: {
-          props: ['modelValue', 'uploadImage', 'disabled'],
+          props: ['modelValue', 'uploadImage', 'disabled', 'previewDefaultCollapsed', 'mobilePreviewExclusive'],
           template: '<textarea :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
         },
         RouterLink: {
@@ -56,6 +56,16 @@ describe('ThreadCreate', () => {
       size: 100,
       total: 1,
     })
+  })
+
+  it('starts the post editor in mobile-first edit mode', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownTextareaEditor).props()).toMatchObject({
+      previewDefaultCollapsed: true,
+      mobilePreviewExclusive: true,
+    })
+    wrapper.unmount()
   })
 
   it('blocks publishing during upload and preserves the body after upload failure', async () => {
@@ -183,6 +193,98 @@ describe('ThreadCreate', () => {
     expect((wrapper.findAll('input[type="text"]')[0].element as HTMLInputElement).value).toBe('访客草稿')
     expect(localStorage.getItem('thread-draft-v1:1')).toContain('账号 A 草稿')
     expect(localStorage.getItem('thread-draft-v1:2')).toContain('账号 B 草稿')
+    wrapper.unmount()
+  })
+
+  it('flushes the latest input when leaving before the debounce elapses', async () => {
+    vi.useFakeTimers()
+    try {
+      const auth = useAuthStore()
+      auth.applyAuthState({ accessToken: 'token-a', user: { id: 1, username: 'account-a' } })
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('select').setValue('3')
+      const textInputs = wrapper.findAll('input[type="text"]')
+      await textInputs[0].setValue('离页前最后标题')
+      await wrapper.find('textarea').setValue('离页前最后正文')
+
+      wrapper.unmount()
+
+      expect(JSON.parse(localStorage.getItem('thread-draft-v1:1') || '{}')).toMatchObject({
+        sectionId: 3,
+        title: '离页前最后标题',
+        content: '离页前最后正文',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes account A before switching to account B', async () => {
+    vi.useFakeTimers()
+    try {
+      const auth = useAuthStore()
+      auth.applyAuthState({ accessToken: 'token-a', user: { id: 1, username: 'account-a' } })
+      const accountBDraft = JSON.stringify({ sectionId: '3', title: '账号 B 草稿', content: 'B', tags: '' })
+      localStorage.setItem('thread-draft-v1:2', accountBDraft)
+      const wrapper = createWrapper()
+      await flushPromises()
+      await wrapper.find('select').setValue('3')
+      await wrapper.findAll('input[type="text"]')[0].setValue('账号 A 最后输入')
+      await wrapper.find('textarea').setValue('A')
+
+      auth.applyAuthState({ accessToken: 'token-b', user: { id: 2, username: 'account-b' } })
+      await nextTick()
+      await flushPromises()
+
+      expect(JSON.parse(localStorage.getItem('thread-draft-v1:1') || '{}')).toMatchObject({
+        title: '账号 A 最后输入',
+        content: 'A',
+      })
+      expect(localStorage.getItem('thread-draft-v1:2')).toBe(accountBDraft)
+      expect((wrapper.findAll('input[type="text"]')[0].element as HTMLInputElement).value).toBe('账号 B 草稿')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes a pending draft on pagehide and leaves no empty draft after restore', async () => {
+    vi.useFakeTimers()
+    try {
+      const auth = useAuthStore()
+      auth.applyAuthState({ accessToken: 'token-a', user: { id: 1, username: 'account-a' } })
+      const restored = JSON.stringify({ sectionId: '3', title: '恢复标题', content: '恢复正文', tags: '' })
+      localStorage.setItem('thread-draft-v1:1', restored)
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      expect(localStorage.getItem('thread-draft-v1:1')).toBe(restored)
+      await wrapper.find('textarea').setValue('离页前更新')
+      window.dispatchEvent(new Event('pagehide'))
+
+      expect(JSON.parse(localStorage.getItem('thread-draft-v1:1') || '{}')).toMatchObject({ content: '离页前更新' })
+      wrapper.unmount()
+      expect(JSON.parse(localStorage.getItem('thread-draft-v1:1') || '{}')).toMatchObject({ content: '离页前更新' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not claim manual save success when storage rejects the write', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-a', user: { id: 1, username: 'account-a' } })
+    const wrapper = createWrapper()
+    await flushPromises()
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded')
+    })
+
+    await wrapper.findAll('button').find((button) => button.text() === '保存到本机')!.trigger('click')
+
+    expect(wrapper.text()).toContain('草稿保存失败')
+    expect(wrapper.text()).not.toContain('草稿已保存到本机浏览器')
+    setItem.mockRestore()
     wrapper.unmount()
   })
 

@@ -32,6 +32,16 @@ public class NotificationOutboxController {
     @GetMapping
     public Map<NotificationOutboxStatus, Long> counts(@AuthenticationPrincipal Long userId) {
         access.requireAdmin(userId);
+        return readCounts();
+    }
+
+    @GetMapping("/diagnostics")
+    public Diagnostics diagnostics(@AuthenticationPrincipal Long userId) {
+        access.requireAdmin(userId);
+        return new Diagnostics(readCounts(), outbox.oldestPendingAgeSeconds());
+    }
+
+    private Map<NotificationOutboxStatus, Long> readCounts() {
         var counts = new EnumMap<NotificationOutboxStatus, Long>(NotificationOutboxStatus.class);
         for (var status : NotificationOutboxStatus.values()) counts.put(status, outbox.count(status));
         return counts;
@@ -56,5 +66,8 @@ public class NotificationOutboxController {
 
     public record DeliveryStatus(Long id, String eventId, NotificationOutboxStatus status, int attempts,
                                  Instant availableAt, Instant deliveredAt, String lastError) {
+    }
+
+    public record Diagnostics(Map<NotificationOutboxStatus, Long> counts, long oldestPendingAgeSeconds) {
     }
 }

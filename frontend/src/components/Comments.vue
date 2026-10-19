@@ -69,6 +69,7 @@ const { isLoggedIn, user } = storeToRefs(authStore)
 const previewMode = ref(false)
 const isSubmitting = ref(false)
 const isUploading = ref(false)
+const rootRef = ref<HTMLElement | null>(null)
 const commentSubmissionKey = Symbol.for('bluealbum.comments.submitting') as InjectionKey<Ref<boolean>>
 provide(commentSubmissionKey, isSubmitting)
 let loadRequestSeq = 0
@@ -365,6 +366,25 @@ function setReplyTo(id: Id, rootId?: Id) {
 }
 function cancelReply() { replyToPostId.value = null }
 
+function focusComposer(): void {
+  if (!isLoggedIn.value) {
+    try {
+      window.dispatchEvent(new CustomEvent('open-login-modal', { detail: { source: 'thread-reply' } }))
+    } catch (_) {}
+    return
+  }
+
+  replyToPostId.value = null
+  void nextTick(() => {
+    const textarea = rootRef.value?.querySelector('textarea')
+    if (!textarea) return
+    textarea.focus({ preventScroll: true })
+    rootRef.value?.scrollIntoView({ behavior: 'auto', block: 'center' })
+  })
+}
+
+defineExpose({ focusComposer })
+
 function goPrevGroupPage(rootId: Id): void {
   const current = Number(groupPageMap.value[String(rootId)] || 1)
   if (current > 1) {
@@ -442,7 +462,7 @@ watch([sortKey, sortOrder], () => {
 </script>
 
 <template>
-  <section class="ui-panel mt-10" aria-labelledby="comments-heading">
+  <section id="thread-comments" ref="rootRef" class="ui-panel mt-10" aria-labelledby="comments-heading">
     <div class="border-b border-[var(--ui-border)] px-4 py-5 sm:px-6" v-if="replyToPostId == null">
       <CommentsComposer
         :is-logged-in="isLoggedIn"

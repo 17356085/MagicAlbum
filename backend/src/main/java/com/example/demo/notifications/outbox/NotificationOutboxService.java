@@ -1,12 +1,13 @@
 package com.example.demo.notifications.outbox;
 
 import com.example.demo.user.service.UserSettingsService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.server.ResponseStatusException;
+import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -111,6 +112,7 @@ public class NotificationOutboxService {
         Instant now = clock.instant();
         NotificationOutbox outbox = new NotificationOutbox();
         outbox.setEventId(eventId.toString());
+        outbox.setRequestId(normalizeRequestId(MDC.get("requestId")));
         outbox.setRecipientUserId(recipientUserId);
         outbox.setType(normalize(type, "system"));
         outbox.setTitle(normalize(title, "你有一条新通知"));
@@ -246,6 +248,18 @@ public class NotificationOutboxService {
         return repository.countByStatus(status);
     }
 
+    public long oldestPendingAgeSeconds() {
+        return repository.findFirstByStatusOrderByCreatedAtAsc(NotificationOutboxStatus.PENDING)
+                .map(row -> {
+                    Instant createdAt = row.getCreatedAt();
+                    if (createdAt == null) {
+                        return 0L;
+                    }
+                    return Math.max(0L, Duration.between(createdAt, clock.instant()).getSeconds());
+                })
+                .orElse(0L);
+    }
+
     private static boolean isPermanentFailure(Throwable failure) {
         if (failure instanceof ResponseStatusException response) {
             int status = response.getStatusCode().value();
@@ -289,6 +303,14 @@ public class NotificationOutboxService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private static String normalizeRequestId(String value) {
+        if (value == null || value.isBlank() || value.length() > 128
+                || !value.matches("[A-Za-z0-9._:-]+")) {
+            return null;
+        }
+        return value;
+    }
+
     private static String truncate(String value) {
         if (value == null) {
             return null;
@@ -306,8 +328,24 @@ public class NotificationOutboxService {
             Long threadId,
             Long targetId,
             String targetType,
-            int attempts
+            int attempts,
+            String requestId
     ) {
+        public Delivery(
+                Long id,
+                String eventId,
+                Long recipientUserId,
+                String type,
+                String title,
+                String content,
+                Long threadId,
+                Long targetId,
+                String targetType,
+                int attempts
+        ) {
+            this(id, eventId, recipientUserId, type, title, content, threadId, targetId, targetType, attempts, null);
+        }
+
         static Delivery from(NotificationOutbox outbox, int attempts) {
             return new Delivery(
                     outbox.getId(),
@@ -319,7 +357,8 @@ public class NotificationOutboxService {
                     outbox.getThreadId(),
                     outbox.getTargetId(),
                     outbox.getTargetType(),
-                    attempts
+                    attempts,
+                    outbox.getRequestId()
             );
         }
     }

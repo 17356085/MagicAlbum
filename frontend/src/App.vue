@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import SidebarLeft from '@/components/SidebarLeft.vue'
 import AiChat from '@/components/AiChat.vue'
+import MobileNavigation from '@/components/MobileNavigation.vue'
+import { useMobileViewport } from '@/composables/useMobileViewport'
 import { useUIStore } from '@/stores/ui'
 import { storeToRefs } from 'pinia'
 import { SITE_NAME } from '@/config/brand'
@@ -36,6 +39,9 @@ interface StarParticle {
 const uiStore = useUIStore()
 const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
 const authRenderKey = ref(0)
+const route = useRoute()
+const { inputActive, viewportStyle } = useMobileViewport()
+const showMobileCreate = computed(() => ['/discover', '/sections', '/ranking', '/feed', '/my/threads'].includes(route.path))
 
 function onAuthStateChanged(): void {
   authRenderKey.value += 1
@@ -300,7 +306,7 @@ onUnmounted(() => {
 
 </script>
 <template>
-  <div class="community-app relative flex min-h-screen min-w-0 flex-col pt-28 dark:text-gray-100 md:pt-20">
+  <div class="community-app relative flex min-h-screen min-w-0 flex-col dark:text-gray-100" :class="{ 'mobile-input-active': inputActive }" :style="viewportStyle">
     <a href="#main-content" class="skip-link">跳到主要内容</a>
     <!-- Day/Night 背景质感层：Day 为雪、Night 为星光；可选轻微闪烁 -->
     <div :class="[
@@ -330,12 +336,21 @@ onUnmounted(() => {
     <footer class="community-footer mt-auto w-full">
       <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-6 py-6 text-xs ui-muted"><span>© {{ new Date().getFullYear() }} {{ SITE_NAME }}</span><span>分享所爱，遇见同好。</span></div>
     </footer>
-    <AiChat ref="aiChatRef" />
+    <router-link v-if="showMobileCreate && !inputActive" to="/threads/new" class="mobile-create" aria-label="发帖">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>
+      <span>发帖</span>
+    </router-link>
+    <MobileNavigation v-show="!inputActive" />
+    <AiChat />
   </div>
 </template>
 
 <style scoped>
-.community-app { background: var(--ui-bg); color: var(--ui-ink); }
+.community-app { background: var(--ui-bg); color: var(--ui-ink); padding-top: calc(56px + env(safe-area-inset-top, 0px)); padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+.mobile-create { position: fixed; z-index: var(--ui-z-floating); right: 16px; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); display: inline-flex; gap: 6px; align-items: center; justify-content: center; min-height: 48px; padding: 0 18px; border-radius: 12px; background: #1d4ed8; color: white; font-weight: 600; }
+.mobile-create svg { width: 20px; height: 20px; }
+@media (min-width: 1024px) { .community-app { padding-top: 80px; padding-bottom: 0; } .mobile-create { display: none; } }
+@media (max-width: 1023px) { .community-footer { display: none; } .community-layout { padding-top: 16px; padding-bottom: 80px; } }
 .community-footer { border-top: 1px solid var(--ui-border); }
 .skip-link { position: fixed; top: 8px; left: 16px; z-index: var(--ui-z-skip-link); transform: translateY(-150%); padding: 8px 16px; border-radius: 8px; color: var(--ui-surface); background: var(--ui-ink); }
 .skip-link:focus { transform: translateY(0); }

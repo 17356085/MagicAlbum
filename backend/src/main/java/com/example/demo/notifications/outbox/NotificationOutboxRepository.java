@@ -14,6 +14,8 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
 
     long countByStatus(NotificationOutboxStatus status);
 
+    Optional<NotificationOutbox> findFirstByStatusOrderByCreatedAtAsc(NotificationOutboxStatus status);
+
     List<NotificationOutbox> findTop100ByStatusAndAvailableAtLessThanEqualOrderByAvailableAtAscIdAsc(
             NotificationOutboxStatus status,
             Instant availableAt

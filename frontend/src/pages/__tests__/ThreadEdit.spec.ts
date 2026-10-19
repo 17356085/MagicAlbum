@@ -20,7 +20,7 @@ vi.mock('@/api/sections', () => ({
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: mocks.push }) }))
 
 const editorStub = {
-  props: ['modelValue', 'maxLength', 'uploadImage', 'disabled'],
+  props: ['modelValue', 'maxLength', 'uploadImage', 'disabled', 'previewDefaultCollapsed', 'mobilePreviewExclusive'],
   template: '<textarea :value="modelValue" :maxlength="maxLength" @input="$emit(\'update:modelValue\', $event.target.value)" />',
 }
 
@@ -43,6 +43,17 @@ describe('ThreadEdit content boundaries', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('starts the post editor in mobile-first edit mode', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+    const wrapper = createWrapper()
+    await flushPromises()
+    expect(wrapper.findComponent(MarkdownTextareaEditor).props()).toMatchObject({
+      previewDefaultCollapsed: true,
+      mobilePreviewExclusive: true,
+    })
+    wrapper.unmount()
   })
 
   it('blocks save during upload and keeps existing text on upload failure', async () => {

@@ -154,6 +154,15 @@
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
 
+@media (max-width: 1023px) {
+  html { scroll-padding-top: calc(80px + env(safe-area-inset-top, 0px)); scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
+  .community-app button { min-height: 44px; min-width: 44px; touch-action: manipulation; }
+  .community-app .ui-field { font-size: 16px; }
+  .community-app input.ui-field, .community-app select.ui-field { min-height: 48px; }
+  .community-app .ui-button, .community-app .ui-button-primary { min-height: 44px; }
+  .community-app.mobile-input-active .mobile-thread-reply { display: none; }
+}
+
 /* 统一原生滚动条：保留标准薄滚动条，并让 Chromium/WebKit 使用一致的细窄视觉。 */
 :where(html, body, textarea, .prose pre, .ui-scroll) {
   scrollbar-width: thin;

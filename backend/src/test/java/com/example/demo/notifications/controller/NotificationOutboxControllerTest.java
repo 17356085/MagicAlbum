@@ -56,6 +56,16 @@ class NotificationOutboxControllerTest {
     }
 
     @Test
+    void diagnostics_requires_authentication() throws Exception {
+        doThrow(new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required"))
+                .when(access).requireAdmin(null);
+
+        mockMvc.perform(get("/api/v1/admin/notification-outbox/diagnostics"))
+                .andExpect(status().isUnauthorized());
+        verify(access).requireAdmin(null);
+    }
+
+    @Test
     void counts_rejects_non_admin() throws Exception {
         SecurityContextHolder.getContext().setAuthentication(authentication(99L));
         doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Admin access required"))
@@ -73,6 +83,7 @@ class NotificationOutboxControllerTest {
         when(outbox.count(NotificationOutboxStatus.DELIVERED)).thenReturn(3L);
         when(outbox.count(NotificationOutboxStatus.IN_FLIGHT)).thenReturn(0L);
         when(outbox.count(NotificationOutboxStatus.SUPPRESSED)).thenReturn(0L);
+        when(outbox.oldestPendingAgeSeconds()).thenReturn(42L);
         when(outbox.manualRetry(17L)).thenReturn(true);
         SecurityContextHolder.getContext().setAuthentication(authentication(42L));
 
@@ -82,11 +93,16 @@ class NotificationOutboxControllerTest {
                 .andExpect(jsonPath("$.FAILED").value(1))
                 .andExpect(jsonPath("$.DELIVERED").value(3));
 
+        mockMvc.perform(get("/api/v1/admin/notification-outbox/diagnostics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.counts.PENDING").value(2))
+                .andExpect(jsonPath("$.oldestPendingAgeSeconds").value(42));
+
         mockMvc.perform(post("/api/v1/admin/notification-outbox/17/retry"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.queued").value(true));
 
-        verify(access, org.mockito.Mockito.times(2)).requireAdmin(42L);
+        verify(access, org.mockito.Mockito.times(3)).requireAdmin(42L);
         verify(outbox).manualRetry(17L);
     }
 

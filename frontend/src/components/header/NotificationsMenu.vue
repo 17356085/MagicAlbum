@@ -3,7 +3,7 @@
     <button
       ref="notificationButton"
       type="button"
-      class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-700 md:w-auto md:px-3 md:py-1"
+      class="relative inline-flex h-12 w-12 shrink-0 items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-700 lg:h-9 lg:w-auto lg:px-3 lg:py-1"
       aria-label="通知"
       title="通知"
       aria-controls="header-notifications-panel"
@@ -22,15 +22,15 @@
       id="header-notifications-panel"
       role="dialog"
       aria-label="通知"
-      class="fixed inset-x-2 top-14 z-50 mt-2 max-h-[calc(100vh-5rem)] w-auto max-w-none overflow-hidden rounded-md border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 md:absolute md:inset-x-auto md:right-0 md:top-full md:mt-2 md:w-80 md:max-w-[calc(100vw-1rem)]"
+      class="mobile-notifications-panel fixed inset-x-2 top-14 z-50 mt-2 max-h-[calc(100vh-5rem)] w-auto max-w-none overflow-hidden rounded-md border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:mt-2 lg:w-80 lg:max-w-[calc(100vw-1rem)]"
     >
       <div class="flex items-center justify-between px-3 py-2">
         <span class="text-sm font-semibold text-gray-900 dark:text-gray-50">通知</span>
-        <router-link class="text-xs text-brandDay-600 hover:underline dark:text-brandNight-300" :to="{ name: 'settings', query: { tab: 'notifications' } }" @click="notificationOpen = false">查看全部</router-link>
+        <router-link class="inline-flex min-h-11 items-center px-2 text-xs text-brandDay-600 hover:underline dark:text-brandNight-300 lg:min-h-0" :to="{ name: 'settings', query: { tab: 'notifications' } }" @click="notificationOpen = false">查看全部</router-link>
       </div>
       <div v-if="notificationLoading" class="px-3 py-4 text-xs text-gray-500">正在加载...</div>
       <div v-else-if="notificationError" class="px-3 py-4 text-xs text-red-600">{{ notificationError }}</div>
-      <ul v-else class="ui-scroll max-h-[calc(100vh-10rem)] overflow-auto md:max-h-96">
+      <ul v-else class="ui-scroll max-h-[calc(100vh-10rem)] overflow-auto lg:max-h-96">
         <li
           v-for="item in headerNotifications"
           :key="item.id"
@@ -46,8 +46,8 @@
               <div class="mt-1 text-[11px] text-gray-400">{{ item.createdAt ? formatRelativeTime(item.createdAt) : '' }}</div>
             </div>
             <div class="flex shrink-0 flex-col gap-1">
-              <button v-if="notificationCanNavigate(item)" class="rounded border border-brandDay-200 px-2 py-1 text-[11px] text-brandDay-700 hover:bg-brandDay-50 dark:border-brandNight-700 dark:text-brandNight-200 dark:hover:bg-brandNight-900/30" @click.stop="openNotification(item)">查看</button>
-              <button v-if="!item.read" class="rounded border border-gray-200 px-2 py-1 text-[11px] hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700" @click.stop="setHeaderNotificationRead(item.id)">已读</button>
+              <button v-if="notificationCanNavigate(item)" class="inline-flex min-h-11 items-center justify-center rounded border border-brandDay-200 px-3 py-1 text-[11px] text-brandDay-700 hover:bg-brandDay-50 dark:border-brandNight-700 dark:text-brandNight-200 dark:hover:bg-brandNight-900/30 lg:min-h-0" @click.stop="openNotification(item)">查看</button>
+              <button v-if="!item.read" class="inline-flex min-h-11 items-center justify-center rounded border border-gray-200 px-3 py-1 text-[11px] hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700 lg:min-h-0" @click.stop="setHeaderNotificationRead(item.id)">已读</button>
             </div>
           </div>
         </li>
@@ -238,3 +238,15 @@ watch(() => props.isLoggedIn, (loggedIn) => {
 
 watch(() => route.fullPath, () => closeNotifications())
 </script>
+
+<style scoped>
+.mobile-notifications-panel {
+  top: calc(56px + env(safe-area-inset-top, 0px));
+}
+
+@media (min-width: 1024px) {
+  .mobile-notifications-panel {
+    top: 100%;
+  }
+}
+</style>

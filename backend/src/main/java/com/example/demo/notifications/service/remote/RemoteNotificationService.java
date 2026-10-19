@@ -6,6 +6,7 @@ import com.example.demo.notifications.dto.NotificationPageResponse;
 import com.example.demo.notifications.service.NotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -29,6 +30,7 @@ public class RemoteNotificationService implements NotificationService {
     private static final ParameterizedTypeReference<NotificationPageResponse> PAGE_TYPE = new ParameterizedTypeReference<>() {
     };
     private static final String INTERNAL_CREDENTIAL_HEADER = "X-Internal-Service-Token";
+    private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
     private final RestClient restClient;
     private final String internalServiceToken;
@@ -76,6 +78,7 @@ public class RemoteNotificationService implements NotificationService {
                             .queryParam("size", size)
                             .build())
                     .header(HttpHeaders.AUTHORIZATION, authorization)
+                    .headers(this::addRequestId)
                     .retrieve()
                     .body(PAGE_TYPE);
             if (response == null) {
@@ -96,6 +99,7 @@ public class RemoteNotificationService implements NotificationService {
             return restClient.patch()
                     .uri("/api/v1/notifications/{id}/read", id)
                     .header(HttpHeaders.AUTHORIZATION, authorization)
+                    .headers(this::addRequestId)
                     .retrieve()
                     .body(NotificationDto.class);
         } catch (RestClientResponseException e) {
@@ -119,6 +123,7 @@ public class RemoteNotificationService implements NotificationService {
             NotificationDto response = restClient.post()
                     .uri("/api/v1/notifications/internal")
                     .header(INTERNAL_CREDENTIAL_HEADER, internalServiceToken)
+                    .headers(this::addRequestId)
                     .body(new CreateNotificationRequest(userId, type, title, content, threadId, targetId, targetType, eventId))
                     .retrieve()
                     .body(NotificationDto.class);
@@ -150,6 +155,14 @@ public class RemoteNotificationService implements NotificationService {
 
     private ResponseStatusException serviceUnavailable() {
         return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "通知服务暂不可用");
+    }
+
+    private void addRequestId(HttpHeaders headers) {
+        String requestId = MDC.get("requestId");
+        if (requestId != null && !requestId.isBlank() && requestId.length() <= 128
+                && requestId.matches("[A-Za-z0-9._:-]+")) {
+            headers.set(REQUEST_ID_HEADER, requestId);
+        }
     }
 
     private java.util.Optional<String> optionalText(String value) {

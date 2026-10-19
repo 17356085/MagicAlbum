@@ -63,6 +63,7 @@ export function useDraft<T>(key: DraftStorageKey, {
   const draftHasData = ref(false)
   let stopWatch: WatchStopHandle | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
+  let pendingAutoSave: { storageKey: string; raw: string } | null = null
 
   const resolveKey = (): string => {
     try {
@@ -88,18 +89,29 @@ export function useDraft<T>(key: DraftStorageKey, {
     try { draftHasData.value = !!localStorage.getItem(storageKey) } catch (_) { draftHasData.value = false }
   }
 
-  const saveToKey = (storageKey: string, payload?: T): void => {
-    if (!storageKey) return
+  const saveRawToKey = (storageKey: string, raw: string): boolean => {
+    if (!storageKey) return false
     try {
-      const val = payload !== undefined ? payload : (sourceRef ? sourceRef.value : undefined)
-      const raw = serialize(val)
       localStorage.setItem(storageKey, raw)
       refreshHasData()
-    } catch (_) {}
+      return true
+    } catch (_) {
+      return false
+    }
   }
 
-  const saveDraft = (payload?: T): void => {
-    saveToKey(resolveKey(), payload)
+  const saveToKey = (storageKey: string, payload?: T): boolean => {
+    if (!storageKey) return false
+    try {
+      const val = payload !== undefined ? payload : (sourceRef ? sourceRef.value : undefined)
+      return saveRawToKey(storageKey, serialize(val))
+    } catch (_) {
+      return false
+    }
+  }
+
+  const saveDraft = (payload?: T): boolean => {
+    return saveToKey(resolveKey(), payload)
   }
 
   const loadDraft = (): T | null => {
@@ -142,8 +154,21 @@ export function useDraft<T>(key: DraftStorageKey, {
     }
   }
 
-  const clearDraft = (): void => {
+  const clearPendingAutoSave = (): void => {
     clearTimer()
+    pendingAutoSave = null
+  }
+
+  const flushAutoSave = (): boolean => {
+    clearTimer()
+    const pending = pendingAutoSave
+    pendingAutoSave = null
+    if (!pending) return false
+    return saveRawToKey(pending.storageKey, pending.raw)
+  }
+
+  const clearDraft = (): void => {
+    clearPendingAutoSave()
     const storageKey = resolveKey()
     if (!storageKey) {
       draftHasData.value = false
@@ -159,21 +184,36 @@ export function useDraft<T>(key: DraftStorageKey, {
     if (!sourceRef) return
     stopAutoSave()
     stopWatch = watch(sourceRef, (val) => {
-      clearTimer()
       const scheduledKey = resolveKey()
+      clearPendingAutoSave()
+      if (!scheduledKey) return
+      let raw: string
+      try {
+        // Capture the serialized value while the watcher is running. A deep
+        // watch callback receives the same mutable object on later changes.
+        raw = serialize(val)
+      } catch (_) {
+        return
+      }
+      pendingAutoSave = { storageKey: scheduledKey, raw }
       timer = setTimeout(() => {
         timer = null
+        const pending = pendingAutoSave
+        if (!pending || pending.storageKey !== scheduledKey || pending.raw !== raw) return
         // A key can change while the debounce is waiting. Do not let an old
-        // account's payload land in the new account's storage slot.
+        // account's payload land in the new account's storage slot. Keep the
+        // captured pending value for an explicit context-switch flush.
         if (resolveKey() !== scheduledKey) return
-        saveToKey(scheduledKey, val)
+        pendingAutoSave = null
+        saveRawToKey(scheduledKey, raw)
       }, autoSaveMs)
-    }, { deep: true })
+    }, { deep: true, flush: 'sync' })
   }
 
-  const stopAutoSave = (): void => {
+  const stopAutoSave = ({ flush = false }: { flush?: boolean } = {}): void => {
     if (stopWatch) { try { stopWatch() } catch (_) {} ; stopWatch = null }
-    clearTimer()
+    if (flush) flushAutoSave()
+    else clearPendingAutoSave()
   }
 
   // 初始化草稿存在状态
@@ -182,6 +222,7 @@ export function useDraft<T>(key: DraftStorageKey, {
   return {
     draftHasData,
     saveDraft,
+    flushAutoSave,
     loadDraft,
     restoreDraft,
     clearDraft,

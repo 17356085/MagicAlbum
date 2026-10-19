@@ -87,6 +87,25 @@ describe('MarkdownTextareaEditor preview defaults', () => {
     expect(wrapper.find('.prose').exists()).toBe(true)
   })
 
+  it('keeps the primary mobile tools compact and progressively reveals other formats', async () => {
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '正文' } })
+
+    expect(wrapper.findAll('button').find((button) => button.text() === '粗体')).toBeDefined()
+    expect(wrapper.findAll('button').find((button) => button.text() === '链接')).toBeDefined()
+    expect(wrapper.findAll('button').find((button) => button.text() === '图片')).toBeDefined()
+    expect(wrapper.find('.markdown-editor-more-tools').classes()).toContain('hidden')
+    const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')!
+    expect(moreButton.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('.markdown-editor-more-tools').attributes('id')).toBe(moreButton.attributes('aria-controls'))
+
+    await moreButton.trigger('click')
+    expect(moreButton.attributes('aria-expanded')).toBe('true')
+
+    expect(wrapper.find('.markdown-editor-more-tools').classes()).toContain('flex')
+    expect(wrapper.text()).toContain('斜体')
+    wrapper.unmount()
+  })
+
   it('can make the editor and preview mutually exclusive on mobile when opted in', async () => {
     const wrapper = mount(MarkdownTextareaEditor, {
       props: { modelValue: '# 简介', previewDefaultCollapsed: true, mobilePreviewExclusive: true },

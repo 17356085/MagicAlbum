@@ -63,11 +63,10 @@ public class LocalSampleDataSeeder implements ApplicationRunner {
         Map<String, User> usersByUsername = ensureUsers(userSeeds);
         ensureThreads(sectionsBySlug, usersByUsername, userSeeds);
         log.info(
-                "Local sample data ready: sections={}, users={}, threads={}, samplePassword={}",
+                "Local sample data ready: sections={}, users={}, threads={}",
                 sectionRepository.count(),
                 userRepository.count(),
-                threadRepository.count(),
-                DEFAULT_PASSWORD
+                threadRepository.count()
         );
     }
 

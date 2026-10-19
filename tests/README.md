@@ -68,6 +68,25 @@ repository launcher [`scripts/Start-Local.ps1`](../scripts/Start-Local.ps1)
 starts the full local stack, but it requires its own JDK, Docker, Maven, and
 Node prerequisites.
 
+`tests/e2e/playwright/test_layout_fixtures.py` is an exception: it needs only
+the frontend and a browser. All API responses are intercepted with fixed
+fixtures, and no backend account is used. These 36 layout/keyboard checks
+are not backend acceptance and are not part of mandatory16. Run against an
+isolated frontend preview, for example in PowerShell:
+
+```powershell
+$env:TEST_BASE_URL = 'http://127.0.0.1:35174'
+$env:TEST_PLAYWRIGHT_CHANNEL = 'chrome' # or use installed bundled Chromium
+$env:TEST_LAYOUT_ARTIFACTS = 'outputs/layout-check/screenshots' # optional
+python -m pytest tests/e2e/playwright/test_layout_fixtures.py
+```
+
+`test_mobile_tasks.py` adds 21 touch-emulated tasks at 320, 390, and 430px:
+bottom navigation, focused composition and feedback, long-thread reply,
+guest login, account actions, phone landscape, and filtered-list return. It shares the same
+intercepted fixtures. Run both files for 57 frontend-only checks. They do
+not prove physical-device soft-keyboard, Safari, or backend behavior.
+
 Useful overrides are `TEST_BASE_URL`, `TEST_API_BASE_URL`,
 `TEST_PLAYWRIGHT_CHANNEL=chrome`, and `--api-url`. Selenium Manager resolves
 the browser driver; do not add a checked-in driver binary or a

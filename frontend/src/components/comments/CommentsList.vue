@@ -96,34 +96,34 @@ function updateReportDialogVisibility(open: boolean): void {
         <div class="relative">
           <button
             type="button"
-            class="ui-button min-h-8 px-2 py-1 text-xs"
+            class="ui-button min-h-11 px-3 py-2 text-xs"
             :class="{ 'bg-gray-100 dark:bg-gray-700': sortKey === 'time' }"
             @click="emit('update:showTimeMenu', !showTimeMenu)"
           >
             按时间 <span v-if="sortKey === 'time'">（{{ sortOrder === 'asc' ? '升序' : '降序' }}）</span>
           </button>
           <div v-if="showTimeMenu" class="ui-panel absolute right-0 z-10 mt-1 w-24 overflow-hidden text-[var(--ui-ink)]">
-            <button type="button" class="block w-full px-2 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-time-order', 'asc')">升序</button>
-            <button type="button" class="block w-full px-2 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-time-order', 'desc')">降序</button>
+            <button type="button" class="block min-h-11 w-full px-3 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-time-order', 'asc')">升序</button>
+            <button type="button" class="block min-h-11 w-full px-3 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-time-order', 'desc')">降序</button>
           </div>
         </div>
         <div class="relative">
           <button
             type="button"
-            class="ui-button min-h-8 px-2 py-1 text-xs"
+            class="ui-button min-h-11 px-3 py-2 text-xs"
             :class="{ 'bg-gray-100 dark:bg-gray-700': sortKey === 'replies' }"
             @click="emit('update:showRepliesMenu', !showRepliesMenu)"
           >
             按回复数 <span v-if="sortKey === 'replies'">（{{ sortOrder === 'asc' ? '升序' : '降序' }}）</span>
           </button>
           <div v-if="showRepliesMenu" class="ui-panel absolute right-0 z-10 mt-1 w-24 overflow-hidden text-[var(--ui-ink)]">
-            <button type="button" class="block w-full px-2 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-replies-order', 'asc')">升序</button>
-            <button type="button" class="block w-full px-2 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-replies-order', 'desc')">降序</button>
+            <button type="button" class="block min-h-11 w-full px-3 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-replies-order', 'asc')">升序</button>
+            <button type="button" class="block min-h-11 w-full px-3 py-2 text-left text-xs hover:bg-[var(--ui-subtle)]" @click="emit('select-replies-order', 'desc')">降序</button>
           </div>
         </div>
         <button
           type="button"
-          class="ui-button min-h-8 px-2 py-1 text-xs"
+          class="ui-button min-h-11 px-3 py-2 text-xs"
           :class="{ 'bg-gray-100 dark:bg-gray-700': sortKey === 'likes' }"
           @click="emit('select-likes-order', 'desc')"
         >
@@ -173,22 +173,22 @@ function updateReportDialogVisibility(open: boolean): void {
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
               <button
                 type="button"
-                class="ui-button min-h-8 px-2 py-1 text-xs"
+                class="ui-button min-h-11 px-3 py-2 text-xs"
                 :class="{ 'text-rose-600 dark:text-rose-300': group.root.liked }"
                 @click="emit('toggle-like', group.root)"
               >
                 {{ group.root.liked ? '♥ 已赞' : '♡ 点赞' }} {{ Number(group.root.likeCount || 0) }}
               </button>
-              <button type="button" class="ui-button min-h-8 px-2 py-1 text-xs" @click="emit('reply', group.root.id)">回复</button>
+              <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs" @click="emit('reply', group.root.id)">回复</button>
               <button
                 v-if="!group.root._optimistic"
                 type="button"
-                class="ui-button min-h-8 px-2 py-1 text-xs text-[var(--ui-muted)] hover:border-red-200 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-300"
+                class="ui-button min-h-11 px-3 py-2 text-xs text-[var(--ui-muted)] hover:border-red-200 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-300"
                 @click="openReportDialog(group.root.id, Boolean(group.root._optimistic))"
               >
                 举报
               </button>
-              <button v-if="group.items.length" type="button" class="ui-button min-h-8 px-2 py-1 text-xs" @click="emit('toggle-collapse', group.root.id)">
+              <button v-if="group.items.length" type="button" class="ui-button min-h-11 px-3 py-2 text-xs" @click="emit('toggle-collapse', group.root.id)">
                 {{ collapsedMap[group.root.id] ? `展开回复(${group.items.length})` : `折叠回复(${group.items.length})` }}
               </button>
             </div>
@@ -240,17 +240,17 @@ function updateReportDialogVisibility(open: boolean): void {
               <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
                 <button
                   type="button"
-                  class="ui-button min-h-8 px-2 py-1 text-xs"
+                  class="ui-button min-h-11 px-3 py-2 text-xs"
                   :class="{ 'text-rose-600 dark:text-rose-300': comment.liked }"
                   @click="emit('toggle-like', comment)"
                 >
                   {{ comment.liked ? '♥ 已赞' : '♡ 点赞' }} {{ Number(comment.likeCount || 0) }}
                 </button>
-                <button type="button" class="ui-button min-h-8 px-2 py-1 text-xs" @click="emit('reply', comment.id, group.root.id)">回复</button>
+                <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs" @click="emit('reply', comment.id, group.root.id)">回复</button>
                 <button
                   v-if="!comment._optimistic"
                   type="button"
-                  class="ui-button min-h-8 px-2 py-1 text-xs text-[var(--ui-muted)] hover:border-red-200 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-300"
+                  class="ui-button min-h-11 px-3 py-2 text-xs text-[var(--ui-muted)] hover:border-red-200 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-300"
                   @click="openReportDialog(comment.id, Boolean(comment._optimistic))"
                 >
                   举报
@@ -275,7 +275,7 @@ function updateReportDialogVisibility(open: boolean): void {
             <div v-if="group.items.length > childPageSize" class="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs">
               <button
                 type="button"
-                class="ui-button min-h-8 px-3 py-1 text-xs disabled:opacity-50"
+                class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50"
                 :disabled="(groupPageMap[group.root.id] || 1) <= 1"
                 @click="emit('prev-group-page', group.root.id)"
               >
@@ -285,7 +285,8 @@ function updateReportDialogVisibility(open: boolean): void {
               <input
                 type="text"
                 aria-label="回复页码"
-                class="ui-field w-16 py-1 text-center text-sm"
+                class="ui-field min-h-11 w-16 py-1 text-center text-sm"
+                inputmode="numeric"
                 :value="groupPageMap[group.root.id] || 1"
                 @input="emit('update-group-page-input', group.root.id, $event)"
                 @keyup.enter="emit('clamp-group-page', group.root.id, group.items.length)"
@@ -294,7 +295,7 @@ function updateReportDialogVisibility(open: boolean): void {
               <span class="ui-muted text-sm">/ {{ Math.max(1, Math.ceil(group.items.length / childPageSize)) }} 页</span>
               <button
                 type="button"
-                class="ui-button min-h-8 px-3 py-1 text-xs disabled:opacity-50"
+                class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50"
                 :disabled="(groupPageMap[group.root.id] || 1) >= Math.ceil(group.items.length / childPageSize)"
                 @click="emit('next-group-page', group.root.id)"
               >
@@ -306,19 +307,20 @@ function updateReportDialogVisibility(open: boolean): void {
       </ul>
 
       <div v-if="hasPagination" class="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
-        <button type="button" class="ui-button min-h-9 px-3 py-1 text-xs disabled:opacity-50" :disabled="page <= 1" @click="emit('go-prev-page')">上一页</button>
+        <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50" :disabled="page <= 1" @click="emit('go-prev-page')">上一页</button>
         <span class="ui-muted text-sm">第</span>
         <input
           type="text"
           aria-label="评论页码"
-          class="ui-field w-16 py-1 text-center text-sm"
+          class="ui-field min-h-11 w-16 py-1 text-center text-sm"
+          inputmode="numeric"
           :value="page"
           @input="emit('update:page-input', $event)"
           @keyup.enter="emit('apply-page-input')"
           @blur="emit('apply-page-input')"
         />
         <span class="ui-muted text-sm">/ {{ pageCount }} 页</span>
-        <button type="button" class="ui-button min-h-9 px-3 py-1 text-xs disabled:opacity-50" :disabled="page >= pageCount" @click="emit('go-next-page')">下一页</button>
+        <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50" :disabled="page >= pageCount" @click="emit('go-next-page')">下一页</button>
       </div>
     </div>
     <ReportDialog

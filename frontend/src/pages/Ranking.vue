@@ -153,11 +153,11 @@ watch(page, (val) => {
 </script>
 
 <template>
-  <section class="ui-page space-y-4">
+  <section class="ui-page ranking-page space-y-4">
     <header class="ui-page-header">
       <div>
         <h1 class="ui-title">排行榜</h1>
-        <p class="ui-description">看看社区里正在获得回应和关注的帖子。</p>
+        <p class="ui-description hidden lg:block">看看社区里正在获得回应和关注的帖子。</p>
       </div>
     </header>
     <div v-if="sectionsLoading || loading" class="ui-panel ui-empty" role="status">正在加载...</div>
@@ -220,7 +220,7 @@ watch(page, (val) => {
           @click="openThread(topOne.id)"
           @keyup.enter="openThread(topOne.id)"
         >
-          <div class="grid grid-cols-[minmax(0,1fr)_80px] gap-3 p-4 pb-3 sm:grid-cols-[minmax(0,1fr)_96px]">
+          <div class="grid gap-3 p-4 pb-3 sm:grid-cols-[minmax(0,1fr)_96px]" :class="firstImageUrl(topOne) ? 'grid-cols-[minmax(0,1fr)_80px]' : 'grid-cols-1'">
             <div class="min-h-[92px]">
               <div>
                 <div class="mb-2 flex items-start gap-3">
@@ -238,7 +238,7 @@ watch(page, (val) => {
               </div>
             </div>
             <div class="flex flex-col items-end justify-between gap-2">
-              <div class="relative h-[60px] w-[80px] overflow-hidden rounded-md border border-gray-100 bg-gray-100 dark:border-gray-700 dark:bg-gray-900 sm:h-[72px] sm:w-[96px]">
+              <div class="relative h-[60px] w-[80px] overflow-hidden rounded-md border border-gray-100 bg-gray-100 dark:border-gray-700 dark:bg-gray-900 sm:h-[72px] sm:w-[96px]" :class="!firstImageUrl(topOne) ? 'hidden sm:block' : ''">
                 <template v-if="firstImageUrl(topOne)">
                   <img :src="firstImageUrl(topOne)" alt="" class="absolute inset-0 h-full w-full object-cover opacity-45 blur-sm scale-110" />
                   <img :src="firstImageUrl(topOne)" alt="封面" loading="lazy" class="relative z-10 h-full w-full object-cover" />
@@ -340,7 +340,7 @@ watch(page, (val) => {
                 <img :src="firstImageUrl(thread)" alt="封面" loading="lazy" class="relative z-10 h-full w-full object-contain" />
               </div>
               <div class="min-w-0 flex-1">
-                <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div class="flex flex-col gap-2 lg:flex-row md:items-start md:justify-between">
                   <div class="min-w-0">
                     <h2 class="truncate text-base font-semibold text-gray-900 dark:text-gray-100">{{ thread.title }}</h2>
                     <p class="mt-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">{{ excerpt(thread) }}</p>
@@ -363,7 +363,7 @@ watch(page, (val) => {
         </ul>
         <div class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
-          <div class="flex items-center gap-2">
+          <div class="ranking-pagination flex items-center gap-2">
             <button
               type="button"
               class="ui-button"
@@ -372,16 +372,16 @@ watch(page, (val) => {
             >
               上一页
             </button>
-            <span class="text-sm text-[var(--ui-muted)]">第</span>
+            <span class="hidden text-sm text-[var(--ui-muted)] lg:inline">第</span>
             <input
               v-model="inputPage"
-              class="ui-field w-16 text-center"
+              class="ui-field hidden w-16 text-center md:block"
               aria-label="页码"
               inputmode="numeric"
               @keyup.enter="goToInputPage"
               @blur="goToInputPage"
             />
-            <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+            <span class="text-sm text-[var(--ui-muted)]"><span class="lg:hidden">{{ page }}</span> / {{ totalPages }} 页</span>
             <button
               type="button"
               class="ui-button"
@@ -396,3 +396,10 @@ watch(page, (val) => {
     </div>
   </section>
 </template>
+
+<style scoped>
+@media (max-width: 1023px) {
+  .ranking-page [role="link"] { overflow-wrap: anywhere; }
+  .ranking-pagination { justify-content: space-between; }
+}
+</style>

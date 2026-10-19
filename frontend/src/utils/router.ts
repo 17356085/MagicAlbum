@@ -5,11 +5,11 @@ export function getSingleQueryValue(value: LocationQueryValue | LocationQueryVal
 }
 
 export function safeBack(router: Router, fallback: RouteLocationRaw = { name: 'discover' }): void {
-  const ref = document.referrer || ''
-  const sameOrigin = ref && ref.startsWith(location.origin)
-  if (!sameOrigin || window.history.length <= 1) {
-    router.replace(fallback)
-  } else {
+  const back = router.options.history.state?.back
+  const isInternalPath = typeof back === 'string' && back.startsWith('/') && !back.startsWith('//')
+  if (isInternalPath) {
     router.back()
+  } else {
+    router.replace(fallback)
   }
 }

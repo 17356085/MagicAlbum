@@ -1,10 +1,15 @@
 package com.example.demo.notifications.outbox;
 
 import com.example.demo.user.service.UserSettingsService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -15,6 +20,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -37,6 +43,7 @@ import static org.mockito.Mockito.when;
         webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode
+@ExtendWith(OutputCaptureExtension.class)
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:notification-outbox;DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_UPPER=false",
         "spring.datasource.driver-class-name=org.h2.Driver",
@@ -69,8 +76,14 @@ class NotificationOutboxServiceH2Test {
 
     @BeforeEach
     void allowPreferencesAndStartClean() {
+        MDC.clear();
         when(userSettingsService.shouldDeliver(anyLong(), anyString())).thenReturn(true);
         repository.deleteAll();
+    }
+
+    @AfterEach
+    void clearMdc() {
+        MDC.clear();
     }
 
     @Test
@@ -85,6 +98,52 @@ class NotificationOutboxServiceH2Test {
         assertThat(row.getStatus()).isEqualTo(NotificationOutboxStatus.PENDING);
         assertThat(row.getRecipientUserId()).isEqualTo(101L);
         assertThat(row.getAttempts()).isZero();
+    }
+
+    @Test
+    void enqueue_persists_valid_request_id_and_reports_oldest_pending_age() {
+        MDC.put("requestId", "m1-enqueue-request");
+        UUID eventId = UUID.randomUUID();
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+        NotificationOutbox row = transaction.execute(status -> outboxService.enqueue(
+                eventId, 101L, "reply", "Title", "Content", 7L, 8L, "post")).orElseThrow();
+
+        assertThat(row.getRequestId()).isEqualTo("m1-enqueue-request");
+        jdbcTemplate.update("UPDATE notification_outbox SET created_at = ? WHERE id = ?",
+                Timestamp.from(Instant.now().minusSeconds(42)), row.getId());
+        assertThat(outboxService.oldestPendingAgeSeconds()).isBetween(41L, 60L);
+
+        repository.deleteAll();
+        assertThat(outboxService.oldestPendingAgeSeconds()).isZero();
+    }
+
+    @Test
+    void request_id_survives_a_retry_claim() {
+        MDC.put("requestId", "m1-retry-request");
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        NotificationOutbox row = transaction.execute(status -> outboxService.enqueue(
+                UUID.randomUUID(), 101L, "reply", "Title", "Content", null, null, "post")).orElseThrow();
+        jdbcTemplate.update("UPDATE notification_outbox SET available_at = ? WHERE id = ?",
+                Timestamp.from(Instant.EPOCH), row.getId());
+
+        NotificationOutboxService.Delivery first = outboxService.claimOne("worker-one").orElseThrow();
+        assertThat(outboxService.markFailedOrRetry(first, "worker-one", new IllegalStateException("hidden"))).isTrue();
+        jdbcTemplate.update("UPDATE notification_outbox SET available_at = ? WHERE id = ?",
+                Timestamp.from(Instant.EPOCH), row.getId());
+
+        NotificationOutboxService.Delivery second = outboxService.claimOne("worker-two").orElseThrow();
+        assertThat(first.requestId()).isEqualTo("m1-retry-request");
+        assertThat(second.requestId()).isEqualTo(first.requestId());
+    }
+
+    @Test
+    void spring_log_pattern_includes_request_id(CapturedOutput output) {
+        MDC.put("requestId", "m1-log-pattern");
+        LoggerFactory.getLogger(NotificationOutboxServiceH2Test.class).info("m1_log_pattern_marker");
+
+        assertThat(output.toString()).contains("[requestId=m1-log-pattern]")
+                .contains("m1_log_pattern_marker");
     }
 
     @Test

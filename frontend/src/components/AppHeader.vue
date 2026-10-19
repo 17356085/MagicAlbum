@@ -1,8 +1,12 @@
 <template>
   <header class="community-header fixed inset-x-0 top-0 z-40 overflow-visible">
-    <div class="mx-auto max-w-7xl px-4 py-3 sm:px-6">
-      <div class="flex min-w-0 items-center gap-1 sm:gap-2">
-        <BrandBar class="min-w-0 shrink-0" />
+    <div class="mx-auto h-full max-w-7xl px-3 sm:px-6 lg:h-auto lg:py-3">
+      <div class="flex h-full min-w-0 items-center gap-0 sm:gap-2 lg:h-auto">
+        <button v-if="isMobileChildRoute" type="button" class="mr-auto inline-flex h-12 items-center gap-2 pr-3 font-semibold lg:hidden" aria-label="返回上一页" @click="goBack">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m15 5-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          返回
+        </button>
+        <BrandBar class="mr-auto min-w-0 shrink-0 lg:mr-0" :class="isMobileChildRoute ? 'hidden lg:flex' : ''" />
         <SearchBox
           :search-type="searchType"
           :search-query="searchQuery"
@@ -22,45 +26,29 @@
           @close-suggest="suggestOpen = false"
         />
         <nav class="flex shrink-0 items-center gap-0.5 text-sm" aria-label="账户和快捷操作">
-        <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700" @click="toggleTheme" :title="themeLabel" :aria-label="themeLabel">
+        <button type="button" class="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 lg:inline-flex" @click="toggleTheme" :title="themeLabel" :aria-label="themeLabel">
           <span v-if="isDark">🌙</span><span v-else>☀️</span>
         </button>
         <!-- 发帖：未登录时直接拉起登录弹窗，已登录时进入发帖页 -->
-        <router-link to="/threads/new" class="header-create inline-flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-lg md:w-auto md:px-4" aria-label="发帖" title="发帖" @click="onCreateThreadClick">
+        <router-link to="/threads/new" class="header-create hidden h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-lg lg:inline-flex lg:w-auto lg:px-4" aria-label="发帖" title="发帖" @click="onCreateThreadClick">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="w-5 h-5">
             <circle cx="12" cy="12" r="9" stroke-width="1.8" />
             <path d="M12 8.5v7M8.5 12h7" stroke-width="1.8" stroke-linecap="round" />
           </svg>
-          <span class="hidden font-semibold md:inline">发帖</span>
+          <span class="hidden font-semibold lg:inline">发帖</span>
         </router-link>
         <NotificationsMenu :is-logged-in="isLoggedIn" @open-login="showLogin = true" />
-        <AuthEntry v-if="!isLoggedIn" @open-login="showLogin = true" />
+        <span v-if="!isLoggedIn" class="hidden lg:inline-flex">
+          <AuthEntry @open-login="showLogin = true" />
+        </span>
         <template v-else>
-          <div class="mobile-user-menu shrink-0">
+          <div class="mobile-user-menu hidden shrink-0 lg:block">
             <UserMenu :user="user" :avatar-url="avatarUrl" :display-name="displayName" @logout="onLogoutClick" />
           </div>
         </template>
         </nav>
       </div>
 
-      <nav class="mt-1 grid grid-cols-4 gap-1 border-t border-gray-200/80 pt-1 text-[11px] dark:border-gray-700 md:hidden" aria-label="移动端导航">
-        <router-link to="/discover" class="flex min-w-0 items-center justify-center gap-1 rounded px-1 py-1.5 font-medium" :class="mobileNavClass('/discover')" aria-label="发现">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="h-4 w-4 shrink-0" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 5.227 7.917-3.286-.672zm-7.518-.267A8.25 8.25 0 1120.25 10.5M8.288 14.212A5.25 5.25 0 1117.25 10.5" /></svg>
-          <span class="truncate">发现</span>
-        </router-link>
-        <router-link to="/sections" class="flex min-w-0 items-center justify-center gap-1 rounded px-1 py-1.5 font-medium" :class="mobileNavClass('/sections')" aria-label="分区">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="h-4 w-4 shrink-0" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg>
-          <span class="truncate">分区</span>
-        </router-link>
-        <router-link to="/ranking" class="flex min-w-0 items-center justify-center gap-1 rounded px-1 py-1.5 font-medium" :class="mobileNavClass('/ranking')" aria-label="排行榜">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="h-4 w-4 shrink-0" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
-          <span class="truncate">排行榜</span>
-        </router-link>
-        <router-link to="/feed" class="flex min-w-0 items-center justify-center gap-1 rounded px-1 py-1.5 font-medium" :class="mobileNavClass('/feed')" aria-label="关注动态">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="h-4 w-4 shrink-0" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
-          <span class="truncate">关注动态</span>
-        </router-link>
-      </nav>
     </div>
   </header>
   <AuthModal v-if="showLogin" @close="showLogin = false" @success="onLoginSuccess" />
@@ -98,6 +86,7 @@ import { clearPendingAuthRedirect, getPendingAuthRedirect, setPendingAuthRedirec
 import { useHeaderIdentity } from '@/components/header/useHeaderIdentity'
 import { useHeaderTheme } from '@/components/header/useHeaderTheme'
 import type { Id, User, UserProfile } from '@/types'
+import { safeBack } from '@/utils/router'
 
 const showLogin = ref(false)
 const showLogoutConfirm = ref(false)
@@ -106,6 +95,8 @@ const { isLoggedIn, user } = storeToRefs(authStore)
 const { logout, updateCurrentUser } = authStore
 const router = useRouter()
 const route = useRoute()
+const isMobileChildRoute = computed(() => !['/', '/discover', '/sections', '/feed', '/ranking', '/me'].includes(route.path))
+function goBack(): void { safeBack(router) }
 type SearchType = 'threads' | 'users'
 type SuggestProfile = Pick<UserProfile, 'avatarUrl' | 'nickname'>
 
@@ -245,13 +236,6 @@ watch(
   },
   { immediate: true }
 )
-
-function mobileNavClass(path: string): string {
-  const active = route.path === path || (path === '/discover' && route.path === '/')
-  return active
-    ? 'bg-brandDay-100 text-brandDay-700 dark:bg-brandNight-900/40 dark:text-brandNight-200'
-    : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-}
 
 function onCreateThreadClick(event: MouseEvent): void {
   if (isLoggedIn.value) return
@@ -405,11 +389,12 @@ async function prefetchSuggestionProfiles(ids: Id[], requestSeq: number, request
 </script>
 
 <style scoped>
-.community-header { z-index: var(--ui-z-navigation); background: var(--ui-surface); color: var(--ui-ink); border-bottom: 1px solid var(--ui-border); }
+.community-header { z-index: var(--ui-z-navigation); height: calc(56px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); background: var(--ui-surface); color: var(--ui-ink); border-bottom: 1px solid var(--ui-border); }
 .header-create { background: var(--ui-accent-soft); color: var(--ui-accent); }
 .header-create:hover { background: var(--ui-subtle); }
 .mobile-user-menu :deep(a > span) { display: none; }
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
+  .community-header { height: auto; padding-top: 0; }
   .mobile-user-menu :deep(a > span) { display: inline; }
 }
 </style>

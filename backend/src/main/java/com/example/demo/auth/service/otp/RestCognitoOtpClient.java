@@ -100,23 +100,16 @@ public class RestCognitoOtpClient implements CognitoOtpClient {
             }
             return readJson(responseBody);
         } catch (HttpStatusCodeException ex) {
-            String responseBody = trimToEmpty(ex.getResponseBodyAsString());
-            log.error("Cognito OTP HTTP error. target={} baseUrl={} status={} response={}",
-                    target, baseUrl, ex.getStatusCode().value(), responseBody, ex);
+            log.error("Cognito OTP HTTP error. target={} status={} exception={}",
+                    target, ex.getStatusCode().value(), ex.getClass().getSimpleName());
             throw new IllegalStateException(
-                    "Cognito OTP 调用失败: HTTP " + ex.getStatusCode().value()
-                            + (responseBody.isBlank() ? "" : " - " + responseBody),
+                    "Cognito OTP 调用失败: HTTP " + ex.getStatusCode().value(),
                     ex
             );
         } catch (Exception ex) {
-            String rootMessage = resolveRootCauseMessage(ex);
-            log.error("Cognito OTP invocation error. target={} baseUrl={} message={}",
-                    target, baseUrl, rootMessage, ex);
-            throw new IllegalStateException(
-                    "Cognito OTP 调用失败"
-                            + (rootMessage.isBlank() ? "" : ": " + rootMessage),
-                    ex
-            );
+            log.error("Cognito OTP invocation error. target={} exception={}",
+                    target, ex.getClass().getSimpleName());
+            throw new IllegalStateException("Cognito OTP 调用失败", ex);
         }
     }
 
@@ -144,20 +137,6 @@ public class RestCognitoOtpClient implements CognitoOtpClient {
         return value == null ? "" : value.trim();
     }
 
-    private String resolveRootCauseMessage(Throwable throwable) {
-        Throwable current = throwable;
-        Throwable root = throwable;
-        while (current != null) {
-            root = current;
-            current = current.getCause();
-        }
-        String message = root == null ? "" : trimToEmpty(root.getMessage());
-        if (!message.isBlank()) {
-            return message;
-        }
-        return throwable == null ? "" : trimToEmpty(throwable.getClass().getSimpleName());
-    }
-
     private String writeJson(Map<String, Object> payload) {
         try {
             return objectMapper.writeValueAsString(payload);
@@ -170,7 +149,7 @@ public class RestCognitoOtpClient implements CognitoOtpClient {
         try {
             return objectMapper.readValue(responseBody, CognitoAuthFlowResponse.class);
         } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Cognito 响应解析失败: " + responseBody, ex);
+            throw new IllegalStateException("Cognito 响应解析失败", ex);
         }
     }
 }

@@ -475,3 +475,92 @@ describe('Comments request ordering', () => {
     expect((textarea.element as HTMLTextAreaElement).value).toBe('')
   })
 })
+
+describe('Comments mobile reply focus', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    useAuthStore().applyAuthState({ accessToken: 'real-token' })
+    listPostsMock.mockResolvedValue({ items: [], page: 1, size: 15, total: 0 })
+  })
+
+  it('returns to the top-level composer before focusing it without an extra scroll', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const root = wrapper.get('#thread-comments')
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(root.element, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+    const focus = vi.fn()
+    const focusDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'focus')
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'focus', {
+      configurable: true,
+      value: focus,
+    })
+
+    try {
+      const vm = wrapper.vm as unknown as {
+        replyToPostId: number | null
+        focusComposer: () => void
+      }
+      vm.replyToPostId = 42
+      vm.focusComposer()
+      await flushPromises()
+
+      expect(vm.replyToPostId).toBeNull()
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' })
+    } finally {
+      if (focusDescriptor) Object.defineProperty(HTMLTextAreaElement.prototype, 'focus', focusDescriptor)
+      wrapper.unmount()
+    }
+  })
+
+  it('opens the thread-reply login flow when the viewer is not logged in', async () => {
+    useAuthStore().clearAuthState()
+    const wrapper = createWrapper()
+    await flushPromises()
+    const events: Event[] = []
+    const listener = (event: Event) => events.push(event)
+    window.addEventListener('open-login-modal', listener)
+
+    try {
+      const vm = wrapper.vm as unknown as { focusComposer: () => void }
+      vm.focusComposer()
+
+      expect(events).toHaveLength(1)
+      expect((events[0] as CustomEvent).detail).toEqual({ source: 'thread-reply' })
+    } finally {
+      window.removeEventListener('open-login-modal', listener)
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('Comments mobile controls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    useAuthStore().applyAuthState({ accessToken: 'real-token' })
+  })
+
+  it('keeps comment actions and page navigation at a 44px touch height', async () => {
+    listPostsMock.mockResolvedValueOnce(result(1, '评论内容', 1, 1, 16))
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const likeButton = wrapper.findAll('button').find((button) => button.text().includes('点赞'))
+    const replyButton = wrapper.findAll('button').find((button) => button.text() === '回复')
+    const pageInput = wrapper.get('input[aria-label="评论页码"]')
+    expect(likeButton?.classes()).toContain('min-h-11')
+    expect(replyButton?.classes()).toContain('min-h-11')
+    expect(pageInput.classes()).toContain('min-h-11')
+    expect(pageInput.attributes('inputmode')).toBe('numeric')
+    wrapper.unmount()
+  })
+})

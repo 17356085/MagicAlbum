@@ -25,6 +25,7 @@ mock 模式继续使用内存通知，供测试和临时开发使用，不提供
 - `GET /api/v1/admin/notification-outbox`：各状态数量。
 - `GET /api/v1/admin/notification-outbox/{id}`：事件状态、尝试次数、时间及脱敏失败类别，不返回通知内容。
 - `POST /api/v1/admin/notification-outbox/{id}/retry`：仅 FAILED 可重新入队，保留 UUID，重置尝试预算。
+- `GET /api/v1/admin/notification-outbox/diagnostics`：各状态数量与最早待投递年龄。请求关联、日志脱敏和查看步骤见 [M1 可观测性手册](observability.md)。
 
 ## 超时与凭证
 

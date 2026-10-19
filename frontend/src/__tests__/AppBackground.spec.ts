@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import App from '../App.vue'
 import { useUIStore } from '../stores/ui'
+import { routeLocationKey } from 'vue-router'
 
 describe('App background lifecycle', () => {
   let wrapper: VueWrapper | undefined
@@ -57,7 +58,12 @@ describe('App background lifecycle', () => {
     const ui = useUIStore(pinia)
     ui.setDynamicBackgroundEnabled(enabled)
     wrapper = shallowMount(App, {
-      global: { plugins: [pinia], mocks: { $route: { fullPath: '/discover' } }, stubs: { RouterView: true } },
+      global: {
+        plugins: [pinia],
+        mocks: { $route: { fullPath: '/discover' } },
+        provide: { [routeLocationKey as symbol]: { path: '/discover', fullPath: '/discover' } },
+        stubs: { RouterView: true, RouterLink: true },
+      },
     })
     return ui
   }

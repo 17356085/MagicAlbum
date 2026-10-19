@@ -30,5 +30,22 @@ describe('AiChat settings placement', () => {
     await nextTick()
 
     expect(wrapper.classes()).not.toContain('settings-mobile-hidden')
+    wrapper.unmount()
+  })
+
+  it('opens from the account entry and restores focus when closed', async () => {
+    route.path = '/me'
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const wrapper = mount(AiChat, { attachTo: document.body })
+    window.dispatchEvent(new CustomEvent('open-ai-chat'))
+    await nextTick()
+    expect(wrapper.get('input[aria-label="聊天消息"]').element).toBe(document.activeElement)
+    await wrapper.get('button[aria-label="关闭聊天"]').trigger('click')
+    expect(document.activeElement).toBe(opener)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+    opener.remove()
   })
 })

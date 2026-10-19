@@ -1,14 +1,14 @@
 <template>
-  <div :class="{ 'settings-mobile-hidden': isSettingsRoute }" class="chat-widget fixed bottom-4 right-4 flex flex-col items-end">
+  <div :class="{ 'settings-mobile-hidden': isSettingsRoute, 'chat-open': isOpen }" class="chat-widget fixed bottom-4 right-4 flex flex-col items-end">
     <!-- 聊天主窗口 -->
-    <div v-if="isOpen" class="chat-window ui-panel mb-4 flex flex-col overflow-hidden transition-all duration-300">
+    <div v-if="isOpen" class="chat-window ui-panel mb-4 flex flex-col overflow-hidden transition-all duration-300" role="dialog" aria-label="小祥聊天" @keydown.esc.stop.prevent="close">
       <!-- 头部：适配模式 -->
       <div class="p-3 bg-indigo-600 dark:bg-indigo-900 text-white flex justify-between items-center shadow-sm">
         <div class="flex items-center gap-2">
           <div class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
           <span class="font-medium text-sm">客服小祥</span>
         </div>
-        <button @click="close" class="text-indigo-100 hover:text-white dark:text-indigo-300 dark:hover:text-indigo-100">
+        <button @click="close" class="inline-flex min-h-11 min-w-11 items-center justify-center text-indigo-100 hover:text-white dark:text-indigo-300 dark:hover:text-indigo-100" aria-label="关闭聊天">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5">
             <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
           </svg>
@@ -59,6 +59,7 @@
       <div class="p-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
         <div class="flex gap-2">
           <input 
+            ref="chatInputRef"
             v-model="inputMsg" 
             @keydown.enter.prevent="send"
             type="text" 
@@ -98,6 +99,11 @@
 .chat-window { width: min(360px, calc(100vw - 32px)); height: min(480px, calc(100dvh - 144px)); }
 .chat-launcher { color: var(--ui-accent); background: var(--ui-surface); border: 1px solid var(--ui-border); }
 .chat-launcher:hover { background: var(--ui-accent-soft); }
+@media (max-width: 1023px) {
+  .chat-launcher { display: none; }
+  .chat-widget.chat-open { inset-inline: 12px; bottom: calc(12px + var(--mobile-viewport-bottom, 0px)); }
+  .chat-window { width: 100%; margin-bottom: 0; height: min(560px, calc(var(--mobile-viewport-height, 100dvh) - 88px)); }
+}
 
 /* Settings controls stay reachable on phones and tablets; chat remains available elsewhere. */
 @media (max-width: 1023px) {
@@ -117,7 +123,7 @@
 </style>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { createChatStream } from '@/api/ai'
 import type { AiChatMessage, ChatStreamHandle } from '@/api/ai'
@@ -129,6 +135,14 @@ const inputMsg = ref('')
 const isTyping = ref(false)
 const msgListRef = ref<HTMLElement | null>(null)
 const streamHandle = ref<ChatStreamHandle | null>(null)
+const chatInputRef = ref<HTMLInputElement | null>(null)
+let opener: HTMLElement | null = null
+
+function openFromAccount(): void {
+  opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  isOpen.value = true
+  void nextTick(() => chatInputRef.value?.focus())
+}
 
 const history = ref<AiChatMessage[]>([
   { role: 'assistant', content: '……你是谁？如果是无关紧要的事，请不要打扰我。' }
@@ -157,6 +171,8 @@ function stop(): void {
 function close(): void {
   stop()
   isOpen.value = false
+  if (opener?.isConnected) opener.focus()
+  opener = null
 }
 
 function send(): void {
@@ -211,5 +227,9 @@ function send(): void {
   })
 }
 
-onBeforeUnmount(stop)
+onMounted(() => window.addEventListener('open-ai-chat', openFromAccount))
+onBeforeUnmount(() => {
+  window.removeEventListener('open-ai-chat', openFromAccount)
+  stop()
+})
 </script>

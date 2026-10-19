@@ -332,22 +332,34 @@ onUnmounted(() => {
 
 <template>
   <div class="ui-page">
-    <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">编辑帖子</h1>
-        <p class="ui-description">修改标题、分区和正文内容。</p>
+    <header
+      class="ui-page-header sticky grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 bg-[var(--ui-bg)] lg:static lg:flex lg:min-h-0 lg:bg-transparent"
+      style="top: calc(56px + env(safe-area-inset-top)); z-index: var(--ui-z-navigation);"
+    >
+      <div class="min-w-0 flex-1">
+        <div class="flex min-w-0 items-center gap-2">
+          <h1 class="ui-title truncate">编辑帖子</h1>
+        </div>
+        <p class="ui-description hidden lg:block">修改标题、分区和正文内容。</p>
       </div>
-      <button class="ui-button" @click="cancel">
+      <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 lg:hidden">
+        <button type="button" class="ui-button-primary min-h-12 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="submit">
+          {{ submitting ? '保存中...' : '保存修改' }}
+        </button>
+      </div>
+      <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm hidden lg:inline-flex" @click="cancel">
         返回我的帖子
       </button>
+      <span v-if="error" class="ui-error col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="alert" aria-live="assertive">{{ error }}</span>
+      <span v-else-if="success" class="col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 lg:hidden" role="status" aria-live="polite">{{ success }}</span>
     </header>
 
-    <div class="ui-panel p-4 sm:p-6">
+    <div class="ui-panel p-4 lg:p-6">
       <div v-if="loading" class="ui-muted ui-empty" role="status" aria-live="polite">正在加载帖子...</div>
       <div v-else class="space-y-4">
       <div>
         <label for="thread-edit-section" class="mb-1 block text-sm font-medium">分区</label>
-        <select id="thread-edit-section" v-model="form.sectionId" :disabled="submitting" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
+        <select id="thread-edit-section" v-model="form.sectionId" :disabled="submitting" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
           <option value="">保持原分区</option>
           <option v-for="section in sections" :key="section.id" :value="section.id">{{ section.name }}</option>
         </select>
@@ -355,24 +367,30 @@ onUnmounted(() => {
 
       <div>
         <label for="thread-edit-title" class="mb-1 block text-sm font-medium">标题</label>
-        <input id="thread-edit-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
+        <input id="thread-edit-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
       </div>
 
-      <div>
-        <label for="thread-edit-tags" class="mb-1 block text-sm font-medium">标签</label>
-        <input
-          id="thread-edit-tags"
-          v-model="form.tags" :disabled="submitting"
-          type="text"
-          class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
-          placeholder="用空格或逗号分隔，最多 5 个"
-        />
-        <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
-          <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
-            #{{ tag }}
-          </span>
+      <details class="rounded-xl border border-[var(--ui-border)] px-3">
+        <summary class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
+          <span>标签（可选）</span>
+          <span v-if="parsedTags.length" class="ui-muted text-xs">已设置 {{ parsedTags.length }} 个</span>
+        </summary>
+        <div class="pb-3">
+          <label for="thread-edit-tags" class="sr-only">标签</label>
+          <input
+            id="thread-edit-tags"
+            v-model="form.tags" :disabled="submitting"
+            type="text"
+            class="ui-field min-h-11 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
+            placeholder="用空格或逗号分隔，最多 5 个"
+          />
+          <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
+            <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
+              #{{ tag }}
+            </span>
+          </div>
         </div>
-      </div>
+      </details>
 
       <div>
         <label class="mb-1 block text-sm font-medium">内容（支持 Markdown）</label>
@@ -384,19 +402,21 @@ onUnmounted(() => {
           :upload-progress="uploadProgress"
           :upload-image="uploadThreadImage"
           :disabled="submitting"
+          :preview-default-collapsed="true"
+          :mobile-preview-exclusive="true"
           placeholder="请输入帖子正文，支持 Markdown"
           preview-label="正文预览"
         />
       </div>
 
-      <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 sm:flex-row sm:flex-wrap sm:items-center">
-        <button type="button" class="ui-button" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
-        <button :disabled="editorBusy" class="ui-button-primary" @click="submit">
+      <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 lg:flex-row lg:flex-wrap lg:items-center">
+        <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
+        <button type="button" :disabled="editorBusy" class="ui-button-primary min-h-12 px-3 py-2 text-sm hidden lg:inline-flex" @click="submit">
           {{ submitting ? '保存中...' : '保存修改' }}
         </button>
-        <button type="button" class="ui-button" @click="cancel">取消</button>
-        <span v-if="success" class="text-sm text-emerald-700 dark:text-emerald-300" role="status" aria-live="polite">{{ success }}</span>
-        <span v-if="error" class="ui-error py-2 text-sm" role="alert" aria-live="assertive">{{ error }}</span>
+        <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" @click="cancel">取消</button>
+        <span v-if="success" class="hidden text-sm text-emerald-700 dark:text-emerald-300 lg:inline" role="status" aria-live="polite">{{ success }}</span>
+        <span v-if="error" class="ui-error hidden py-2 text-sm lg:inline" role="alert" aria-live="assertive">{{ error }}</span>
       </div>
     </div>
     </div>
