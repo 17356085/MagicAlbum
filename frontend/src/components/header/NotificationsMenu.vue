@@ -63,6 +63,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { listNotifications, markNotificationRead } from '@/api/notifications'
 import { formatRelativeTime } from '@/composables/time'
 import type { Id, NotificationItem } from '@/types'
+import { subscribeNotificationChanges } from '@/composables/notificationSignals'
+import { getStoredAccessToken } from '@/utils/authStorage'
 
 const props = defineProps<{
   isLoggedIn: boolean
@@ -84,6 +86,16 @@ const unreadNotificationCount = ref(0)
 let requestSeq = 0
 let badgeRequestSeq = 0
 let readRequestSeq = 0
+const stopLiveUpdates = subscribeNotificationChanges(signal => {
+  if (signal === 'session') {
+    requestSeq += 1; badgeRequestSeq += 1; readRequestSeq += 1
+    headerNotifications.value = []; unreadNotificationCount.value = 0
+    notificationLoading.value = false; notificationError.value = ''
+  }
+  if (!props.isLoggedIn) return
+  if (notificationOpen.value) void loadHeaderNotifications()
+  else void refreshNotificationBadge().catch(() => {})
+})
 
 function notificationTypeLabel(type: string | undefined): string {
   if (type === 'reply') return '回复通知'
@@ -96,18 +108,20 @@ function notificationTypeLabel(type: string | undefined): string {
 
 async function refreshNotificationBadge(): Promise<void> {
   const currentRequest = ++badgeRequestSeq
+  const ownerToken = getStoredAccessToken()
   if (!props.isLoggedIn) {
     unreadNotificationCount.value = 0
     headerNotifications.value = []
     return
   }
   const data = await listNotifications({ unread: true, page: 1, size: 1 })
-  if (currentRequest !== badgeRequestSeq) return
+  if (currentRequest !== badgeRequestSeq || getStoredAccessToken() !== ownerToken) return
   unreadNotificationCount.value = data.total
 }
 
 async function loadHeaderNotifications(): Promise<void> {
   const currentRequest = ++requestSeq
+  const ownerToken = getStoredAccessToken()
   if (!props.isLoggedIn) {
     headerNotifications.value = []
     unreadNotificationCount.value = 0
@@ -120,13 +134,13 @@ async function loadHeaderNotifications(): Promise<void> {
       listNotifications({ page: 1, size: 8 }),
       listNotifications({ unread: true, page: 1, size: 1 }),
     ])
-    if (currentRequest !== requestSeq) return
+    if (currentRequest !== requestSeq || getStoredAccessToken() !== ownerToken) return
     headerNotifications.value = recent.items
     unreadNotificationCount.value = unread.total
   } catch (_) {
-    if (currentRequest === requestSeq) notificationError.value = '通知加载失败'
+    if (currentRequest === requestSeq && getStoredAccessToken() === ownerToken) notificationError.value = '通知加载失败'
   } finally {
-    if (currentRequest === requestSeq) notificationLoading.value = false
+    if (currentRequest === requestSeq && getStoredAccessToken() === ownerToken) notificationLoading.value = false
   }
 }
 
@@ -153,15 +167,16 @@ function toggleNotifications(): void {
 
 async function setHeaderNotificationRead(id: Id): Promise<void> {
   const currentRequest = ++readRequestSeq
+  const ownerToken = getStoredAccessToken()
   try {
     const updated = await markNotificationRead(id)
-    if (currentRequest !== readRequestSeq) return
+    if (currentRequest !== readRequestSeq || getStoredAccessToken() !== ownerToken) return
     headerNotifications.value = headerNotifications.value.map(item => (
       item.id === id ? { ...item, read: true, ...(updated as Partial<NotificationItem>) } : item
     ))
     await refreshNotificationBadge()
   } catch (_) {
-    notificationError.value = '标记已读失败'
+    if (currentRequest === readRequestSeq && getStoredAccessToken() === ownerToken) notificationError.value = '标记已读失败'
   }
 }
 
@@ -170,6 +185,7 @@ function notificationCanNavigate(item: NotificationItem): boolean {
 }
 
 async function openNotification(item: NotificationItem): Promise<void> {
+  const ownerToken = getStoredAccessToken()
   const link = notificationLink(item)
   if (!link) return
   closeNotifications()
@@ -177,14 +193,14 @@ async function openNotification(item: NotificationItem): Promise<void> {
     const currentRequest = ++readRequestSeq
     try {
       await markNotificationRead(item.id)
-      if (currentRequest !== readRequestSeq) return
+      if (currentRequest !== readRequestSeq || getStoredAccessToken() !== ownerToken) return
       headerNotifications.value = headerNotifications.value.map((next) => (
         next.id === item.id ? { ...next, read: true } : next
       ))
       void refreshNotificationBadge().catch(() => {})
     } catch (_) {}
   }
-  await router.push(link)
+  if (getStoredAccessToken() === ownerToken) await router.push(link)
 }
 
 function notificationLink(item: NotificationItem): string {
@@ -214,6 +230,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopLiveUpdates()
   requestSeq += 1
   badgeRequestSeq += 1
   readRequestSeq += 1

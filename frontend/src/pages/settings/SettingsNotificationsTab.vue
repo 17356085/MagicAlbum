@@ -5,6 +5,8 @@ import { listNotifications, markNotificationRead } from '@/api/notifications'
 import { getMyNotificationSettings, updateMyNotificationSettings } from '@/api/settings'
 import { formatAbsoluteTime, formatRelativeTime } from '@/composables/time'
 import type { NotificationItem, NotificationSettings, PageResult } from '@/types'
+import { getStoredAccessToken } from '@/utils/authStorage'
+import { subscribeNotificationChanges } from '@/composables/notificationSignals'
 
 interface NotificationQuery {
   type: string
@@ -35,6 +37,13 @@ let notificationRequestSeq = 0
 let settingsRequestSeq = 0
 let notificationActionSeq = 0
 let disposed = false
+const stopLiveUpdates = subscribeNotificationChanges(signal => {
+  if (signal === 'session') {
+    notificationRequestSeq += 1; settingsRequestSeq += 1; notificationActionSeq += 1
+    notifList.value = { items: [], page: 1, size: 20, total: 0 }
+  }
+  if (!disposed) void loadNotifications()
+})
 const emit = defineEmits<{
   (event: 'dirty-change', dirty: boolean): void
 }>()
@@ -87,6 +96,7 @@ watch(settingsDirty, (dirty) => {
 }, { immediate: true })
 
 async function loadNotifications(): Promise<void> {
+  const token = getStoredAccessToken()
   const requestSeq = ++notificationRequestSeq
   notifLoading.value = true
   notifError.value = ''
@@ -98,16 +108,17 @@ async function loadNotifications(): Promise<void> {
       page: notifQuery.value.page,
       size: notifQuery.value.size,
     })
-    if (disposed || requestSeq !== notificationRequestSeq) return
+    if (token !== getStoredAccessToken() || disposed || requestSeq !== notificationRequestSeq) return
     notifList.value = data
   } catch (_) {
-    if (!disposed && requestSeq === notificationRequestSeq) notifError.value = '加载通知失败，请重试。'
+    if (token === getStoredAccessToken() && !disposed && requestSeq === notificationRequestSeq) notifError.value = '加载通知失败，请重试。'
   } finally {
-    if (!disposed && requestSeq === notificationRequestSeq) notifLoading.value = false
+    if (token === getStoredAccessToken() && !disposed && requestSeq === notificationRequestSeq) notifLoading.value = false
   }
 }
 
 async function loadNotificationSettings(): Promise<void> {
+  const token = getStoredAccessToken()
   const requestSeq = ++settingsRequestSeq
   settingsLoading.value = true
   settingsLoaded.value = false
@@ -115,21 +126,22 @@ async function loadNotificationSettings(): Promise<void> {
   settingsMessage.value = ''
   try {
     const data = await getMyNotificationSettings()
-    if (disposed || requestSeq !== settingsRequestSeq) return
+    if (token !== getStoredAccessToken() || disposed || requestSeq !== settingsRequestSeq) return
     const normalized = normalizeNotificationSettings(data)
     notifSettings.value = normalized
     savedPreferenceSnapshot.value = preferenceSnapshot(normalized)
     settingsLoaded.value = true
   } catch (_) {
-    if (!disposed && requestSeq === settingsRequestSeq) settingsError.value = '通知偏好加载失败，暂时无法编辑或保存。'
+    if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) settingsError.value = '通知偏好加载失败，暂时无法编辑或保存。'
   } finally {
-    if (!disposed && requestSeq === settingsRequestSeq) settingsLoading.value = false
+    if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) settingsLoading.value = false
   }
 }
 
 async function saveNotificationSettings(): Promise<void> {
   if (!canSaveSettings.value) return
 
+  const token = getStoredAccessToken()
   const requestSeq = ++settingsRequestSeq
   settingsSaving.value = true
   settingsMessage.value = ''
@@ -149,30 +161,31 @@ async function saveNotificationSettings(): Promise<void> {
   }
   try {
     const data = await updateMyNotificationSettings(payload)
-    if (disposed || requestSeq !== settingsRequestSeq) return
+    if (token !== getStoredAccessToken() || disposed || requestSeq !== settingsRequestSeq) return
     const normalized = normalizeNotificationSettings(data)
     notifSettings.value = normalized
     savedPreferenceSnapshot.value = preferenceSnapshot(normalized)
     settingsMessage.value = '保存成功'
   } catch (_) {
-    if (!disposed && requestSeq === settingsRequestSeq) {
+    if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) {
       settingsMessageError.value = true
       settingsMessage.value = '保存失败，请稍后重试。'
     }
   } finally {
-    if (!disposed && requestSeq === settingsRequestSeq) settingsSaving.value = false
+    if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) settingsSaving.value = false
   }
 }
 
 async function setNotificationRead(id: NotificationItem['id']): Promise<void> {
+  const token = getStoredAccessToken()
   const actionSeq = ++notificationActionSeq
   notifActionError.value = ''
   try {
     await markNotificationRead(id)
-    if (disposed || actionSeq !== notificationActionSeq) return
+    if (token !== getStoredAccessToken() || disposed || actionSeq !== notificationActionSeq) return
     await loadNotifications()
   } catch (_) {
-    if (!disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
+    if (token === getStoredAccessToken() && !disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
   }
 }
 
@@ -225,17 +238,18 @@ async function openNotification(item: NotificationItem): Promise<void> {
   if (!link) {
     return
   }
+  const token = getStoredAccessToken()
   const actionSeq = ++notificationActionSeq
   if (!item.read) {
     try {
       await markNotificationRead(item.id)
-      if (disposed || actionSeq !== notificationActionSeq) return
+      if (token !== getStoredAccessToken() || disposed || actionSeq !== notificationActionSeq) return
       item.read = true
     } catch (_) {
-      if (!disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
+      if (token === getStoredAccessToken() && !disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
     }
   }
-  if (disposed || actionSeq !== notificationActionSeq) return
+  if (token !== getStoredAccessToken() || disposed || actionSeq !== notificationActionSeq) return
   await router.push(link)
 }
 
@@ -244,6 +258,7 @@ onMounted(() => {
   void loadNotificationSettings()
 })
 onUnmounted(() => {
+  stopLiveUpdates()
   disposed = true
   notificationRequestSeq += 1
   settingsRequestSeq += 1

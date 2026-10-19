@@ -17,6 +17,12 @@ spring:
       server:
         webflux:
           routes:
+            - id: notification-service-stream
+              uri: lb://bluealbum-notification-service
+              predicates:
+                - Path=/api/v1/notifications/stream
+              metadata:
+                response-timeout: 65000
             - id: notification-service-api
               uri: lb://bluealbum-notification-service
               predicates:

@@ -33,8 +33,15 @@ spring:
                   - X-Device-Id
                   - X-Session-Id
                   - X-Request-Id
+                  - Last-Event-ID
                 allow-credentials: true
           routes:
+            - id: notification-service-stream
+              uri: http://127.0.0.1:8081
+              predicates:
+                - Path=/api/v1/notifications/stream
+              metadata:
+                response-timeout: 65000
             - id: notification-service-api
               uri: http://127.0.0.1:8081
               predicates:

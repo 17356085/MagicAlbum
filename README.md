@@ -64,6 +64,10 @@ pwsh -File ./scripts/Test-NotificationRuntime.ps1 -JavaHome 'C:\path\to\jdk-21'
 
 脚本默认使用临时 MySQL／Redis 容器、临时宿主机端口（核心 19080、通知 19081、网关 19090），并在 `outputs/notification-runtime/` 留下检查结果和日志。它只记录并清理自己创建的容器、Java 进程和临时凭证文件；不会使用或清理 `test-artifacts/local-runtime/`。该验证覆盖通知服务 V3、核心 Outbox 迁移、接收端停机后的重试、幂等重放和收件人隔离，但不等同于完整前端 UI 验收或生产迁移验收。
 
+## 异步媒体与实时通知
+
+异步图片预览按 [M3 运行手册](docs/engineering/m3-operations.md) 通过可选 Compose 扩展启用，Java 保留资源权限和任务状态，原图上传保持兼容。通知长连接支持按账号断线补拉，仍以普通列表及持久化记录为准。完成情况和运行证据见[阶段进度](docs/engineering/stage-progress.md)。
+
 ## 管理员与审核
 
 管理员入口默认关闭。先在论坛注册一个**已有且能登录**的账号，然后在 `test-artifacts/local-runtime/runtime.env` 增加 `APP_ADMIN_EMAIL=该账号邮箱`，停止并重新启动应用。配置邮箱不存在时后端会拒绝启动；普通注册用户不会自动获得管理权限。当前后台支持举报待处理列表、驳回举报和隐藏被举报的帖子／评论，不是完整的用户、分区和申诉管理系统。

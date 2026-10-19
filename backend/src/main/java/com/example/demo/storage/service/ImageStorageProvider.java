@@ -7,5 +7,13 @@ public interface ImageStorageProvider {
 
     int order();
 
-    String uploadImage(MultipartFile file);
+    PreparedImage prepareImage(MultipartFile file);
+
+    void writeImage(PreparedImage image);
+
+    default String uploadImage(MultipartFile file) {
+        PreparedImage image = prepareImage(file);
+        writeImage(image);
+        return image.url();
+    }
 }

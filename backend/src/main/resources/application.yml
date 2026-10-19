@@ -84,6 +84,13 @@ springdoc:
     tags-sorter: alpha
 
 app:
+  media:
+    registration-enabled: ${MEDIA_REGISTRATION_ENABLED:${MEDIA_PROCESSING_ENABLED:false}}
+    processing-enabled: ${MEDIA_PROCESSING_ENABLED:false}
+    internal-service-token: ${MEDIA_INTERNAL_SERVICE_TOKEN:}
+    processing-lease-duration: ${MEDIA_LEASE_DURATION:120s}
+    processing-max-attempts: 5
+    orphan-retention: ${MEDIA_ORPHAN_RETENTION:24h}
   deployment:
     # Multi-instance deployments must share Redis and uploads; startup rejects local-only state.
     multi-instance: ${APP_MULTI_INSTANCE:false}
@@ -180,13 +187,13 @@ app:
   storage:
     s3:
       # 默认关闭：将这些值留空，避免误判为已配置，后端会自动回退到本地存储
-      bucket: ""
-      region: ""
-      endpoint: "" # 可选：S3 兼容对象存储自定义 endpoint，例如 https://s3.amazonaws.com 或 MinIO/自建网关
-      accessKey: ""
-      secretKey: ""
+      bucket: ${S3_BUCKET:}
+      region: ${S3_REGION:}
+      endpoint: ${S3_ENDPOINT:}
+      accessKey: ${S3_ACCESS_KEY:}
+      secretKey: ${S3_SECRET_KEY:}
       # 公开 CDN URL；留空返回应用内稳定地址，读取时签名，支持私有 bucket。
-      publicBaseUrl: ""
+      publicBaseUrl: ${S3_PUBLIC_BASE_URL:}
       # 默认私有对象；公开展示应通过受控 CDN/签名 URL 暴露
       aclPublicRead: false
       # 路径前缀，按日期分目录

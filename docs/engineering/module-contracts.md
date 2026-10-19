@@ -14,7 +14,7 @@
 | content | `threads`、`posts`、`sections`、`tags` | 帖子、评论、分区、标签、内容可见性及帖子/评论点赞 |
 | interaction | `bookmarks` | 收藏关系和收藏列表 |
 | notifications | `notifications` | core 通知 Outbox 以及独立 notification-service 的收件箱、已读、去重 |
-| storage | `storage` | 图片校验、存储 provider 选择、本地/S3 文件输出；当前没有媒体任务表 |
+| storage | `storage` | 图片校验、存储 provider、资源归属、媒体任务与请求 Outbox、租约及派生对象清理 |
 | ai | `ai` | AI 调用、摘要缓存和用量；帖子摘要状态仍由 content 的帖子记录承载 |
 | governance | `moderation`、`admin` | 举报、管理权限和审核流程；隐藏由内容 owner 执行，恢复尚未实现 |
 | infrastructure | `common`、`config`、`bootstrap` | 配置、基础设施适配、Redis/RabbitMQ wiring 和本地种子数据 |
@@ -43,7 +43,7 @@
 | content | `/api/v1/threads/**`、`/api/v1/threads/{threadId}/posts`；`ThreadService`、`PostService`；线程/帖子查询 DTO 和分页投影 | 发帖、编辑、删除、隐藏、评论和点赞写入由 content Service 的事务负责；通知 Outbox 写入必须加入调用事务 | 线程作者、评论作者和当前登录用户由 owner Service 检查；审核隐藏通过 content owner | `ThreadService` 读取 user/section，`PostService` 读取 user/thread；这些历史 Entity/Repository 对在配置中逐对保留 |
 | interaction | `/api/v1/threads/{id}/bookmark`、`/api/v1/users/me/bookmarks`；`ThreadBookmarkService`、收藏状态/列表 DTO | 收藏取消和列表显式事务；收藏新增依靠复合唯一键处理并发，当前缺少 Service 级显式事务声明 | 入口使用当前登录用户；目标帖子可见性由 content owner 数据校验 | 收藏 Service 和 Repository 读取 thread Entity/Repository，精确白名单保留；新的收藏跨域写仍应经 content owner |
 | notifications | core `NotificationClient`/`NotificationService`/`NotificationOutbox`；独立服务 `/api/v1/notifications` 和内部创建接口 | core Outbox `enqueue` 要求调用方已有事务；消费端持久化后才确认；独立服务以 `eventId` 唯一键幂等 | 用户通知查询按当前用户；内部接口使用独立 service token | core 客户端读取 user 通知偏好是公开 Service 入口；通知 Outbox 不能伪装成 M2 内容事件 |
-| storage | `/api/v1/uploads/images`；`StorageService` 和 `ImageStorageProvider`；返回 URL | 当前只做文件写入和 provider 选择，没有媒体任务状态事务 | Controller 要求登录并做用户/IP 限流；当前 URL 没有持久化 owner/task 元数据 | 本地/S3 provider 没有用户或帖子表依赖；M3 媒体任务契约另行定义 |
+| storage | 上传、owner 状态/取消/重试及私有 worker 接口；`MediaAssetStatus` | 上传意图、确认/失败、任务领取/候选/接受各自短事务；对象写入在事务外，任务与请求 Outbox 同事务 | 用户 JWT 只授权 owner API；独立服务令牌与当前租约约束 worker；默认关闭媒体登记/处理 | 旧 URL 保持原语义，不自动迁移历史对象；新状态只在启用登记后建立，见 M3 契约 |
 | ai | `/api/v1/ai/**`；`AiService`、摘要缓存和 RabbitMQ 摘要 listener | 帖子更新把摘要状态置为 `PENDING`；listener 使用租约和条件更新避免旧结果覆盖 | 摘要读取应遵守 content 当前可见性；现有 controller 仍有直接读取 Thread 的历史对 | AI controller 读取 thread Entity/Repository 已在精确白名单；M2/M4 新调用应改为 content owner DTO |
 | governance | 举报和管理接口；`ContentReportService`、`AdminAccessService` | 举报由 governance Service 持久化；隐藏由 `ThreadService`/`PostService` 等 content owner 执行；恢复命令尚未实现 | 管理权限由 admin；目标内容授权由 content owner 再检查 | 举报 Service 读取 post/thread Entity/Repository，admin 读取 user Entity/Repository，均按源文件+目标白名单保留 |
 | infrastructure | 本地种子、配置、公共 Redis/RabbitMQ 适配 | 不拥有业务事务；只参与被调用 owner 的事务 | 不绕过 owner 授权 | 本地种子直接读写多个域 Repository 是启动夹具，精确白名单保留；新增业务代码不得仿效 |
@@ -59,3 +59,9 @@ M2 search 模块的数据读取只能调用 content owner 的 DTO/Service 入口
 ## 4. 历史耦合的处理方式
 
 M1 只冻结上述规则和基线，不在一次变更中迁移 43 对历史 Entity/Repository 引用。后续每次迁移应先增加 owner DTO/Service 契约和行为测试，再删除对应白名单条目；删除条目后由架构检查证明旧依赖没有回流。跨域字符串查询、反射和运行时装配仍需通过对应集成测试验证，不能把静态检查结果当作这些行为的证明。
+
+## 5. M3 跨语言与通知边界
+
+Go 只消费已登记任务，通过 Java 私有 API 领取、续租、读取确定输入及回传；不直接读写媒体表，不持有 S3 凭据。任务版本、租约散列、候选和输出由 storage 域持有，结果接受后才确认消息；重投使用原事件，用户重试另建版本。清理只能处理派生位置，不删除原图。完整字段及重试语义见[执行契约](m3-runtime-contract.md)。
+
+通知服务持有自己的 owner 事件日志及串行游标，通知创建/已读与事件同事务提交。SSE 只发送变化标识，普通通知列表仍是内容读取入口；不跨账号复用连接和游标。媒体状态由 storage owner API 查询，不借用通知表充当媒体任务主数据。当前实现和运行验收结果按[阶段记录](stage-progress.md)分别确认。

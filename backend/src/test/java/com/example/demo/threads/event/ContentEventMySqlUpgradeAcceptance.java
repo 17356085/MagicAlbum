@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
+    private static final String LATEST_MIGRATION_VERSION = "20261019.5";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
     private static final String UPGRADE_USERNAME = "CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME";
     private static final String UPGRADE_PASSWORD = "CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD";
@@ -79,7 +80,7 @@ class ContentEventMySqlUpgradeAcceptance {
             assertIndex(connection, "idx_content_event_outbox_status_id");
             assertIndex(connection, "idx_content_event_outbox_delivery_claim");
             assertIndex(connection, "idx_content_event_outbox_delivery_lease");
-            assertFlywayVersion(connection, "20261019.2");
+            assertFlywayVersion(connection, LATEST_MIGRATION_VERSION);
             assertThat(count(connection, "SELECT COUNT(*) FROM content_event_outbox WHERE event_id=? "
                     + "AND attempts=0 AND available_at=occurred_at AND status='PENDING' "
                     + "AND lease_owner IS NULL AND lease_until IS NULL AND published_at IS NULL "
@@ -95,6 +96,8 @@ class ContentEventMySqlUpgradeAcceptance {
                     .isInstanceOf(SQLException.class)
                     .satisfies(error -> assertThat(((SQLException) error).getSQLState())
                             .startsWith("23"));
+
+            com.example.demo.storage.MediaRegistryMySqlAssertions.assertMediaRegistry(connection);
         }
     }
 

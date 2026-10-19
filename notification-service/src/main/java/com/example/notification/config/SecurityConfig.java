@@ -67,10 +67,11 @@ public class SecurityConfig {
                         ))
                 )
                 .authorizeHttpRequests(authorize -> authorize
+                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC, jakarta.servlet.DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health", "/error").permitAll()
                         .requestMatchers(INTERNAL_PATH, INTERNAL_PATH + "/**")
                         .hasAuthority(InternalServiceAuthenticationFilter.INTERNAL_SERVICE_AUTHORITY)
-                        .requestMatchers(HttpMethod.GET, NOTIFICATIONS_PATH).authenticated()
+                        .requestMatchers(HttpMethod.GET, NOTIFICATIONS_PATH, NOTIFICATIONS_PATH + "/stream", NOTIFICATIONS_PATH + "/events").authenticated()
                         .requestMatchers(HttpMethod.PATCH, NOTIFICATIONS_PATH + "/*/read").authenticated()
                         .anyRequest().denyAll()
                 );

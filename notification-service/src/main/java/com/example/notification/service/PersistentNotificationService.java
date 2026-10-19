@@ -18,12 +18,19 @@ import org.springframework.web.server.ResponseStatusException;
 public class PersistentNotificationService implements NotificationService {
     private final NotificationRepository notificationRepository;
     private final NotificationCreateTransaction notificationCreateTransaction;
+    private final NotificationEventLog events;
 
     @Autowired
     public PersistentNotificationService(NotificationRepository notificationRepository,
-                                         NotificationCreateTransaction notificationCreateTransaction) {
+                                         NotificationCreateTransaction notificationCreateTransaction,
+                                         NotificationEventLog events) {
         this.notificationRepository = notificationRepository;
         this.notificationCreateTransaction = notificationCreateTransaction;
+        this.events = events;
+    }
+
+    public PersistentNotificationService(NotificationRepository repository, NotificationCreateTransaction transaction) {
+        this(repository, transaction, null);
     }
 
     public PersistentNotificationService(NotificationRepository notificationRepository) {
@@ -53,6 +60,7 @@ public class PersistentNotificationService implements NotificationService {
         return notificationRepository.findByIdAndUserId(id, userId)
                 .map(notification -> {
                     notificationRepository.markRead(id, userId);
+                    if (!notification.isRead() && events != null) events.append(userId, id, "read");
                     notification.setRead(true);
                     return toDto(notification);
                 })

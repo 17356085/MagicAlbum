@@ -5,6 +5,9 @@ import AppHeader from '@/components/AppHeader.vue'
 import SidebarLeft from '@/components/SidebarLeft.vue'
 import AiChat from '@/components/AiChat.vue'
 import MobileNavigation from '@/components/MobileNavigation.vue'
+import { useLiveNotifications } from '@/composables/useLiveNotifications'
+import MediaProcessingStatus from '@/components/MediaProcessingStatus.vue'
+import { useMediaProcessing } from '@/composables/useMediaProcessing'
 import { useMobileViewport } from '@/composables/useMobileViewport'
 import { useUIStore } from '@/stores/ui'
 import { storeToRefs } from 'pinia'
@@ -37,6 +40,8 @@ interface StarParticle {
 
 // UI 设置（动态背景开关）
 const uiStore = useUIStore()
+useLiveNotifications()
+useMediaProcessing()
 const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
 const authRenderKey = ref(0)
 const route = useRoute()
@@ -341,6 +346,7 @@ onUnmounted(() => {
       <span>发帖</span>
     </router-link>
     <MobileNavigation v-show="!inputActive" />
+    <MediaProcessingStatus v-show="!inputActive" :raised="showMobileCreate" />
     <AiChat />
   </div>
 </template>

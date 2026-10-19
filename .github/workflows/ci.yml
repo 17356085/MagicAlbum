@@ -20,6 +20,8 @@ jobs:
           python-version: '3.12'
       - name: Repository structure tests
         run: node --test scripts/__tests__/*.test.mjs
+      - name: Media runtime acceptance guard tests
+        run: python -m unittest discover -s scripts/ci -p test_media_runtime_gate.py -v
       - name: Repository structure and references
         run: node scripts/Check-Repository.mjs
       - name: Java dependency boundaries
@@ -35,6 +37,68 @@ jobs:
             if ($syntaxErrors.Count) { $invalid += $_.FullName }
           }
           if ($invalid.Count) { throw "PowerShell syntax errors: $($invalid -join ', ')" }
+
+  media-kernel:
+    name: Go media worker and race checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/media-service
+    env:
+      GOTOOLCHAIN: local
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 512MiB
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Formatting and static analysis
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+      - name: Execute media tests with race detection
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/outputs/m3-media-ci"
+          go version > "$GITHUB_WORKSPACE/outputs/m3-media-ci/runtime.txt"
+          go test -race -count=1 -json ./... > "$GITHUB_WORKSPACE/outputs/m3-media-ci/go-tests.jsonl"
+      - name: Require executed tests without failures or skips
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ['GITHUB_WORKSPACE']) / 'outputs/m3-media-ci'
+          events = [json.loads(line) for line in (root / 'go-tests.jsonl').read_text().splitlines() if line.strip()]
+          passed = [event for event in events if event.get('Action') == 'pass' and event.get('Test')]
+          packages = [event for event in events if event.get('Action') == 'pass' and not event.get('Test')]
+          failures = [event for event in events if event.get('Action') == 'fail']
+          skipped = [event for event in events if event.get('Action') == 'skip' and event.get('Test')]
+          if not passed or not packages or failures or skipped:
+              raise SystemExit('Media tests must execute and pass without failures or skips')
+          summary = {'passedTestEvents': len(passed), 'packages': len(packages), 'failures': 0, 'skipped': 0, 'race': True}
+          (root / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary))
+          PY
+      - name: Upload media kernel evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-kernel-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: outputs/m3-media-ci/
 
   frontend:
     runs-on: ubuntu-latest
@@ -222,3 +286,52 @@ jobs:
             outputs/m2-search-ci/**/*.xml
             outputs/m2-search-ci/**/*.txt
             outputs/m2-search-ci/**/*.log
+
+  media-runtime:
+    name: Media worker recovery and notification streams
+    runs-on: ubuntu-latest
+    needs: [repository, backend, frontend, media-kernel, python-tests]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - name: Install acceptance dependencies
+        run: python -m pip install -r tests/requirements.txt
+      - name: Install acceptance browser
+        run: python -m playwright install --with-deps chromium
+      - name: Verify cross-language media, outages and notification replay
+        run: python scripts/ci/media-runtime-smoke.py
+      - name: Require complete runtime and cleanup evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path('outputs/m3-runtime-ci').glob('*/junit.xml'))
+          if len(reports) != 1:
+              raise SystemExit('Exactly one isolated M3 runtime report is required')
+          report = ET.parse(reports[0]).getroot()
+          cases = report.findall('testcase')
+          checks = json.loads(reports[0].with_name('checks.json').read_text())
+          if len(cases) != 16 or any(case.find(kind) is not None for case in cases for kind in ('failure', 'error', 'skipped')):
+              raise SystemExit('M3 requires 16 actual cases with no failures, errors or skips')
+          if checks['status'] != 'passed' or checks['cleanup'] != 'passed':
+              raise SystemExit('M3 runtime cleanup did not pass')
+          print('M3 runtime: 16 executed cases and isolated cleanup passed')
+          PY
+      - name: Upload media and stream evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            outputs/m3-runtime-ci/**/*.json
+            outputs/m3-runtime-ci/**/*.xml
+            outputs/m3-runtime-ci/**/logs/*.log
+            outputs/m3-runtime-ci/**/screenshots/*.png

@@ -23,6 +23,13 @@ public final class JwtTokenService {
 
     private final JwtParser parser;
 
+    public Optional<java.time.Instant> findExpiration(String compactToken) {
+        try {
+            var claims = parser.parseSignedClaims(compactToken).getPayload();
+            return Optional.ofNullable(claims.getExpiration()).map(java.util.Date::toInstant);
+        } catch (Exception invalid) { return Optional.empty(); }
+    }
+
     public JwtTokenService(
             @Value("${app.security.jwt.secret:}") String secret,
             @Value("${app.security.jwt.issuer:}") String issuer

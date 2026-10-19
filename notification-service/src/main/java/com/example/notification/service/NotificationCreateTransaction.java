@@ -5,6 +5,7 @@ import com.example.notification.repo.NotificationRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * Isolates the unique-key insert in its own transaction. A concurrent
@@ -14,13 +15,22 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class NotificationCreateTransaction {
     private final NotificationRepository notificationRepository;
+    private final NotificationEventLog events;
 
     public NotificationCreateTransaction(NotificationRepository notificationRepository) {
+        this(notificationRepository, null);
+    }
+
+    @Autowired
+    public NotificationCreateTransaction(NotificationRepository notificationRepository, NotificationEventLog events) {
         this.notificationRepository = notificationRepository;
+        this.events = events;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Notification insert(Notification notification) {
-        return notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
+        if (events != null) events.append(saved.getUserId(), saved.getId(), "created");
+        return saved;
     }
 }

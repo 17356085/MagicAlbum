@@ -13,6 +13,23 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class S3StorageServiceTest {
+    @Test void preparationHasNoExternalEffectAndWriteUsesExactPlannedKeyAndBytes() {
+        var service = storage();
+        var client = (S3Client) ReflectionTestUtils.getField(service, "client");
+        var image = service.prepareImage(new MockMultipartFile("file", new byte[]{1}));
+        verifyNoInteractions(client);
+        assertThat(image.intent().provider()).isEqualTo("s3");
+        assertThat(image.intent().byteSize()).isEqualTo(1);
+        assertThat(image.intent().sha256()).isEqualTo("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a");
+        var request = org.mockito.ArgumentCaptor.forClass(software.amazon.awssdk.services.s3.model.PutObjectRequest.class);
+        var body = org.mockito.ArgumentCaptor.forClass(software.amazon.awssdk.core.sync.RequestBody.class);
+        service.writeImage(image);
+        verify(client).putObject(request.capture(), body.capture());
+        assertThat(request.getValue().key()).isEqualTo(image.objectKey());
+        assertThat(request.getValue().contentType()).isEqualTo(image.contentType());
+        assertThat(body.getValue().contentLength()).isEqualTo(1);
+    }
+
     private S3StorageService storage() {
         var validator = mock(ImageUploadValidator.class);
         when(validator.validate(any())).thenReturn(new ImageUploadValidator.ValidatedImage(new byte[]{1}, "image/jpeg", ".jpeg"));

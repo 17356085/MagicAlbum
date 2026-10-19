@@ -22,6 +22,18 @@ public class StorageService {
         return resolveProvider().uploadImage(file);
     }
 
+    public PreparedUpload prepareImage(MultipartFile file) {
+        ImageStorageProvider provider = resolveProvider();
+        return new PreparedUpload(provider, provider.prepareImage(file));
+    }
+
+    // Keep the provider selected during preparation, even if availability changes before writing.
+    public void writeImage(PreparedUpload upload) {
+        upload.provider().writeImage(upload.image());
+    }
+
+    public record PreparedUpload(ImageStorageProvider provider, PreparedImage image) {}
+
     private ImageStorageProvider resolveProvider() {
         return providers.stream()
                 .filter(ImageStorageProvider::isAvailable)
