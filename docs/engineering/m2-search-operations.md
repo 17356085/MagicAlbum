@@ -97,3 +97,5 @@ docker compose -f docker-compose.yml -f docker-compose.search.yml -f docker-comp
 ## 验收边界
 
 本文件和 override 只完成静态的 opt-in 入口与运行约定。M2 的真实 MySQL、RabbitMQ、Elasticsearch、跨实例 gate、重建、乱序/重复事件、故障回退及 alias 行为仍需 CI 或目标环境的完整验收；当前不能据此声称已经上线。静态检查应至少覆盖：合并配置可解析、backend 保留基础依赖并等待 Elasticsearch healthy、ES 没有 published port、命名卷存在、健康检查等待 yellow、以及文档中的管理员路径与 Java 控制器一致。
+
+CI 的临时服务使用 loopback 动态端口；停止再启动后必须重新读取映射，而不能沿用初次创建的地址。Docker 的 [端口查询说明](https://docs.docker.com/reference/cli/docker/container/port/) 和 [Moby API 端口分配说明](https://github.com/moby/moby/blob/master/api/docs/v1.24.md) 是该检查的依据。验收脚本应同时核对容器 ID、运行标签和原匿名卷，并记录端口历史；读取新端口不能变成重建空数据容器来绕过恢复验证。

@@ -37,6 +37,9 @@ declare -A CONTAINER_ID=()
 declare -A CONTAINER_VOLUMES=()
 declare -A CONTAINER_STARTED=()
 declare -A CONTAINER_NAME=()
+declare -A CONTAINER_INITIAL_PORT=()
+declare -A CONTAINER_CURRENT_PORT=()
+declare -A CONTAINER_PORT_HISTORY=()
 declare -A ROUND_EXIT=()
 declare -A ROUND_TESTS=()
 declare -A ROUND_FAILURES=()
@@ -47,6 +50,9 @@ for role in mysql rabbit es; do
   CONTAINER_ID[$role]=""
   CONTAINER_VOLUMES[$role]=""
   CONTAINER_STARTED[$role]=0
+  CONTAINER_INITIAL_PORT[$role]=""
+  CONTAINER_CURRENT_PORT[$role]=""
+  CONTAINER_PORT_HISTORY[$role]=""
 done
 
 die() {
@@ -129,13 +135,9 @@ run_container() {
     || die "cannot record owned $role anonymous volumes"
 }
 
-record_container_volumes() {
-  local role="$1"
-  local name="$2"
-  local mounts_json volumes
-  mounts_json="$(docker inspect --format '{{json .Mounts}}' "$name" 2>/dev/null)" \
-    || return 1
-  volumes="$(python - "$mounts_json" <<'PY'
+container_volume_names() {
+  local mounts_json="$1"
+  python - "$mounts_json" <<'PY'
 import json
 import sys
 
@@ -150,10 +152,32 @@ for mount in mounts:
     if not isinstance(name, str) or not name:
         raise SystemExit("container has an unnamed volume")
     names.append(name)
+names.sort()
 print(" ".join(names))
 PY
-  )" || return 1
+}
+
+record_container_volumes() {
+  local role="$1"
+  local name="$2"
+  local mounts_json volumes
+  mounts_json="$(docker inspect --format '{{json .Mounts}}' "$name" 2>/dev/null)" \
+    || return 1
+  volumes="$(container_volume_names "$mounts_json")" || return 1
   CONTAINER_VOLUMES[$role]="$volumes"
+}
+
+record_container_port() {
+  local role="$1"
+  local port="$2"
+  validate_port "$port" || return 1
+  if [[ -z "${CONTAINER_CURRENT_PORT[$role]}" ]]; then
+    CONTAINER_INITIAL_PORT[$role]="$port"
+    CONTAINER_PORT_HISTORY[$role]="$port"
+  else
+    CONTAINER_PORT_HISTORY[$role]+=" $port"
+  fi
+  CONTAINER_CURRENT_PORT[$role]="$port"
 }
 
 capture_container_metadata() {
@@ -186,18 +210,27 @@ capture_container_metadata() {
     || die "cannot inspect $role mounts"
   [[ -n "${CONTAINER_VOLUMES[$role]}" ]] \
     || die "$role container does not have recorded anonymous volumes"
+  record_container_port "$role" "$port" \
+    || die "cannot record owned $role loopback port"
 
-  python - "$ARTIFACT_ROOT/container-record.json" "$role" "$name" "$id" "$label" "$image" "$port" "$memory" "$memory_swap" "$mounts_json" <<'PY'
+  python - "$ARTIFACT_ROOT/container-record.json" "$role" "$name" "$id" "$label" "$image" "$port" "$memory" "$memory_swap" "$mounts_json" \
+    "${CONTAINER_INITIAL_PORT[$role]}" "${CONTAINER_CURRENT_PORT[$role]}" "${CONTAINER_PORT_HISTORY[$role]}" <<'PY'
 import json
 import pathlib
 import sys
 
-path, role, name, identifier, label, image, port, memory, memory_swap, mounts_text = sys.argv[1:]
+(
+    path, role, name, identifier, label, image, port, memory, memory_swap,
+    mounts_text, initial_port, current_port, history_text,
+) = sys.argv[1:]
 mounts = json.loads(mounts_text)
 safe_mounts = [
     {"type": item.get("Type"), "name": item.get("Name"), "destination": item.get("Destination")}
     for item in mounts
 ]
+history = [int(value) for value in history_text.split()]
+if not history or history[0] != int(initial_port) or history[-1] != int(current_port):
+    raise SystemExit("container port history is inconsistent")
 target = pathlib.Path(path)
 if target.exists():
     payload = json.loads(target.read_text(encoding="utf-8"))
@@ -208,13 +241,111 @@ payload.setdefault("containers", {})[role] = {
     "id": identifier,
     "label": label,
     "image": image,
-    "loopbackPort": int(port),
+    "loopbackPort": int(current_port),
+    "initialLoopbackPort": int(initial_port),
+    "currentLoopbackPort": int(current_port),
+    "portHistory": history,
     "memoryBytes": int(memory),
     "memorySwapBytes": int(memory_swap),
     "anonymousVolumes": safe_mounts,
 }
 target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
+}
+
+assert_owned_container() {
+  local role="$1"
+  local name="${CONTAINER_NAME[$role]}"
+  local expected_id="${CONTAINER_ID[$role]}"
+  local id label mounts_json volumes
+  id="$(docker inspect --format '{{.Id}}' "$name" 2>/dev/null)" \
+    || die "cannot inspect owned $role container id"
+  label="$(docker inspect --format '{{ index .Config.Labels "com.bluealbum.m2-search" }}' "$name" 2>/dev/null)" \
+    || die "cannot inspect owned $role run label"
+  [[ "$id" == "$expected_id" ]] || die "owned $role container id changed"
+  [[ "$label" == "$RUN_ID" ]] || die "owned $role container run label changed"
+  mounts_json="$(docker inspect --format '{{json .Mounts}}' "$name" 2>/dev/null)" \
+    || die "cannot inspect owned $role mounts"
+  volumes="$(container_volume_names "$mounts_json")" \
+    || die "owned $role container volumes are invalid"
+  [[ "$volumes" == "${CONTAINER_VOLUMES[$role]}" ]] \
+    || die "owned $role container volumes changed"
+}
+
+update_container_port_metadata() {
+  local role="$1"
+  local port="$2"
+  python - "$ARTIFACT_ROOT/container-record.json" "$role" "$port" \
+    "${CONTAINER_ID[$role]}" "$RUN_ID" "${CONTAINER_VOLUMES[$role]}" \
+    "${CONTAINER_INITIAL_PORT[$role]}" "${CONTAINER_CURRENT_PORT[$role]}" \
+    "${CONTAINER_PORT_HISTORY[$role]}" <<'PY'
+import json
+import pathlib
+import sys
+
+(
+    path, role, port, expected_id, expected_label, expected_volumes,
+    initial_port, current_port, history_text,
+) = sys.argv[1:]
+target = pathlib.Path(path)
+payload = json.loads(target.read_text(encoding="utf-8"))
+container = payload.get("containers", {}).get(role)
+if not isinstance(container, dict):
+    raise SystemExit(f"container metadata is missing role: {role}")
+if container.get("id") != expected_id or container.get("label") != expected_label:
+    raise SystemExit(f"container identity changed for role: {role}")
+stored_volumes = sorted(
+    item.get("name")
+    for item in container.get("anonymousVolumes", [])
+    if isinstance(item, dict) and item.get("name")
+)
+if stored_volumes != sorted(filter(None, expected_volumes.split())):
+    raise SystemExit(f"container volumes changed for role: {role}")
+history = [int(value) for value in history_text.split()]
+initial = int(initial_port)
+current = int(current_port)
+if not history or history[0] != initial or history[-1] != current or current != int(port):
+    raise SystemExit(f"container port history is inconsistent for role: {role}")
+stored_initial = container.get("initialLoopbackPort", container.get("loopbackPort"))
+if int(stored_initial) != initial:
+    raise SystemExit(f"container initial port changed for role: {role}")
+container["loopbackPort"] = current
+container["currentLoopbackPort"] = current
+container["portHistory"] = history
+target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+refresh_container_port() {
+  local role="$1"
+  local target port
+  case "$role" in
+    mysql) target='3306/tcp' ;;
+    rabbit) target='5672/tcp' ;;
+    es) target='9200/tcp' ;;
+    *) die "cannot refresh port for unknown container role: $role" ;;
+  esac
+  port="$(container_port "${CONTAINER_NAME[$role]}" "$target")" \
+    || die "cannot refresh published port for $role container"
+  record_container_port "$role" "$port" \
+    || die "cannot record refreshed $role loopback port"
+  case "$role" in
+    mysql)
+      MYSQL_PORT="$port"
+      export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8"
+      ;;
+    rabbit)
+      RABBIT_PORT="$port"
+      export CONTENT_SEARCH_TEST_RABBIT_PORT="$RABBIT_PORT"
+      ;;
+    es)
+      ES_PORT="$port"
+      ES_URL="http://127.0.0.1:$ES_PORT"
+      export CONTENT_SEARCH_TEST_ELASTIC_URL="$ES_URL"
+      ;;
+  esac
+  update_container_port_metadata "$role" "$port" \
+    || die "cannot update $role port metadata"
 }
 
 mysql_query() {
@@ -533,6 +664,7 @@ assert_stopped() {
 
 stop_role() {
   local role="$1"
+  assert_owned_container "$role"
   docker stop "${CONTAINER_NAME[$role]}" >/dev/null \
     || die "failed to stop $role container"
   assert_stopped "$role"
@@ -540,12 +672,15 @@ stop_role() {
 
 start_role() {
   local role="$1"
+  assert_owned_container "$role"
   docker start "${CONTAINER_NAME[$role]}" >/dev/null \
     || die "failed to start $role container"
   local running
   running="$(docker inspect --format '{{.State.Running}}' "${CONTAINER_NAME[$role]}" 2>/dev/null)" \
     || die "$role container running state cannot be inspected after start"
   [[ "$running" == "true" ]] || die "$role container did not start"
+  assert_owned_container "$role"
+  refresh_container_port "$role"
 }
 
 write_checks() {
@@ -771,6 +906,9 @@ stop_role rabbit
 run_maven_phase outage outage_keeps_events_and_uses_database
 start_role rabbit
 start_role es
+export CONTENT_SEARCH_TEST_PHASE=recovery
+export CONTENT_SEARCH_TEST_EVIDENCE_DIRECTORY="$ARTIFACT_ROOT/recovery"
+write_test_environment
 wait_for_services
 run_maven_phase recovery recovery_replays_pending_and_failed_events
 
