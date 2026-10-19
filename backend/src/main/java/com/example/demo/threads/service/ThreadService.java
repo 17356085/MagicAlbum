@@ -14,6 +14,8 @@ import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.entity.ThreadLike;
+import com.example.demo.threads.event.entity.ContentEventType;
+import com.example.demo.threads.event.service.ContentEventRecorder;
 import com.example.demo.threads.repo.ThreadLikeRepository;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.common.config.RabbitMQConfig;
@@ -59,6 +61,7 @@ public class ThreadService {
     private final NotificationClient notificationClient;
     private final TagService tagService;
     private final AiSummaryCacheService aiSummaryCacheService;
+    private final ContentEventRecorder contentEventRecorder;
 
     @Autowired
     public ThreadService(ThreadRepository threadRepository,
@@ -74,14 +77,16 @@ public class ThreadService {
                          ObjectProvider<ObjectMapper> objectMapperProvider,
                          ObjectProvider<NotificationClient> notificationClientProvider,
                          ObjectProvider<TagService> tagServiceProvider,
-                         ObjectProvider<AiSummaryCacheService> aiSummaryCacheServiceProvider) {
+                         ObjectProvider<AiSummaryCacheService> aiSummaryCacheServiceProvider,
+                         ContentEventRecorder contentEventRecorder) {
         this(threadRepository, threadLikeRepository, sectionRepository, userRepository, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 redisTemplateProvider == null ? null : redisTemplateProvider.getIfAvailable(),
                 resolveObjectMapper(objectMapperProvider),
                 notificationClientProvider == null ? null : notificationClientProvider.getIfAvailable(),
                 tagServiceProvider == null ? null : tagServiceProvider.getIfAvailable(),
-                aiSummaryCacheServiceProvider == null ? null : aiSummaryCacheServiceProvider.getIfAvailable());
+                aiSummaryCacheServiceProvider == null ? null : aiSummaryCacheServiceProvider.getIfAvailable(),
+                contentEventRecorder);
     }
 
     ThreadService(ThreadRepository threadRepository,
@@ -90,10 +95,11 @@ public class ThreadService {
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
                   ObjectProvider<RabbitTemplate> rabbitTemplateProvider,
-                  boolean rabbitEnabled) {
+                  boolean rabbitEnabled,
+                  ContentEventRecorder contentEventRecorder) {
         this(threadRepository, null, sectionRepository, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
-                null, defaultObjectMapper(), null, null, null);
+                null, defaultObjectMapper(), null, null, null, contentEventRecorder);
     }
 
     ThreadService(ThreadRepository threadRepository,
@@ -109,7 +115,8 @@ public class ThreadService {
                   ObjectMapper objectMapper,
                   NotificationClient notificationClient,
                   TagService tagService,
-                  AiSummaryCacheService aiSummaryCacheService) {
+                  AiSummaryCacheService aiSummaryCacheService,
+                  ContentEventRecorder contentEventRecorder) {
         this.threadRepository = threadRepository;
         this.threadLikeRepository = threadLikeRepository;
         this.sectionRepository = sectionRepository;
@@ -123,6 +130,7 @@ public class ThreadService {
         this.notificationClient = notificationClient;
         this.tagService = tagService;
         this.aiSummaryCacheService = aiSummaryCacheService;
+        this.contentEventRecorder = Objects.requireNonNull(contentEventRecorder, "contentEventRecorder");
         this.dtoMapper = new ThreadDtoMapper(threadRepository, threadLikeRepository, tagService);
     }
 
@@ -134,10 +142,11 @@ public class ThreadService {
                   ObjectProvider<RabbitTemplate> rabbitTemplateProvider,
                   boolean rabbitEnabled,
                   StringRedisTemplate redisTemplate,
-                  ObjectMapper objectMapper) {
+                  ObjectMapper objectMapper,
+                  ContentEventRecorder contentEventRecorder) {
         this(threadRepository, null, sectionRepository, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
-                redisTemplate, objectMapper, null, null, null);
+                redisTemplate, objectMapper, null, null, null, contentEventRecorder);
     }
 
     @Transactional
@@ -162,7 +171,9 @@ public class ThreadService {
         t.setAuthorId(authorId);
         t.setTitle(req.getTitle().trim());
         t.setContentMd(req.getContent());
+        t.setContentVersion(1L);
         Thread saved = threadRepository.save(t);
+        recordContentEvent(saved, ContentEventType.THREAD_UPSERTED);
         replaceTags(saved.getId(), req.getTags());
 
         ThreadDto dto = dtoMapper.toDto(saved);
@@ -479,7 +490,9 @@ public class ThreadService {
             t.setSummaryLeaseUntil(null);
             t.setSummaryAttempts(0);
         }
+        advanceContentVersion(t);
         Thread saved = threadRepository.save(t);
+        recordContentEvent(saved, ContentEventType.THREAD_UPSERTED);
         if (req.getTags() != null) {
             replaceTags(saved.getId(), req.getTags());
         }
@@ -497,8 +510,13 @@ public class ThreadService {
         if (!t.getAuthorId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可删除帖子");
         }
+        if ("DELETED".equals(t.getStatus())) {
+            return;
+        }
         t.setStatus("DELETED");
+        advanceContentVersion(t);
         threadRepository.save(t);
+        recordContentEvent(t, ContentEventType.THREAD_DELETED);
         evictThreadCachesAfterCommit(threadId);
     }
 
@@ -506,8 +524,18 @@ public class ThreadService {
     public void hideForModeration(Long threadId) {
         Thread thread = findNormalThreadForInteraction(threadId);
         thread.setStatus("HIDDEN");
+        advanceContentVersion(thread);
         threadRepository.save(thread);
+        recordContentEvent(thread, ContentEventType.THREAD_HIDDEN);
         evictThreadCachesAfterCommit(threadId);
+    }
+
+    private void advanceContentVersion(Thread thread) {
+        thread.setContentVersion(Math.addExact(thread.getContentVersion(), 1L));
+    }
+
+    private void recordContentEvent(Thread thread, ContentEventType eventType) {
+        contentEventRecorder.record(thread.getId(), thread.getContentVersion(), eventType);
     }
 
     private void replaceTags(Long threadId, List<String> tags) {

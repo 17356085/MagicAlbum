@@ -3,6 +3,7 @@ package com.example.demo.threads.service;
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
+import com.example.demo.threads.event.service.ContentEventRecorder;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.threads.service.mp.ThreadReadServiceMp;
 import org.junit.jupiter.api.Test;
@@ -51,7 +52,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null);
+                mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null,
+                mock(ContentEventRecorder.class));
 
         service.delete(11L, 7L);
 
@@ -93,7 +95,8 @@ class ThreadServiceCacheTest {
         when(threadRepository.searchNewestView(any(), any(), any(), any(PageRequest.class)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 10), 1));
 
-        ThreadService service = new ThreadService(threadRepository, sectionRepository, markdownRenderService, mpProvider, false, rabbitProvider, false, redisTemplate, null);
+        ThreadService service = new ThreadService(threadRepository, sectionRepository, markdownRenderService, mpProvider, false,
+                rabbitProvider, false, redisTemplate, null, mock(ContentEventRecorder.class));
         var result = service.list(null, null, 1, 10);
 
         assertThat(result.getContent()).hasSize(1);
@@ -133,7 +136,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
-        ThreadService service = new ThreadService(threadRepository, sectionRepository, markdownRenderService, mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+        ThreadService service = new ThreadService(threadRepository, sectionRepository, markdownRenderService, mpProvider, false,
+                rabbitProvider, false, redisTemplate, mapper, mock(ContentEventRecorder.class));
         var result = service.list(null, null, 1, 10);
 
         assertThat(result.getContent()).hasSize(1);
@@ -167,7 +171,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
+                mock(ContentEventRecorder.class));
 
         assertThat(service.list(null, null, 7L, 1, 10).getContent()).isEmpty();
         verify(threadRepository).searchNewestView(isNull(), isNull(), eq(7L), any(PageRequest.class));
@@ -194,7 +199,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
+                mock(ContentEventRecorder.class));
 
         assertThatThrownBy(() -> service.list(null, null, 7L, 1, 10)).isSameAs(failure);
         verify(threadRepository, never()).searchNewestView(any(), any(), any(), any(PageRequest.class));
@@ -216,7 +222,8 @@ class ThreadServiceCacheTest {
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null);
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
+                mock(ContentEventRecorder.class));
         service.list("  tech  ", null, 7L, 1, 10);
 
         verify(valueOperations).get("cache:threads:list:tech::7:1:10");
@@ -242,7 +249,8 @@ class ThreadServiceCacheTest {
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mpProvider, true, rabbitProvider, false, redisTemplate, null);
+                mock(MarkdownRenderService.class), mpProvider, true, rabbitProvider, false, redisTemplate, null,
+                mock(ContentEventRecorder.class));
         service.list("  tech  ", null, 7L, 1, 10);
 
         verify(valueOperations).get("cache:threads:list:tech::7:1:10");
@@ -266,7 +274,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null);
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
+                mock(ContentEventRecorder.class));
 
         assertThat(service.list(null, null, 7L, 1, 10)).isNotNull();
 
@@ -289,7 +298,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null);
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
+                mock(ContentEventRecorder.class));
 
         assertThat(service.list(null, null, 7L, 1, 10)).isNotNull();
 
@@ -324,7 +334,8 @@ class ThreadServiceCacheTest {
         MarkdownRenderService markdown = mock(MarkdownRenderService.class);
         when(markdown.renderWithCache(eq(9L), any(), anyString())).thenReturn("<p>Body</p>");
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
-                mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+                mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
+                mock(ContentEventRecorder.class));
 
         assertThat(service.getById(9L).getTitle()).isEqualTo("Database");
 
@@ -369,7 +380,8 @@ class ThreadServiceCacheTest {
         when(markdown.renderWithCache(9L, viewUpdatedAt, "View body"))
                 .thenReturn("<p>View body</p>");
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
-                mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+                mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
+                mock(ContentEventRecorder.class));
 
         ThreadDto result = service.getById(9L);
 
@@ -407,7 +419,8 @@ class ThreadServiceCacheTest {
         MarkdownRenderService markdown = mock(MarkdownRenderService.class);
         when(markdown.renderWithCache(eq(9L), any(), anyString())).thenReturn("<p>Body</p>");
         ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
-                mpProvider, false, rabbitProvider, false, redisTemplate, mapper);
+                mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
+                mock(ContentEventRecorder.class));
 
         assertThat(service.getById(9L).getTitle()).isEqualTo("Database");
 
@@ -427,7 +440,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null);
+                mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null,
+                mock(ContentEventRecorder.class));
 
         TransactionSynchronizationManager.initSynchronization();
         try {
@@ -453,7 +467,8 @@ class ThreadServiceCacheTest {
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
-                mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null);
+                mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null,
+                mock(ContentEventRecorder.class));
 
         TransactionSynchronizationManager.initSynchronization();
         try {

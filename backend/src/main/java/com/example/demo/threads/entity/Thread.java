@@ -13,6 +13,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import org.hibernate.annotations.ColumnDefault;
 
 @Entity
 @org.hibernate.annotations.DynamicUpdate
@@ -42,6 +43,10 @@ public class Thread {
 
     @Column(nullable = false, length = 32)
     private String status = "NORMAL";
+
+    @Column(name = "content_version", nullable = false)
+    @ColumnDefault("0")
+    private long contentVersion;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -93,6 +98,8 @@ public class Thread {
     public void setSpoiler(Boolean spoiler) { this.spoiler = spoiler; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public long getContentVersion() { return contentVersion; }
+    public void setContentVersion(long contentVersion) { this.contentVersion = contentVersion; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
