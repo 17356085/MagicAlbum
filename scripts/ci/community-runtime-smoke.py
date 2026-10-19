@@ -856,7 +856,7 @@ class CommunityAcceptance(BaseAcceptance):
         self.reports["parent"] = int(parent_report["id"])
         response, _ = self.resolve_report(admin, self.reports["post_a"], "HIDE", "M4 hide child")
         self._status(response, 200, "hide child post")
-        if self.get_thread(ordinary, self.threads['a']).get('replyCount') != 0:
+        if self.list_posts(ordinary, self.threads["a"])["total"] != 0:
             raise GateFailure('hidden comment remained in the reply count')
         response, _ = self.resolve_report(admin, self.reports["parent"], "HIDE", "M4 hide parent")
         self._status(response, 200, "hide parent thread")
@@ -866,7 +866,7 @@ class CommunityAcceptance(BaseAcceptance):
         self._status(response, 200, "restore parent thread")
         response, _ = self.resolve_report(admin, self.reports["post_a"], "RESTORE", "M4 restore child after parent")
         self._status(response, 200, "restore child after parent")
-        if self.get_thread(ordinary, self.threads['a']).get('replyCount') != 1:
+        if self.list_posts(ordinary, self.threads["a"])["total"] != 1:
             raise GateFailure('restored comment did not return to the reply count')
         deleted = self.create_thread(ordinary, int(self.sections["a"]["id"]), "author-deleted")
         deleted_id = int(deleted["id"])
@@ -1102,7 +1102,8 @@ class CommunityAcceptance(BaseAcceptance):
                     raise GateFailure("admin community UI reported access denied")
                 ordinary = self.identities['ordinary']
                 page.get_by_label('搜索用户名', exact=True).fill(ordinary.username)
-                page.get_by_role('button', name='搜索', exact=True).click()
+                search_form = page.locator('form.ui-toolbar').filter(has=page.get_by_label('搜索用户名', exact=True))
+                search_form.get_by_role('button', name='搜索', exact=True).click(timeout=int(self.browser_timeout * 1000))
                 row = page.locator('li.ui-list-row').filter(has=page.get_by_role('heading', name=ordinary.username, exact=True))
                 row.locator('summary').click()
                 scope = row.get_by_label(self.sections['a']['name'], exact=True)

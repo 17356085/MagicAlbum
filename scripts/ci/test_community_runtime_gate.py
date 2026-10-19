@@ -1,4 +1,5 @@
 """Offline checks of M4 acceptance safety and completeness; no Docker starts."""
+import inspect
 import importlib.util
 import json
 from pathlib import Path
@@ -120,6 +121,14 @@ class CommunityRuntimeGuards(unittest.TestCase):
         self.assertEqual(scoped_total, 2)
         self.assertIn("community_moderator_scope", queries[-1][0])
         self.assertIn("status='HIDDEN'", queries[-1][0])
+
+    def test_browser_and_reply_count_readbacks_are_scoped_to_real_controls(self):
+        browser_source = inspect.getsource(gate.CommunityAcceptance._browser_community)
+        self.assertIn("form.ui-toolbar", browser_source)
+        self.assertIn("filter(has=page.get_by_label('搜索用户名', exact=True))", browser_source)
+        self.assertNotIn("page.get_by_role('button', name='搜索', exact=True).click()", browser_source)
+        reply_source = inspect.getsource(gate.CommunityAcceptance.report_parent_and_author_deletion_guards)
+        self.assertIn('self.list_posts(ordinary, self.threads["a"])["total"]', reply_source)
 
     def test_failed_bootstrap_writes_failed_evidence_and_deletes_private_env(self):
         base = gate.ComposeRuntime
