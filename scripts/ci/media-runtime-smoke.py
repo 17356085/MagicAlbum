@@ -297,6 +297,7 @@ class ComposeRuntime:
             "APP_ADMIN_EMAIL": "",
             "APP_AUTH_VERIFY_MODE": "off",
             "APP_RABBIT_ENABLED": "true",
+            "APP_CORS_ALLOWED_ORIGINS": self.env_values.get("APP_CORS_ALLOWED_ORIGINS", "http://127.0.0.1:5173"),
             "MEDIA_PROCESSING_ENABLED": "true",
             "MEDIA_REGISTRATION_ENABLED": "true",
             "MEDIA_INTERNAL_SERVICE_TOKEN": self.secrets["MEDIA_INTERNAL_SERVICE_TOKEN"],
@@ -319,6 +320,12 @@ class ComposeRuntime:
 
     def update_public_base_url(self, host_port: int) -> None:
         self._write_env(f"http://127.0.0.1:{host_port}/media-test")
+
+    def update_browser_origin(self, host_port: int) -> None:
+        if not 1 <= host_port <= 65535:
+            raise GateFailure("invalid frontend origin port")
+        self.env_values["APP_CORS_ALLOWED_ORIGINS"] = f"http://127.0.0.1:{host_port}"
+        self._write_env(self.env_values["S3_PUBLIC_BASE_URL"])
 
     def _write_override(self) -> None:
         service_ports = {
@@ -344,6 +351,7 @@ class ComposeRuntime:
                 '      MEDIA_PROCESSING_ENABLED: "true"',
                 '      MEDIA_REGISTRATION_ENABLED: "true"',
                 "      MEDIA_INTERNAL_SERVICE_TOKEN: ${MEDIA_INTERNAL_SERVICE_TOKEN}",
+                "      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS}",
                 "      S3_BUCKET: media-test",
                 "      S3_REGION: us-east-1",
                 "      S3_ENDPOINT: http://s3mock:9090",
@@ -567,6 +575,15 @@ class ComposeRuntime:
         self.refresh_ports()
         if self.ports["s3mock"] != s3_port:
             raise GateFailure("S3Mock host port changed while starting the remaining services")
+        # The frontend uses an OS-assigned port. Recreate only the backend
+        # after discovery so browser POSTs use that exact allowed origin.
+        # Keep the frontend/S3 containers and their public URLs unchanged.
+        frontend_port = self.ports["frontend"]
+        self.update_browser_origin(frontend_port)
+        self.compose("up", "-d", "--no-deps", "--wait", "--wait-timeout", "180", "backend", timeout=300)
+        self.refresh_ports()
+        if self.ports["frontend"] != frontend_port or self.ports["s3mock"] != s3_port:
+            raise GateFailure("frontend or S3Mock host port changed while configuring browser origin")
         self.wait_http(f"http://127.0.0.1:{self.ports['s3mock']}/favicon.ico", {200}, timeout=60)
         self.wait_http(f"http://127.0.0.1:{self.ports['backend']}/actuator/health", {200}, timeout=180)
         self.wait_http(f"http://127.0.0.1:{self.ports['notification-service']}/actuator/health", {200}, timeout=180)
@@ -1575,6 +1592,7 @@ def write_checks(runtime: ComposeRuntime, reporter: Reporter, started_at: dateti
         "status": "failed" if reporter.failed or runtime.cleanup_status != "passed" else "passed",
         "executed": bool(reporter.cases),
         "ports": runtime.ports,
+        "browserOrigin": runtime.env_values["APP_CORS_ALLOWED_ORIGINS"],
         "cleanup": runtime.cleanup_status,
         "cases": [dataclasses.asdict(case) for case in reporter.cases],
         "expectedCases": 16,

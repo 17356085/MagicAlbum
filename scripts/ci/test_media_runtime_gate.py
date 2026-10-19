@@ -48,6 +48,18 @@ class RuntimeGuardTests(unittest.TestCase):
         self.assertFalse(runtime.compose_touched)
         runtime.cleanup()
 
+    def test_browser_origin_uses_exact_discovered_port_and_survives_env_refresh(self):
+        runtime = gate.ComposeRuntime(self.root)
+        runtime.update_public_base_url(12345)
+        runtime.update_browser_origin(23456)
+        runtime.update_public_base_url(12345)
+        self.assertEqual(runtime.env_values["APP_CORS_ALLOWED_ORIGINS"], "http://127.0.0.1:23456")
+        self.assertEqual(runtime.env_values["S3_PUBLIC_BASE_URL"], "http://127.0.0.1:12345/media-test")
+        self.assertIn("APP_CORS_ALLOWED_ORIGINS=http://127.0.0.1:23456", runtime.env_file.read_text())
+        self.assertIn("APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS}", runtime.override_file.read_text())
+        with self.assertRaises(gate.GateFailure): runtime.update_browser_origin(0)
+        runtime.cleanup()
+
     def test_cleanup_failure_cannot_exit_success_and_produces_failed_junit(self):
         real = gate.ComposeRuntime
         class FakeRuntime(real):
