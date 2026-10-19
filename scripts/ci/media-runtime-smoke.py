@@ -631,6 +631,10 @@ class ComposeRuntime:
             if self.compose_touched:
                 try:
                     self.compose("logs", "--no-color", "--timestamps", "--tail", "500", timeout=120)
+                    # Keep separate tails: a noisy core/broker must not hide
+                    # notification or proxy errors in the bounded combined log.
+                    for service in ("backend", "notification-service", "gateway", "frontend", "media-worker"):
+                        self.compose("logs", service, "--no-color", "--timestamps", "--tail", "150", timeout=30)
                 except GateFailure:
                     status = "failed"
                 try:
@@ -1224,12 +1228,11 @@ class Acceptance:
         )
         if retry.get("properties", {}).get("delivery_mode") != 2:
             raise GateFailure("retry queue message was not persistent")
-        # Expire the manual lease and make recovery eligible.  The SQL is
-        # limited to this freshly generated UUID and leaves all other rows
-        # untouched; the maintenance scheduler then reactivates the outbox.
+        # Expire only this freshly generated lease.  Keep updated_at fresh:
+        # an expired PROCESSING job must not wait for the PENDING grace period.
         self.runtime.sql(
             "UPDATE media_processing_job SET lease_until=DATE_SUB(NOW(6),INTERVAL 1 SECOND), "
-            f"updated_at=DATE_SUB(NOW(6),INTERVAL 121 SECOND) WHERE job_id='{job['job_id']}'"
+            f"updated_at=NOW(6) WHERE job_id='{job['job_id']}'"
         )
         final = self.poll_succeeded(self.owner, asset_id, timeout=180)
         if final.get("processingStatus") != "SUCCEEDED":
@@ -1403,18 +1406,22 @@ class Acceptance:
             thread.join(timeout=8)
         if not found:
             raise GateFailure("gateway Last-Event-ID did not replay the durable event")
-        token = make_jwt(self.owner.user_id, self.runtime.secrets["JWT_SECRET"], "MagicAlbum", 4)
+        # Isolate expiry from the owner's replay/disconnect quota. A servlet
+        # can discover a disconnected SSE peer only on its next socket write.
+        expiry_identity = self.other
+        token = make_jwt(expiry_identity.user_id, self.runtime.secrets["JWT_SECRET"], "MagicAlbum", 4)
         queue = Queue()
         thread, stop = self.read_sse_thread(token, queue)
         expired_lines: list[str] = []
         expired_status = None
+        expired_errors: list[str] = []
         closed = False
         started = time.monotonic()
         sent_after_expiry = False
         try:
             while time.monotonic() - started < 9:
                 if not sent_after_expiry and time.monotonic() - started >= 5:
-                    self.notification_internal(self.owner, "after-expiry")
+                    self.notification_internal(expiry_identity, "after-expiry")
                     sent_after_expiry = True
                 try:
                     kind, value = queue.get(timeout=0.5)
@@ -1423,11 +1430,13 @@ class Acceptance:
                 if kind == "status": expired_status = value
                 elif kind == "line": expired_lines.append(str(value))
                 elif kind == "closed": closed = True
+                elif kind == "error": expired_errors.append(str(value))
         finally:
             stop.set()
             thread.join(timeout=3)
         if expired_status != 200 or not closed or not sent_after_expiry:
-            raise GateFailure("short-lived JWT did not establish and close its SSE connection")
+            raise GateFailure("short-lived JWT did not establish and close its SSE connection "
+                f"(status={expired_status}, closed={closed}, sentAfterExpiry={sent_after_expiry}, errors={expired_errors})")
         if any(item["event"] == "notification" for item in self.stream_events(expired_lines)):
             raise GateFailure("expired JWT received a notification frame")
 

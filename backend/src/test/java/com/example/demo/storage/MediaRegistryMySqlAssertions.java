@@ -48,14 +48,23 @@ public final class MediaRegistryMySqlAssertions {
         assertColumn(connection, "media_processing_job", "attempts", "int");
         assertColumn(connection, "media_processing_job", "created_at", "timestamp");
         assertColumn(connection, "media_processing_job", "updated_at", "timestamp");
-        assertColumn(connection, "media_processing_job", "lease_token_hash", "varchar");
-        assertColumn(connection, "media_processing_job", "lease_until", "timestamp");
-        assertColumn(connection, "media_processing_job", "candidate_key", "varchar");
-        assertColumn(connection, "media_processing_job", "output_key", "varchar");
-        assertColumn(connection, "media_processing_job", "output_sha256", "varchar");
-        assertColumn(connection, "media_processing_job", "output_width", "int");
-        assertColumn(connection, "media_processing_job", "output_height", "int");
-        assertColumn(connection, "media_processing_job", "error_code", "varchar");
+        assertColumn(connection, "media_processing_job", "lease_token_hash", "varchar", true);
+        assertColumn(connection, "media_processing_job", "lease_until", "timestamp", true);
+        assertColumn(connection, "media_processing_job", "candidate_key", "varchar", true);
+        assertColumn(connection, "media_processing_job", "candidate_url", "varchar", true);
+        assertColumn(connection, "media_processing_job", "candidate_sha256", "varchar", true);
+        assertColumn(connection, "media_processing_job", "candidate_type", "varchar", true);
+        assertColumn(connection, "media_processing_job", "candidate_size", "bigint", true);
+        assertColumn(connection, "media_processing_job", "candidate_width", "int", true);
+        assertColumn(connection, "media_processing_job", "candidate_height", "int", true);
+        assertColumn(connection, "media_processing_job", "output_key", "varchar", true);
+        assertColumn(connection, "media_processing_job", "output_url", "varchar", true);
+        assertColumn(connection, "media_processing_job", "output_sha256", "varchar", true);
+        assertColumn(connection, "media_processing_job", "output_type", "varchar", true);
+        assertColumn(connection, "media_processing_job", "output_size", "bigint", true);
+        assertColumn(connection, "media_processing_job", "output_width", "int", true);
+        assertColumn(connection, "media_processing_job", "output_height", "int", true);
+        assertColumn(connection, "media_processing_job", "error_code", "varchar", true);
 
         assertColumn(connection, "media_request_outbox", "event_id", "varchar");
         assertColumn(connection, "media_request_outbox", "asset_id", "varchar");
@@ -67,8 +76,9 @@ public final class MediaRegistryMySqlAssertions {
         assertColumn(connection, "media_request_outbox", "status", "varchar");
         assertColumn(connection, "media_request_outbox", "attempts", "int");
         assertColumn(connection, "media_request_outbox", "available_at", "timestamp");
-        assertColumn(connection, "media_request_outbox", "lease_owner", "varchar");
-        assertColumn(connection, "media_request_outbox", "lease_until", "timestamp");
+        assertColumn(connection, "media_request_outbox", "lease_owner", "varchar", true);
+        assertColumn(connection, "media_request_outbox", "lease_until", "timestamp", true);
+        assertColumn(connection, "media_request_outbox", "last_error", "varchar", true);
 
         assertIndex(connection, "media_asset", "PRIMARY", true, "asset_id");
         assertIndex(connection, "media_asset", "uk_media_asset_provider_object_key", true,
@@ -252,15 +262,23 @@ public final class MediaRegistryMySqlAssertions {
 
     private static void assertColumn(Connection connection, String tableName, String columnName,
                                      String expectedDataType) throws SQLException {
+        assertColumn(connection, tableName, columnName, expectedDataType, false);
+    }
+
+    private static void assertColumn(Connection connection, String tableName, String columnName,
+                                     String expectedDataType, boolean expectedNullable) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT data_type,is_nullable FROM information_schema.columns "
                         + "WHERE table_schema=DATABASE() AND table_name=? AND column_name=?")) {
             statement.setString(1, tableName);
             statement.setString(2, columnName);
             try (ResultSet result = statement.executeQuery()) {
-                assertThat(result.next()).as(tableName + "." + columnName + " column").isTrue();
-                assertThat(result.getString("data_type")).isEqualTo(expectedDataType);
-                assertThat(result.getString("is_nullable")).isEqualTo("NO");
+                String columnDescription = tableName + "." + columnName;
+                assertThat(result.next()).as(columnDescription + " column").isTrue();
+                assertThat(result.getString("data_type")).as(columnDescription + " data type")
+                        .isEqualTo(expectedDataType);
+                assertThat(result.getString("is_nullable")).as(columnDescription + " nullable")
+                        .isEqualTo(expectedNullable ? "YES" : "NO");
             }
         }
     }

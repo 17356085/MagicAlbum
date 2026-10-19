@@ -13,7 +13,7 @@ Direct exchange `media.jobs.v1`，routing key `process`，durable queue `media.p
 前缀 `/internal/media/v1/jobs/{jobId}`；独立 `X-Internal-Service-Token`，环境变量 `MEDIA_INTERNAL_SERVICE_TOKEN`，按 32 个随机字节生成。普通用户 JWT 不授予内部接口权限。所有 JSON/二进制响应 `Cache-Control:no-store`。
 
 - `POST /claim`：JSON 是完整消息 envelope。200 响应 `status`，终态 `SUCCEEDED/FAILED/CANCELLED` 可直接 ACK；`CLAIMED` 还含 `assetId,jobVersion,preset,processorVersion,leaseToken,leaseUntil,inputSha256,contentType,byteSize`。409 表示 BUSY，404 表示消息不匹配真实任务；不能将 BUSY ACK 丢弃。
-- `POST /renew`：JSON `{jobVersion,leaseToken}`；200 `{leaseUntil}`。默认租约 120 秒，处理预算 60 秒，续租间隔 30 秒；旧/过期租约返回409。
+- `POST /renew`：JSON `{jobVersion,leaseToken}`；200 `{leaseUntil}`。默认租约 120 秒，处理预算 60 秒；worker 根据返回的到期时间，在剩余租约约三分之一后续租，间隔不超过 30 秒，并覆盖结果回传。旧/过期租约返回409。
 - `GET /input?jobVersion=1`：`X-Media-Lease-Token` 头；原始图片字节，读取仅绑定服务持有的对象键。404/409 不返回对象内容。
 - `POST /result`：multipart 字段 `file,jobVersion,inputSha256,outputSha256,processorVersion,width,height`，租约放 `X-Media-Lease-Token`。Java 校验实际字节、格式、尺寸、摘要和输入绑定；200 `{status:"SUCCEEDED"}`。同一租约和相同结果重传幂等；冲突/过期/取消409，不覆盖已接受结果。
 - `POST /failure`：JSON `{jobVersion,leaseToken,errorCode}`；固定代码 `UNSUPPORTED_FORMAT,ANIMATED_IMAGE,MALFORMED_IMAGE,INVALID_METADATA,IMAGE_LIMITS,INPUT_TOO_LARGE,OUTPUT_TOO_LARGE,ENCODE,TIMEOUT,INPUT_MISMATCH`。200 `{status:"FAILED"}`；相同失败重传幂等，旧租约409。
@@ -22,7 +22,7 @@ Direct exchange `media.jobs.v1`，routing key `process`，durable queue `media.p
 
 ## 持久化和对象
 
-领取在短事务中锁定 job，核对真实 outbox/event/asset/version/preset；执行尝试最多5次，持久化 SHA-256 租约散列及到期时间。过期租约允许新尝试；定时恢复器重新激活原请求事件，不能创建新的 eventId。发布失败也在数据库重试，避免 broker 不可用时丢失任务。
+领取在短事务中锁定 job，核对真实 outbox/event/asset/version/preset；执行尝试最多5次，持久化 SHA-256 租约散列及到期时间。过期租约允许新尝试；恢复器每 15 秒扫描到期的 PROCESSING 任务，以原请求事件重新激活，不再等待 PENDING 的 120 秒宽限期，不能创建新的 eventId。发布失败也在数据库重试，避免 broker 不可用时丢失任务。
 
 结果先通过短事务预留 candidate 元数据，再写入对象，最后通过新事务按当前租约接受。对象写入不包含在 SQL 事务中。输出位置由 Java 生成：`media/{assetId}/v{jobVersion}/{preset}/p{processorVersion}/{outputSha256}.{jpg|png}`，使用资源原 provider；不同结果不会覆盖原图或彼此。
 

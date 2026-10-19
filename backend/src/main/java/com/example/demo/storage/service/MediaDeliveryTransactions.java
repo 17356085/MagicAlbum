@@ -65,8 +65,9 @@ public class MediaDeliveryTransactions {
         String status = (String) row.get("status");
         Instant lease = instant(row.get("lease_until"));
         Instant updated = instant(row.get("updated_at"));
-        if (updated.isAfter(now.minusSeconds(120)) || !("PENDING".equals(status)
-                || ("PROCESSING".equals(status) && lease != null && lease.isBefore(now)))) return;
+        boolean stalePending = "PENDING".equals(status) && !updated.isAfter(now.minusSeconds(120));
+        boolean expiredProcessing = "PROCESSING".equals(status) && lease != null && lease.isBefore(now);
+        if (!stalePending && !expiredProcessing) return;
         jdbc.update("""
                 UPDATE media_request_outbox SET status='PENDING',available_at=?,lease_owner=NULL,lease_until=NULL
                 WHERE job_id=? AND status IN ('PUBLISHED','FAILED')

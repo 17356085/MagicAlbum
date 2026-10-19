@@ -214,6 +214,57 @@ class MediaJobServiceExecutionTest {
     }
 
     @Test
+    void recoveryRepublishesExpiredLeaseWithoutWaitingForPendingThreshold() {
+        Fixture fixture = fixture();
+        service.claim(fixture.jobId(), fixture.envelope());
+        var delivery = deliveries.claim().orElseThrow();
+        assertThat(deliveries.published(delivery)).isTrue();
+        jdbc.update("update media_processing_job set lease_until=?,updated_at=? where job_id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)), java.sql.Timestamp.from(Instant.now()), fixture.jobId());
+
+        maintenance().recoverJobs();
+
+        assertThat(deliveries.claim().orElseThrow().eventId()).isEqualTo(delivery.eventId());
+    }
+
+    @Test
+    void recoveryDoesNotRepublishLiveLeaseEvenWithOldUpdateTimestamp() {
+        Fixture fixture = fixture();
+        service.claim(fixture.jobId(), fixture.envelope());
+        var delivery = deliveries.claim().orElseThrow();
+        assertThat(deliveries.published(delivery)).isTrue();
+        jdbc.update("update media_processing_job set lease_until=?,updated_at=? where job_id=?",
+                java.sql.Timestamp.from(Instant.now().plusSeconds(60)), java.sql.Timestamp.from(Instant.now().minusSeconds(121)), fixture.jobId());
+
+        maintenance().recoverJobs();
+        deliveries.recover(fixture.jobId());
+
+        assertThat(deliveries.claim()).isEmpty();
+    }
+
+    @Test
+    void recoveryKeepsPendingGracePeriodAndThenReusesOriginalEvent() {
+        Fixture fixture = fixture();
+        var delivery = deliveries.claim().orElseThrow();
+        assertThat(deliveries.published(delivery)).isTrue();
+        maintenance().recoverJobs();
+        deliveries.recover(fixture.jobId());
+        assertThat(deliveries.claim()).isEmpty();
+
+        jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(121)), fixture.jobId());
+        maintenance().recoverJobs();
+
+        assertThat(deliveries.claim().orElseThrow().eventId()).isEqualTo(delivery.eventId());
+    }
+
+    private MediaMaintenance maintenance() {
+        return new MediaMaintenance(jdbc, deliveries, registry,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+    }
+
+    @Test
     void cleanupKeepsActiveCandidateAndAcceptedOutputButDeletesExpiredOrphan() throws Exception {
         Fixture fixture = fixture();
         var objects = new MediaObjectStore(org.mockito.Mockito.mock(com.example.demo.storage.service.provider.s3.S3StorageService.class), objectsRoot.toString());

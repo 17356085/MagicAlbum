@@ -26,7 +26,7 @@ GPS、文本或其他来源元数据。输出包含 bytes、MIME、实际宽高�
 的 JPEG/PNG 解码器本身不是可硬实时抢占的；取消请求会在解码返回以及内核的
 下一个检查点得到处理。
 
-进程入口 `go run ./cmd/media-worker`，必需变量为 `MEDIA_CORE_URL`、`MEDIA_AMQP_URL`、`MEDIA_INTERNAL_SERVICE_TOKEN`；`MEDIA_HEALTH_ADDR` 默认 `:9091`。`/live` 表示进程存活，`/ready` 表示已建立消息消费会话，`--self-health` 用于容器检查。默认单消费者、prefetch 1、处理预算 60 秒、30 秒续租；HTTP 连接/响应限制 5/15 秒并拒绝重定向，发布确认最多等待 5 秒。
+进程入口 `go run ./cmd/media-worker`，必需变量为 `MEDIA_CORE_URL`、`MEDIA_AMQP_URL`、`MEDIA_INTERNAL_SERVICE_TOKEN`；`MEDIA_HEALTH_ADDR` 默认 `:9091`。`/live` 表示进程存活，`/ready` 表示已建立消息消费会话，`--self-health` 用于容器检查。默认单消费者、prefetch 1、处理预算 60 秒；依据实际租约剩余时间约三分之一动态续租，间隔不超过 30 秒，覆盖结果回传。HTTP 连接/响应限制 5/15 秒并拒绝重定向，发布确认最多等待 5 秒。
 
 结果经 Java 接受后才 ACK；持久化延迟重试先确认再 ACK 原消息。非法消息只保留摘要和固定原因。连接中断后重建通道与拓扑，退出取消未完成执行并重投。结果响应丢失通过重新领取读取持久化终态解决。当前队列只启用 preview，thumbnail 是内核能力。Docker 构建固定 Go 1.26.9，使用非 root 运行时，Compose 限制 640 MiB；这些不等于容量压测或跨版本编码一致性承诺。
 

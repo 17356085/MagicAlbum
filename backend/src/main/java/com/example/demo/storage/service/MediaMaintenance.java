@@ -44,10 +44,13 @@ public class MediaMaintenance {
 
     @Scheduled(fixedDelayString = "${app.media.recovery-delay-ms:15000}", scheduler = "mediaPublishScheduler")
     public void recoverJobs() {
+        Instant now = Instant.now();
         jdbc.queryForList("""
                 SELECT job_id FROM media_processing_job
-                WHERE status IN ('PENDING','PROCESSING') AND updated_at<? ORDER BY updated_at LIMIT 20
-                """, String.class, Timestamp.from(Instant.now().minusSeconds(120))).forEach(deliveries::recover);
+                WHERE (status='PENDING' AND updated_at<?)
+                    OR (status='PROCESSING' AND lease_until<?)
+                ORDER BY updated_at LIMIT 20
+                """, String.class, Timestamp.from(now.minusSeconds(120)), Timestamp.from(now)).forEach(deliveries::recover);
     }
 
     @Scheduled(fixedDelayString = "${app.media.reconcile-delay-ms:60000}", scheduler = "mediaMaintenanceScheduler")
