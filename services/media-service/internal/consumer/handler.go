@@ -23,6 +23,7 @@ const (
 	OutcomeRetry
 	OutcomeQuarantine
 	OutcomeShutdown
+	OutcomeAuthPaused
 )
 
 type Outcome struct {
@@ -63,9 +64,10 @@ const (
 // after submission has started cannot invalidate an already authoritative
 // successful response.
 type leaseState struct {
-	mu     sync.Mutex
-	phase  leasePhase
-	failed bool
+	mu         sync.Mutex
+	phase      leasePhase
+	failed     bool
+	authPaused bool
 }
 
 func newLeaseState() *leaseState {
@@ -100,10 +102,27 @@ func (s *leaseState) renewalFailed() bool {
 	return true
 }
 
+func (s *leaseState) authFailed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.phase == leaseCompleted {
+		return false
+	}
+	s.failed = true
+	s.authPaused = true
+	return s.phase == leaseProcessing
+}
+
 func (s *leaseState) hasRenewalFailure() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.failed
+}
+
+func (s *leaseState) hasAuthFailure() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.authPaused
 }
 
 func NewHandler(core Core, processBudget, renewInterval time.Duration, maxInput, maxOutput int64) (*Handler, error) {
@@ -135,6 +154,9 @@ func (h *Handler) Handle(ctx context.Context, body []byte) Outcome {
 	}
 	claim, err := h.Core.Claim(ctx, envelope)
 	if err != nil {
+		if coreclient.IsKind(err, coreclient.ErrorAuth) {
+			return Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
 		if coreclient.IsKind(err, coreclient.ErrorInvalid) {
 			return Outcome{Kind: OutcomeQuarantine, Reason: "claim_invalid"}
 		}
@@ -153,7 +175,7 @@ func (h *Handler) Handle(ctx context.Context, body []byte) Outcome {
 	}
 }
 
-func (h *Handler) processClaim(parent context.Context, envelope wire.Envelope, claim coreclient.ClaimResponse) Outcome {
+func (h *Handler) processClaim(parent context.Context, envelope wire.Envelope, claim coreclient.ClaimResponse) (outcome Outcome) {
 	if _, ok := h.renewalDelay(h.now(), claim.LeaseUntil); !ok {
 		return Outcome{Kind: OutcomeRetry, Reason: "lease_renewal"}
 	}
@@ -161,17 +183,24 @@ func (h *Handler) processClaim(parent context.Context, envelope wire.Envelope, c
 	defer cancelWork()
 	renewCtx, cancelRenew := context.WithCancel(parent)
 	renewDone := make(chan struct{})
+	lease := newLeaseState()
+	go h.renewLease(renewCtx, envelope.JobID, claim, cancelWork, lease, renewDone)
+
 	defer func() {
 		cancelRenew()
 		<-renewDone
+		if parent.Err() == nil && outcome.Kind != OutcomeAck && lease.hasAuthFailure() {
+			outcome = Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
 	}()
-	lease := newLeaseState()
-	go h.renewLease(renewCtx, envelope.JobID, claim, cancelWork, lease, renewDone)
 
 	result, outcome := h.execute(workCtx, envelope, claim, lease)
 
 	if parent.Err() != nil {
 		return Outcome{Kind: OutcomeShutdown, Reason: "shutdown"}
+	}
+	if outcome.Kind != OutcomeAck && lease.hasAuthFailure() {
+		return Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
 	}
 	if outcome.Kind != OutcomeAck && lease.hasRenewalFailure() {
 		return Outcome{Kind: OutcomeRetry, Reason: "lease_renewal"}
@@ -190,10 +219,19 @@ func (h *Handler) processClaim(parent context.Context, envelope wire.Envelope, c
 		return Outcome{Kind: OutcomeRetry, Reason: "missing_result"}
 	}
 	if !lease.beginSubmission() {
+		if lease.hasAuthFailure() {
+			return Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
 		return Outcome{Kind: OutcomeRetry, Reason: "lease_renewal"}
 	}
 	if err := h.Core.SubmitResult(workCtx, envelope.JobID, claim.JobVersion, claim.LeaseToken, result, claim.InputSHA256); err != nil {
 		lease.finishSubmission(false)
+		if coreclient.IsKind(err, coreclient.ErrorAuth) {
+			return Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
+		if lease.hasAuthFailure() {
+			return Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
 		if parent.Err() != nil {
 			return Outcome{Kind: OutcomeShutdown, Reason: "shutdown"}
 		}
@@ -233,7 +271,12 @@ func (h *Handler) renewLease(ctx context.Context, jobID string, claim coreclient
 			requestErr := renewCtx.Err()
 			cancel()
 			if err != nil {
-				if ctx.Err() == nil {
+				// An explicit auth response is a configuration failure even when
+				// cancellation raced the response. Record it before joining the
+				// renewal goroutine so a failed submit cannot hide the pause.
+				if coreclient.IsKind(err, coreclient.ErrorAuth) {
+					h.failAuth(lease, cancelWork)
+				} else if ctx.Err() == nil {
 					h.failRenewal(lease, cancelWork)
 				}
 				return
@@ -269,9 +312,18 @@ func (h *Handler) failRenewal(lease *leaseState, cancelWork context.CancelFunc) 
 	}
 }
 
+func (h *Handler) failAuth(lease *leaseState, cancelWork context.CancelFunc) {
+	if lease.authFailed() {
+		cancelWork()
+	}
+}
+
 func (h *Handler) execute(ctx context.Context, envelope wire.Envelope, claim coreclient.ClaimResponse, lease *leaseState) (processor.Result, Outcome) {
 	input, err := h.Core.GetInput(ctx, envelope.JobID, claim.JobVersion, claim.LeaseToken)
 	if err != nil {
+		if coreclient.IsKind(err, coreclient.ErrorAuth) {
+			return processor.Result{}, Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
 		if ctx.Err() != nil {
 			return processor.Result{}, h.contextOutcome(ctx)
 		}
@@ -319,11 +371,20 @@ func (h *Handler) permanentFailure(ctx context.Context, jobID string, claim core
 		return processor.Result{}, h.contextOutcome(ctx)
 	}
 	if lease != nil && !lease.beginSubmission() {
+		if lease.hasAuthFailure() {
+			return processor.Result{}, Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
 		return processor.Result{}, Outcome{Kind: OutcomeRetry, Reason: "lease_renewal"}
 	}
 	if err := h.Core.SubmitFailure(ctx, jobID, claim.JobVersion, claim.LeaseToken, code); err != nil {
 		if lease != nil {
 			lease.finishSubmission(false)
+		}
+		if coreclient.IsKind(err, coreclient.ErrorAuth) {
+			return processor.Result{}, Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
+		}
+		if lease != nil && lease.hasAuthFailure() {
+			return processor.Result{}, Outcome{Kind: OutcomeAuthPaused, Reason: "core_auth_paused"}
 		}
 		if ctx.Err() != nil {
 			return processor.Result{}, h.contextOutcome(ctx)

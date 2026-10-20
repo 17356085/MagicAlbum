@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readNotificationStream, NotificationStreamError } from '../notificationStream'
 
 const unauthorized = vi.hoisted(() => vi.fn())
-vi.mock('../client', () => ({ handleCurrentTokenUnauthorized: unauthorized }))
+vi.mock('../client', () => ({ handleCurrentTokenUnauthorized: unauthorized, captureAuthGeneration: () => 5 }))
 
 function response(chunks: string[], beforeRead?: () => void): Response {
   const encoder = new TextEncoder()
@@ -62,6 +62,6 @@ describe('authenticated notification stream', () => {
   it('passes the captured token into the existing protected unauthorized handler', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
     await expect(readNotificationStream('owner-token', undefined, new AbortController().signal, vi.fn())).rejects.toMatchObject({ status: 401 })
-    expect(unauthorized).toHaveBeenCalledWith('owner-token')
+    expect(unauthorized).toHaveBeenCalledWith('owner-token', 5)
   })
 })

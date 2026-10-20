@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { InternalAxiosRequestConfig } from 'axios'
-import api from '@/api/client'
+import api, { captureAuthGeneration, handleCurrentTokenUnauthorized } from '@/api/client'
 
 const authState = vi.hoisted(() => ({
   currentToken: 'valid-user-token',
+  generation: 0,
   handleUnauthorized: vi.fn(),
 }))
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ handleUnauthorized: authState.handleUnauthorized }),
+  useAuthStore: () => ({ handleUnauthorized: authState.handleUnauthorized, getAuthGeneration: () => authState.generation }),
 }))
 vi.mock('@/utils/authStorage', () => ({
   getStoredAccessToken: () => authState.currentToken,
@@ -20,6 +21,7 @@ const originalAdapter = api.defaults.adapter
 afterEach(() => {
   api.defaults.adapter = originalAdapter
   authState.currentToken = 'valid-user-token'
+  authState.generation = 0
   authState.handleUnauthorized.mockClear()
   window.__authExpiredAlertShown = false
   vi.clearAllTimers()
@@ -27,6 +29,39 @@ afterEach(() => {
 })
 
 describe('API permission response', () => {
+  it('preserves an existing session when a replacement login rejects its credentials', async () => {
+    api.defaults.adapter = async (config) => { throw { config, response: { status: 401 } } }
+    await expect(api.post('/auth/login', { email: 'other@example.test', password: 'invalid' }))
+      .rejects.toMatchObject({ response: { status: 401 } })
+    expect(authState.handleUnauthorized).not.toHaveBeenCalled()
+  })
+  it('does not interrupt a newer login when an old request returns 401 before the token changes', async () => {
+    const alertMock = vi.fn()
+    vi.stubGlobal('alert', alertMock)
+    let capturedConfig: InternalAxiosRequestConfig | undefined
+    let rejectResponse: ((reason?: unknown) => void) | undefined
+    api.defaults.adapter = (config) => new Promise((_, reject) => {
+      capturedConfig = config
+      rejectResponse = reject
+    })
+    const request = api.get('/threads')
+    await vi.waitFor(() => expect(rejectResponse).toBeTypeOf('function'))
+    authState.generation += 1
+    rejectResponse?.({ config: capturedConfig, response: { status: 401 } })
+    await expect(request).rejects.toMatchObject({ response: { status: 401 } })
+    expect(authState.currentToken).toBe('valid-user-token')
+    expect(authState.handleUnauthorized).not.toHaveBeenCalled()
+    expect(alertMock).not.toHaveBeenCalled()
+  })
+
+  it('protects the captured native-stream login generation while allowing current expiry', () => {
+    const generation = captureAuthGeneration()
+    authState.generation += 1
+    expect(handleCurrentTokenUnauthorized('valid-user-token', generation)).toBe(false)
+    expect(authState.handleUnauthorized).not.toHaveBeenCalled()
+    handleCurrentTokenUnauthorized('valid-user-token', captureAuthGeneration())
+    expect(authState.handleUnauthorized).toHaveBeenCalledOnce()
+  })
   it('keeps the session when an authenticated user receives 403', async () => {
     const alertMock = vi.fn()
     vi.stubGlobal('alert', alertMock)

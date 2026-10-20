@@ -23,7 +23,9 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$ArtifactDirectory
+    [string]$ArtifactDirectory,
+
+    [switch]$RequireStageFixtures
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +49,7 @@ $script:Summary = [ordered]@{
     ArtifactDirectory = $null
     SourceDatabase = $null
     NotificationDatabase = $null
+    RequireStageFixtures = [bool]$RequireStageFixtures
     SourceDumpSha256 = $null
     SourceUploadFileCount = $null
     SourceUploadBytes = $null
@@ -539,7 +542,8 @@ function Get-RequiredBusinessTableSummary {
         [Parameter(Mandatory = $true)][object]$SourceCore,
         [Parameter(Mandatory = $true)][object]$RestoreCore,
         [Parameter(Mandatory = $true)][object]$SourceNotifications,
-        [Parameter(Mandatory = $true)][object]$RestoreNotifications
+        [Parameter(Mandatory = $true)][object]$RestoreNotifications,
+        [switch]$RequireStageFixtures
     )
 
     $sourceCoreTables = @{}
@@ -552,15 +556,30 @@ function Get-RequiredBusinessTableSummary {
     foreach ($table in @($RestoreNotifications.Tables)) { $restoreNotificationTables[$table.Name] = $table }
 
     $required = @(
-        [pscustomobject]@{ Label = 'users'; Database = 'core'; Table = 'users' },
-        [pscustomobject]@{ Label = 'threads'; Database = 'core'; Table = 'threads' },
-        [pscustomobject]@{ Label = 'posts (comments/replies)'; Database = 'core'; Table = 'posts' },
-        [pscustomobject]@{ Label = 'thread_bookmarks (favorites)'; Database = 'core'; Table = 'thread_bookmarks' },
-        [pscustomobject]@{ Label = 'thread_likes'; Database = 'core'; Table = 'thread_likes' },
-        [pscustomobject]@{ Label = 'post_likes'; Database = 'core'; Table = 'post_likes' },
-        [pscustomobject]@{ Label = 'content_reports'; Database = 'core'; Table = 'content_reports' },
-        [pscustomobject]@{ Label = 'notifications'; Database = 'notifications'; Table = 'notifications' }
+        [pscustomobject]@{ Label = 'users'; Database = 'core'; Table = 'users'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'threads'; Database = 'core'; Table = 'threads'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'posts (comments/replies)'; Database = 'core'; Table = 'posts'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'thread_bookmarks (favorites)'; Database = 'core'; Table = 'thread_bookmarks'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'thread_likes'; Database = 'core'; Table = 'thread_likes'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'post_likes'; Database = 'core'; Table = 'post_likes'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'content_reports'; Database = 'core'; Table = 'content_reports'; RequireNonEmpty = $false },
+        [pscustomobject]@{ Label = 'notifications'; Database = 'notifications'; Table = 'notifications'; RequireNonEmpty = $false }
     )
+    if ($RequireStageFixtures) {
+        $required += @(
+            [pscustomobject]@{ Label = 'ai_summary_task'; Database = 'core'; Table = 'ai_summary_task'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'ai_summary_attempt'; Database = 'core'; Table = 'ai_summary_attempt'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'ai_summary_budget'; Database = 'core'; Table = 'ai_summary_budget'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'ai_summary_request'; Database = 'core'; Table = 'ai_summary_request'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'community_state'; Database = 'core'; Table = 'community_state'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'community_admin_role'; Database = 'core'; Table = 'community_admin_role'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'community_moderator_scope'; Database = 'core'; Table = 'community_moderator_scope'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'community_posting_restriction'; Database = 'core'; Table = 'community_posting_restriction'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'community_audit'; Database = 'core'; Table = 'community_audit'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'notification_stream_cursor'; Database = 'notifications'; Table = 'notification_stream_cursor'; RequireNonEmpty = $true },
+            [pscustomobject]@{ Label = 'notification_stream_event'; Database = 'notifications'; Table = 'notification_stream_event'; RequireNonEmpty = $true }
+        )
+    }
     $summary = [System.Collections.Generic.List[object]]::new()
     foreach ($spec in $required) {
         $sourceTables = if ($spec.Database -eq 'core') { $sourceCoreTables } else { $sourceNotificationTables }
@@ -570,6 +589,9 @@ function Get-RequiredBusinessTableSummary {
         }
         $sourceTable = $sourceTables[$spec.Table]
         $restoreTable = $restoreTables[$spec.Table]
+        if ($spec.RequireNonEmpty -and ($sourceTable.Count -le 0 -or $restoreTable.Count -le 0)) {
+            throw "Required stage fixture table $($spec.Table) must contain nonempty rows in both snapshots."
+        }
         if ($sourceTable.Count -ne $restoreTable.Count -or $sourceTable.Sha256 -ne $restoreTable.Sha256) {
             throw "Required business table $($spec.Table) did not match after restore."
         }
@@ -580,6 +602,7 @@ function Get-RequiredBusinessTableSummary {
                 SourceCount = $sourceTable.Count
                 RestoreCount = $restoreTable.Count
                 Sha256 = $restoreTable.Sha256
+                RequiredNonEmpty = [bool]$spec.RequireNonEmpty
                 Match = $true
             })
     }
@@ -724,7 +747,7 @@ try {
     $preCoreComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceCoreSnapshot -RestoreSnapshot $restoreCorePreStart -Phase 'restore pre-start core database'
     $preNotificationComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceNotificationSnapshot -RestoreSnapshot $restoreNotificationPreStart -Phase 'restore pre-start notification database'
     $script:Summary.DatabaseComparisons = @($preCoreComparison, $preNotificationComparison)
-    $script:Summary.RequiredBusinessTables = @(Get-RequiredBusinessTableSummary -SourceCore $sourceCoreSnapshot -RestoreCore $restoreCorePreStart -SourceNotifications $sourceNotificationSnapshot -RestoreNotifications $restoreNotificationPreStart)
+    $script:Summary.RequiredBusinessTables = @(Get-RequiredBusinessTableSummary -SourceCore $sourceCoreSnapshot -RestoreCore $restoreCorePreStart -SourceNotifications $sourceNotificationSnapshot -RestoreNotifications $restoreNotificationPreStart -RequireStageFixtures:$RequireStageFixtures)
 
     $null = Invoke-Compose -Purpose 'Create stopped restore backend' -Project $RestoreProject -EnvironmentFile $restoreEnvPath -CommandArguments @('create', '--no-build', '--no-recreate', 'backend')
     $restoreContainers = @(Get-ProjectContainers -Project $RestoreProject)

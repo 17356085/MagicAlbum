@@ -180,6 +180,73 @@ class SummaryRuntimeGuards(unittest.TestCase):
         self.assertEqual(seen["request"][0:2], ("POST", "/api/exchanges/%2F/amq.default/publish"))
         self.assertTrue(seen["closed"])
 
+    def test_registration_retry_waits_for_fixed_window_and_reuses_payload(self):
+        class FakeResponse:
+            def __init__(self, status_code, body, headers=None):
+                self.status_code = status_code
+                self._body = body
+                self.headers = headers or {}
+
+            def json(self):
+                return self._body
+
+        acceptance = gate.SummaryAcceptance.__new__(gate.SummaryAcceptance)
+        acceptance.readback = {}
+        calls = []
+        responses = [
+            FakeResponse(429, {"error": "rate limited"}),
+            FakeResponse(201, {"id": 123}),
+        ]
+
+        def fake_api(method, path, **kwargs):
+            calls.append((method, path, kwargs["json"]))
+            response = responses.pop(0)
+            return response, response._body
+
+        acceptance._api_request = fake_api
+        acceptance.login_identity = lambda identity, label: identity
+        with patch.object(gate.time, "time", return_value=1000.0), patch.object(
+            gate.time, "monotonic", side_effect=[10.0, 212.0]
+        ), patch.object(gate.time, "sleep") as sleep:
+            result = acceptance.register_login("offline")
+
+        self.assertEqual(result.user_id, 123)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        chunks = [call.args[0] for call in sleep.call_args_list]
+        self.assertTrue(chunks)
+        self.assertLessEqual(max(chunks), gate.REGISTRATION_SLEEP_CHUNK_SECONDS)
+        self.assertAlmostEqual(sum(chunks), 202.0)
+        self.assertEqual(acceptance.readback["registrationWaits"][0]["retryAfterSeconds"], 202.0)
+        self.assertEqual(acceptance.readback["registrationWaits"][0]["waitSeconds"], 202.0)
+
+        header_response = FakeResponse(429, {}, {"Retry-After": "7"})
+        self.assertEqual(gate.SummaryAcceptance._registration_retry_seconds(header_response, now=1000.0), 7.0)
+
+    def test_registration_retry_surfaces_second_fixed_window_429_without_looping(self):
+        class FakeResponse:
+            status_code = 429
+            headers = {"Retry-After": "0"}
+
+            @staticmethod
+            def json():
+                return {"error": "rate limited"}
+
+        acceptance = gate.SummaryAcceptance.__new__(gate.SummaryAcceptance)
+        acceptance.readback = {}
+        calls = []
+
+        def fake_api(method, path, **kwargs):
+            calls.append(kwargs["json"])
+            return FakeResponse(), {"error": "rate limited"}
+
+        acceptance._api_request = fake_api
+        with patch.object(gate.time, "monotonic", return_value=10.0), patch.object(gate.time, "sleep"):
+            with self.assertRaisesRegex(gate.GateFailure, "after one retry"):
+                acceptance.register_login("offline-429")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+
 
 if __name__ == "__main__":
     unittest.main()

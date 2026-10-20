@@ -1,4 +1,4 @@
-import client, { handleCurrentTokenUnauthorized } from './client'
+import client, { captureAuthGeneration, handleCurrentTokenUnauthorized } from './client'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { Id } from '@/types'
 
@@ -309,6 +309,7 @@ export function createChatStream(
     let sawDoneMarker = false
     try {
       const token = getStoredAccessToken()
+      const generation = captureAuthGeneration()
       if (hasRealToken(token)) {
         headers.Authorization = `Bearer ${token}`
       }
@@ -320,7 +321,7 @@ export function createChatStream(
         signal: controller.signal,
       })
       if (!response.ok) {
-        if (response.status === 401) handleCurrentTokenUnauthorized(token)
+        if (response.status === 401) handleCurrentTokenUnauthorized(token, generation)
         throw new Error('AI 请求失败')
       }
 

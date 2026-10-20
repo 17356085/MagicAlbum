@@ -232,4 +232,43 @@ func TestResultResponseLossCanBeResolvedByTerminalClaim(t *testing.T) {
 	}
 }
 
+func TestAuthResponsesAreClassifiedWithoutLeakingResponseBody(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			client, closeServer := testClient(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(status)
+				_, _ = io.WriteString(writer, `{"error":"secret-token-and-body"}`)
+			}), time.Second)
+			defer closeServer()
+
+			result := processor.Result{Bytes: []byte("result"), ContentType: "image/png", Width: 1, Height: 1, SHA256: digest([]byte("result")), ProcessorVersion: 1}
+			calls := []struct {
+				name string
+				call func() error
+			}{
+				{name: "claim", call: func() error { _, err := client.Claim(context.Background(), testEnvelope()); return err }},
+				{name: "input", call: func() error { _, err := client.GetInput(context.Background(), testJob, 1, "lease-token"); return err }},
+				{name: "renew", call: func() error { _, err := client.Renew(context.Background(), testJob, 1, "lease-token"); return err }},
+				{name: "result", call: func() error {
+					return client.SubmitResult(context.Background(), testJob, 1, "lease-token", result, digest([]byte("original")))
+				}},
+				{name: "failure", call: func() error {
+					return client.SubmitFailure(context.Background(), testJob, 1, "lease-token", "TIMEOUT")
+				}},
+			}
+			for _, call := range calls {
+				t.Run(call.name, func(t *testing.T) {
+					err := call.call()
+					if err == nil || !IsKind(err, ErrorAuth) {
+						t.Fatalf("error=%v", err)
+					}
+					if strings.Contains(err.Error(), "secret-token") || strings.Contains(err.Error(), "body") {
+						t.Fatalf("auth error leaked response data: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }

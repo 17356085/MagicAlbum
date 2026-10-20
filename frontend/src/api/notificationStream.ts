@@ -1,4 +1,4 @@
-import { handleCurrentTokenUnauthorized } from './client'
+import { captureAuthGeneration, handleCurrentTokenUnauthorized } from './client'
 import { getStoredAccessToken } from '@/utils/authStorage'
 
 export interface NotificationChange {
@@ -18,11 +18,12 @@ export async function readNotificationStream(
   signal: AbortSignal,
   onChange: (change: NotificationChange) => void,
 ): Promise<void> {
+  const generation = captureAuthGeneration()
   const headers: Record<string, string> = { Accept: 'text/event-stream', Authorization: `Bearer ${token}` }
   if (cursor !== undefined) headers['Last-Event-ID'] = cursor
   const base = String(import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
   const response = await fetch(`${base}/notifications/stream`, { headers, signal, cache: 'no-store', credentials: 'omit' })
-  if (response.status === 401) handleCurrentTokenUnauthorized(token)
+  if (response.status === 401) handleCurrentTokenUnauthorized(token, generation)
   if (!response.ok) throw new NotificationStreamError(response.status)
   if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body) {
     throw new NotificationStreamError(0)

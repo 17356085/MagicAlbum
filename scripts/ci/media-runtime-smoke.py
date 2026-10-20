@@ -992,6 +992,84 @@ class Acceptance:
         # treated as proof of AWS ACL/private-bucket authorization.
         if not str(self.success_status["url"]).startswith(self.s3):
             raise GateFailure("original URL did not point at the isolated S3Mock fixture")
+        self.worker_auth_pause_recovery()
+
+    def worker_auth_pause_recovery(self) -> None:
+        """Wrong worker credentials pause consumption; repair reuses durable intent."""
+        self.runtime.compose("stop", "media-worker", timeout=90)
+        asset = self.upload(self.owner)
+        asset_id = str(asset["assetId"])
+        original = self.sql_job(asset_id)
+        try:
+            # Override only this worker recreation. The backend and private
+            # generated environment retain their original, matching credential.
+            self.runtime.compose(
+                "up", "-d", "--no-deps", "--force-recreate", "media-worker", timeout=180,
+                extra_env={"MEDIA_INTERNAL_SERVICE_TOKEN": secrets.token_hex(32)},
+            )
+            self.refresh_urls()
+            worker = f"http://127.0.0.1:{self.runtime.ports['media-worker']}"
+            self.runtime.wait_http(worker + "/live", {200}, timeout=60)
+            deadline = time.monotonic() + 60
+            paused_events = 0
+            while time.monotonic() < deadline:
+                paused_events = self.worker_auth_pause_events()
+                if paused_events:
+                    break
+                time.sleep(0.5)
+            if paused_events != 1:
+                raise GateFailure("worker did not record exactly one credential pause")
+            self.runtime.wait_http(worker + "/ready", {503}, timeout=15)
+            row = self.sql_job(asset_id)
+            if row["status"] != "PENDING" or row["attempts"] != 0 or row["output_key"]:
+                raise GateFailure("worker credential failure mutated the unclaimed business job")
+            # Longer than the retry queue TTL, so ordinary retry behavior would
+            # have redelivered the message. The paused worker must stay detached.
+            time.sleep(12)
+            queue_response = self.rabbit_request("GET", "/api/queues/%2F/media.process.v1")
+            if queue_response.status_code != 200:
+                raise GateFailure("paused process queue readback failed")
+            queue = queue_response.json()
+            if queue.get("consumers") != 0 or queue.get("messages_ready", 0) < 1:
+                raise GateFailure("credential-paused worker retained a consumer or lost durable work")
+            if self.worker_auth_pause_events() != 1 or self.sql_job(asset_id) != row:
+                raise GateFailure("credential-paused worker repeated handling or changed SQL state")
+            self.runtime.wait_http(worker + "/ready", {503}, timeout=5)
+            self.runtime.wait_http(worker + "/live", {200}, timeout=5)
+        finally:
+            self.runtime.compose("up", "-d", "--no-deps", "--force-recreate", "media-worker", timeout=180)
+            self.refresh_urls()
+        self.runtime.wait_http(f"http://127.0.0.1:{self.runtime.ports['media-worker']}/ready", {200}, timeout=90)
+        final = self.poll_succeeded(self.owner, asset_id)
+        completed = self.sql_job(asset_id)
+        if completed["job_id"] != original["job_id"] or completed["attempts"] != 1 or completed["status"] != "SUCCEEDED":
+            raise GateFailure("credential repair did not recover the original job exactly once")
+        if self.fetch_object(str(final["url"]), self.fixture_sha) != self.fixture:
+            raise GateFailure("credential recovery changed original image bytes")
+        preview = self.fetch_object(str(final["previewUrl"]), str(completed["output_sha256"]))
+        (self.runtime.artifact_dir / "worker-auth-pause.json").write_text(json.dumps({
+            "assetId": asset_id, "jobId": completed["job_id"],
+            "pausedReadyStatus": 503, "pausedLiveStatus": 200,
+            "pauseEvents": paused_events, "observedPauseSeconds": 12, "pausedQueueConsumers": 0,
+            "pausedJobAttempts": 0, "recoveredJobAttempts": completed["attempts"],
+            "recoveredStatus": completed["status"], "originalSha256": self.fixture_sha,
+            "previewSha256": completed["output_sha256"], "previewBytes": len(preview),
+        }, indent=2) + "\n", encoding="utf-8")
+
+    def worker_auth_pause_events(self) -> int:
+        logs = self.runtime.compose("logs", "--no-color", "--tail", "100", "media-worker", timeout=30)
+        count = 0
+        for line in logs.splitlines():
+            start = line.find("{")
+            if start < 0:
+                continue
+            try:
+                event = json.loads(line[start:])
+            except ValueError:
+                continue
+            if event.get("event") == "consumer_paused" and event.get("category") == "core_auth_paused":
+                count += 1
+        return count
 
     def permanent_failure_keeps_original(self) -> None:
         content = make_apng()

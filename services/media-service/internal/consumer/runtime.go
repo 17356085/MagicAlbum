@@ -17,6 +17,8 @@ type Runtime struct {
 	RetryPause time.Duration
 }
 
+var errCoreAuthPaused = errors.New("core_auth_paused")
+
 func (r *Runtime) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -58,6 +60,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 		err = r.consumeSession(ctx, session, deliveries)
 		r.Health.SetConsuming(false)
 		_ = session.Close()
+		if errors.Is(err, errCoreAuthPaused) {
+			r.log("consumer_paused", "core_auth_paused", 0)
+			<-ctx.Done()
+			return nil
+		}
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -110,6 +117,10 @@ func (r *Runtime) consumeSession(ctx context.Context, session Session, deliverie
 				if err := r.quarantineOrRequeue(ctx, session, &delivery, outcome.Reason); err != nil {
 					return err
 				}
+			case OutcomeAuthPaused:
+				_ = delivery.Nack(true)
+				requeuePending(deliveries)
+				return errCoreAuthPaused
 			default:
 				_ = delivery.Nack(true)
 				return errors.New("unknown handler outcome")

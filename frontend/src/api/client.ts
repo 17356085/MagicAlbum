@@ -8,6 +8,11 @@ const api = axios.create({
   timeout: 10000,
   withCredentials: false,
 })
+const requestAuthGenerations = new WeakMap<InternalAxiosRequestConfig, number>()
+
+export function captureAuthGeneration(): number | undefined {
+  try { return useAuthStore().getAuthGeneration() } catch { return undefined }
+}
 
 function createRequestId(): string {
   try {
@@ -35,14 +40,17 @@ function getRequestBearerToken(error: AxiosError): string {
  * current in storage. Native fetch callers (for example the AI SSE stream)
  * use the same bridge as Axios responses.
  */
-export function handleCurrentTokenUnauthorized(requestToken: string): boolean {
+export function handleCurrentTokenUnauthorized(requestToken: string, requestGeneration?: number): boolean {
   const currentToken = getStoredAccessToken()
   if (!hasRealToken(currentToken) || !hasRealToken(requestToken) || requestToken !== currentToken) {
     return false
   }
 
   try {
-    const result = useAuthStore().handleUnauthorized(requestToken)
+    const auth = useAuthStore()
+    // A new login invalidates old requests before its replacement token arrives.
+    if (requestGeneration !== undefined && auth.getAuthGeneration() !== requestGeneration) return false
+    const result = auth.handleUnauthorized(requestToken)
     return result !== false
   } catch (_) {
     return false
@@ -50,6 +58,8 @@ export function handleCurrentTokenUnauthorized(requestToken: string): boolean {
 }
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const generation = captureAuthGeneration()
+  if (generation !== undefined) requestAuthGenerations.set(config, generation)
   config.headers['X-Request-Id'] = config.headers['X-Request-Id'] || createRequestId()
   const existingAuthorization = typeof config.headers.get === 'function'
     ? config.headers.get('Authorization')
@@ -72,13 +82,15 @@ api.interceptors.response.use(
     if (status === 401) {
       try {
         const requestToken = getRequestBearerToken(error)
-        const sameAuthenticatedSession = handleCurrentTokenUnauthorized(requestToken)
         const requestUrl = String(error?.config?.url || '')
         const isAuthRequest =
           /\/auth\/login\b/.test(requestUrl) ||
           /\/users\/register\b/.test(requestUrl)
+        const generation = error.config ? requestAuthGenerations.get(error.config) : undefined
+        // A credential rejection describes this login attempt, not an existing bearer session.
+        const sameAuthenticatedSession = !isAuthRequest && handleCurrentTokenUnauthorized(requestToken, generation)
 
-        if (sameAuthenticatedSession && !isAuthRequest && !window.__authExpiredAlertShown) {
+        if (sameAuthenticatedSession && !window.__authExpiredAlertShown) {
           window.__authExpiredAlertShown = true
           alert('登录已过期，请重新登录')
           setTimeout(() => {

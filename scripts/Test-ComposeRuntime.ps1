@@ -3,11 +3,12 @@
 param(
     [string]$RunId = ([Guid]::NewGuid().ToString('N').Substring(0, 10)),
     [string]$ArtifactDirectory = '',
-    [string]$PythonExecutable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/.venv/Scripts/python.exe'),
+    [string]$PythonExecutable = '',
     [string]$BrowserChannel = 'chrome',
     [ValidateSet('Standard', 'Constrained')]
     [string]$ResourceMode = 'Standard',
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$IncludeStageFixtures
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,6 +16,15 @@ if ($ResourceMode -eq 'Constrained' -and -not $NoBuild) {
     throw 'Constrained resource mode requires -NoBuild because the bounded memory budget excludes image build peaks'
 }
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
+$runtimeHostModulePath = Join-Path $PSScriptRoot 'lib/RuntimeHost.psm1'
+if (-not (Test-Path -LiteralPath $runtimeHostModulePath -PathType Leaf)) { throw 'Runtime host helper module is missing' }
+Import-Module -Name $runtimeHostModulePath -Force
+if ($IncludeStageFixtures) {
+    Import-Module -Name (Join-Path $PSScriptRoot 'lib/StageRestore.psm1') -Force
+}
+if ([string]::IsNullOrWhiteSpace($PythonExecutable)) {
+    $PythonExecutable = Get-RuntimeDefaultPythonExecutable -RepositoryRoot $runtimeRoot
+}
 if ($RunId -notmatch '^[a-f0-9]{10}$') { throw 'RunId must contain exactly ten lowercase hexadecimal characters' }
 if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) {
     $ArtifactDirectory = Join-Path (Join-Path $runtimeRoot 'outputs/m0-compose') $RunId
@@ -40,7 +50,7 @@ $checks = [System.Collections.Generic.List[object]]::new()
 $ownedProjects = [System.Collections.Generic.List[object]]::new()
 $succeeded = $false
 $snapshot = @{}
-$minimumFreeCommitKiB = if ($ResourceMode -eq 'Constrained') { [long](2816MB / 1KB) } else { [long](4GB / 1KB) }
+$minimumHostMemoryKiB = if ($ResourceMode -eq 'Constrained') { [long](2816MB / 1KB) } else { [long](4GB / 1KB) }
 $containerBudgetMiB = if ($ResourceMode -eq 'Constrained') { 1792 } else { $null }
 
 function New-ComposeSecret {
@@ -125,23 +135,31 @@ foreach ($project in @($sourceProject, $restoreProject)) { Assert-ProjectUnused 
 }))
 $portKeys = @('MYSQL', 'REDIS', 'RABBITMQ', 'RABBITMQ_MANAGEMENT', 'BACKEND', 'NOTIFICATION', 'GATEWAY', 'FRONTEND')
 $ports = @(33306, 36379, 35673, 35674, 38080, 38081, 39090, 35173, 43306, 46379, 45673, 45674, 48080, 48081, 49090, 45173)
-foreach ($port in $ports) {
-    if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Verification port $port is occupied" }
-}
-$hostMemory = Get-CimInstance Win32_OperatingSystem
+Assert-RuntimePortsAvailable -Ports $ports
+$hostMemory = Get-RuntimeHostMemorySnapshot
 [IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'host-memory-before.json'), (ConvertTo-Json @{
     ResourceMode = $ResourceMode
-    MinimumFreeCommitKiB = $minimumFreeCommitKiB
+    MinimumFreeCommitKiB = if ($hostMemory.Platform -eq 'Windows') { $minimumHostMemoryKiB } else { $null }
+    MinimumMemoryMetricKiB = $minimumHostMemoryKiB
     ContainerBudgetMiB = $containerBudgetMiB
-    FreePhysicalKiB = $hostMemory.FreePhysicalMemory
-    FreeCommitKiB = $hostMemory.FreeVirtualMemory
-    TotalCommitKiB = $hostMemory.TotalVirtualMemorySize
+    FreePhysicalKiB = $hostMemory.FreePhysicalKiB
+    FreeCommitKiB = $hostMemory.FreeCommitKiB
+    TotalCommitKiB = $hostMemory.TotalCommitKiB
+    MemoryMetric = $hostMemory.MemoryMetric
+    MemoryMetricKiB = $hostMemory.MemoryMetricKiB
+    MemAvailableKiB = $hostMemory.MemAvailableKiB
+    SwapFreeKiB = $hostMemory.SwapFreeKiB
 }))
-if ([long]$hostMemory.FreeVirtualMemory -lt $minimumFreeCommitKiB) {
-    if ($ResourceMode -eq 'Constrained') {
-        throw 'At least 2816 MiB of available host commit memory is required before starting the constrained isolated stack'
+if (-not (Test-RuntimeHostMemoryThreshold -Snapshot $hostMemory -MinimumKiB $minimumHostMemoryKiB)) {
+    $memoryDescription = if ($hostMemory.Platform -eq 'Linux') {
+        'available MemAvailable+SwapFree memory'
+    } else {
+        'available host commit memory'
     }
-    throw 'At least 4 GiB of available host commit memory is required before starting the isolated stack'
+    if ($ResourceMode -eq 'Constrained') {
+        throw "At least 2816 MiB of $memoryDescription is required before starting the constrained isolated stack"
+    }
+    throw "At least 4 GiB of $memoryDescription is required before starting the isolated stack"
 }
 
 try {
@@ -319,15 +337,7 @@ services:
         sectionId = $sections.items[0].id; title = "M0 backup $RunId"; content = 'Persisted restore verification'
     } $login.accessToken 201
     $null = Send-VerificationRequest $sourceUrl POST "/threads/$($thread.id)/bookmark" $null $login.accessToken
-    Add-Type -AssemblyName System.Drawing
-    $bitmap = [Drawing.Bitmap]::new(2, 2)
-    $imageStream = [IO.MemoryStream]::new()
-    try {
-        $bitmap.SetPixel(0, 0, [Drawing.Color]::Red)
-        $bitmap.SetPixel(1, 1, [Drawing.Color]::Blue)
-        $bitmap.Save($imageStream, [Drawing.Imaging.ImageFormat]::Png)
-        $imageBytes = $imageStream.ToArray()
-    } finally { $imageStream.Dispose(); $bitmap.Dispose() }
+    $imageBytes = Get-RuntimePngFixtureBytes
     $client = [Net.Http.HttpClient]::new()
     $multipart = [Net.Http.MultipartFormDataContent]::new()
     try {
@@ -347,6 +357,29 @@ services:
     $null = Send-VerificationRequest $sourceUrl PATCH "/threads/$($thread.id)" @{
         title = $thread.title; content = "Persisted restore verification ![M0]($($image.url))"
     } $login.accessToken
+    $stageFixture = $null
+    if ($IncludeStageFixtures) {
+        # Bootstrap only after this isolated fixture account exists. Restart alone
+        # cannot apply changed Compose environment values; recreate this backend.
+        foreach ($environmentFile in @($sourceEnvironment, $restoreEnvironment)) {
+            $lines = [IO.File]::ReadAllLines($environmentFile) | ForEach-Object {
+                if ($_.StartsWith('APP_ADMIN_EMAIL=')) { "APP_ADMIN_EMAIL=$accountEmail" } else { $_ }
+            }
+            [IO.File]::WriteAllLines($environmentFile, [string[]]$lines)
+        }
+        Invoke-VerificationCompose $sourceProject $sourceEnvironment @('up', '-d', '--no-deps', '--force-recreate', '--wait', '--wait-timeout', '240', '--no-build', 'backend')
+        $otherEmail = "restore-other-$RunId@example.test"
+        $otherPassword = 'Aa1!' + (New-ComposeSecret)
+        $other = Send-VerificationRequest $sourceUrl POST '/users/register' @{
+            username = "restore-other-$RunId"; email = $otherEmail; password = $otherPassword
+            phone = ('139' + (Get-Random -Minimum 10000000 -Maximum 99999999))
+        } '' 201
+        $otherLogin = Send-VerificationRequest $sourceUrl POST '/auth/login' @{email = $otherEmail; password = $otherPassword}
+        $stageFixture = New-StageRestoreFixture -BaseUrl $sourceUrl -Token $login.accessToken -AccountId $account.id `
+            -ThreadId $thread.id -SectionId $sections.items[0].id -RunId $RunId `
+            -OtherToken $otherLogin.accessToken -OtherUserId $other.id
+        Confirm-Check $true 'Stage permissions, summary ledger and notification fixtures persist through APIs'
+    }
     [IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'fixture.json'), (ConvertTo-Json @{
         ThreadId = $thread.id; AccountId = $account.id; ImageUrl = $image.url
     }))
@@ -364,7 +397,7 @@ services:
     $ownedProjects.Add(@{Name = $restoreProject; Environment = $restoreEnvironment})
     & (Join-Path $PSScriptRoot 'Test-ComposeBackup.ps1') -SourceProject $sourceProject -RestoreProject $restoreProject `
         -SourceEnvironmentFile $sourceEnvironment -RestoreEnvironmentFile $restoreEnvironment `
-        -ComposeOverrideFile $overrideFile -ArtifactDirectory (Join-Path $ArtifactDirectory 'backup')
+        -ComposeOverrideFile $overrideFile -ArtifactDirectory (Join-Path $ArtifactDirectory 'backup') -RequireStageFixtures:$IncludeStageFixtures
     Confirm-Check $true 'Independent database and uploads restore verification completed'
     $restoredThread = Send-VerificationRequest $restoreUrl GET "/threads/$($thread.id)" $null
     Confirm-Check ($restoredThread.title -eq $thread.title -and $restoredThread.content.Contains($image.url)) 'Restored application reads original thread and image reference'
@@ -375,6 +408,13 @@ services:
     $afterImage = Invoke-WebRequest "$restoreUrl$($image.url)" -TimeoutSec 15
     Confirm-Check (($afterImage.Headers['Content-Type'] -like 'image/*') -and
         [Linq.Enumerable]::SequenceEqual([byte[]]$afterImage.Content, $imageBytes)) 'Restored application serves the exact uploaded image bytes'
+    if ($IncludeStageFixtures) {
+        $restoredOtherLogin = Send-VerificationRequest $restoreUrl POST '/auth/login' @{email = $otherEmail; password = $otherPassword}
+        $stageReadback = Assert-StageRestoreFixture -BaseUrl $restoreUrl -Token $restoredLogin.accessToken `
+            -Fixture $stageFixture -OtherToken $restoredOtherLogin.accessToken
+        [IO.File]::WriteAllText((Join-Path $ArtifactDirectory 'stage-restore-readback.json'), (ConvertTo-Json $stageReadback -Depth 10))
+        Confirm-Check $true 'Restored permissions, summary ledger and notification fixtures match API readback'
+    }
     $succeeded = $true
 } finally {
     $cleanupErrors = [System.Collections.Generic.List[string]]::new()

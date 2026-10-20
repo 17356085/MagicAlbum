@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+from email.utils import parsedate_to_datetime
 import importlib.util
 import json
+import math
 import re
 import secrets
 import sys
@@ -45,6 +47,10 @@ API_ROOT = "/api/v1"
 FIXTURE_PRIVATE_PORT = 8088
 FIXTURE_IMAGE = "python:3.13-alpine"
 FIXTURE_MODES = ("normal", "delay", "rate-limit-first", "upstream", "auth", "invalid", "no-usage", "empty", "oversize")
+REGISTRATION_WINDOW_SECONDS = 600
+REGISTRATION_RETRY_SKEW_SECONDS = 2.0
+REGISTRATION_MAX_RETRIES = 1
+REGISTRATION_SLEEP_CHUNK_SECONDS = 30.0
 PLANNED_API_CASES = (
     "auth-and-explicit-only",
     "normal-and-usage-readback",
@@ -232,7 +238,94 @@ class SummaryAcceptance(BaseAcceptance):
         self.section_id: int | None = None
         self.thread_id: int | None = None
         self.summary_actors: dict[str, Identity] = {}
-        self.readback: dict[str, Any] = {"quotaWaits": [], "tasks": {}}
+        self.readback: dict[str, Any] = {"quotaWaits": [], "registrationWaits": [], "tasks": {}}
+
+    @staticmethod
+    def _registration_retry_seconds(response: Any, now: float | None = None) -> float:
+        """Return a bounded registration retry delay without exposing response data.
+
+        The registration limiter uses fixed epoch windows and does not emit a
+        Retry-After header today.  Honor a valid header when one is present,
+        while falling back to the next fixed-window boundary plus a small
+        skew so the retry cannot land in the old bucket.
+        """
+
+        headers = getattr(response, "headers", None) or {}
+        raw_retry_after = headers.get("Retry-After")
+        if raw_retry_after is not None:
+            raw_retry_after = str(raw_retry_after).strip()
+            try:
+                delay = float(raw_retry_after)
+            except (TypeError, ValueError):
+                delay = math.nan
+            if math.isfinite(delay) and delay >= 0:
+                return delay
+            try:
+                retry_at = parsedate_to_datetime(raw_retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=dt.timezone.utc)
+                current = time.time() if now is None else float(now)
+                delay = retry_at.timestamp() - current
+                if math.isfinite(delay):
+                    return max(0.0, delay)
+            except (TypeError, ValueError, OverflowError):
+                pass
+
+        current = time.time() if now is None else float(now)
+        next_boundary = (int(current) // REGISTRATION_WINDOW_SECONDS + 1) * REGISTRATION_WINDOW_SECONDS
+        return max(0.0, next_boundary + REGISTRATION_RETRY_SKEW_SECONDS - current)
+
+    @staticmethod
+    def _sleep_registration_retry(delay: float) -> float:
+        started = time.monotonic()
+        remaining = max(0.0, float(delay))
+        while remaining > 0:
+            chunk = min(REGISTRATION_SLEEP_CHUNK_SECONDS, remaining)
+            time.sleep(chunk)
+            remaining -= chunk
+        return round(max(0.0, time.monotonic() - started), 3)
+
+    def register_login(self, label: str) -> Identity:
+        """Register once, waiting for the fixed limiter window after one 429.
+
+        The generated payload is kept byte-for-byte equivalent across the
+        retry.  A second 429 is surfaced as a gate failure so registration
+        throttling cannot be hidden by an unbounded loop.
+        """
+
+        stamp = secrets.token_hex(5)
+        username = f"m4_{label}_{stamp}"
+        email = f"{username}@example.test"
+        phone = "1" + str(secrets.randbelow(10**10)).zfill(10)
+        password = "M4-runtime-" + secrets.token_urlsafe(18)
+        payload = {"username": username, "email": email, "phone": phone, "password": password}
+        retries = 0
+        while True:
+            response, body = self._api_request("POST", "/users/register", json=payload)
+            if response.status_code != 429:
+                self._status(response, 201, f"{label} registration")
+                break
+            if retries >= REGISTRATION_MAX_RETRIES:
+                raise GateFailure(f"{label} registration returned status 429 after one retry")
+            planned = self._registration_retry_seconds(response)
+            if planned > REGISTRATION_WINDOW_SECONDS + REGISTRATION_RETRY_SKEW_SECONDS:
+                raise GateFailure("registration Retry-After exceeded the bounded acceptance window")
+            print(f"Registration throttled; waiting {planned:.1f}s for the existing fixed window", flush=True)
+            wait_record = {
+                "label": label,
+                "retryAfterSeconds": round(planned, 3),
+                "waitSeconds": 0.0,
+                "retried": True,
+            }
+            self.readback.setdefault("registrationWaits", []).append(wait_record)
+            wait_record["waitSeconds"] = self._sleep_registration_retry(planned)
+            retries += 1
+
+        created = self._dict(body, f"{label} registration")
+        user_id = created.get("id")
+        if not isinstance(user_id, int):
+            raise GateFailure(f"{label} registration did not return an integer id")
+        return self.login_identity(Identity(username, email, phone, password, user_id, "", created), label)
 
     def refresh_urls(self) -> None:
         super().refresh_urls()

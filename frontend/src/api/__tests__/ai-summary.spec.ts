@@ -14,6 +14,7 @@ vi.mock('../client', () => ({
     post: vi.fn(),
   },
   handleCurrentTokenUnauthorized: vi.fn(),
+  captureAuthGeneration: vi.fn(() => 0),
 }))
 
 const completeSummary = {

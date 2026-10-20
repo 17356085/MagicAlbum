@@ -15,6 +15,18 @@ SPEC.loader.exec_module(gate)
 
 
 class RuntimeGuardTests(unittest.TestCase):
+    def test_auth_pause_log_evidence_uses_only_the_fixed_parsed_event(self):
+        acceptance = gate.Acceptance.__new__(gate.Acceptance)
+        acceptance.runtime = MagicMock()
+        acceptance.runtime.compose.return_value = '\n'.join([
+            'worker | {"event":"job_handled","category":"core_auth_paused"}',
+            'worker | {"event":"consumer_paused","category":"core_auth_paused"}',
+            'worker | {"event":"consumer_paused","category":"other"}',
+            'malformed {not-json}',
+        ])
+        self.assertEqual(acceptance.worker_auth_pause_events(), 1)
+        acceptance.runtime.compose.assert_called_once_with('logs', '--no-color', '--tail', '100', 'media-worker', timeout=30)
+
     def setUp(self):
         parent = gate.ROOT_DIR / "outputs" / "m3-gate-unit"
         parent.mkdir(parents=True, exist_ok=True)
