@@ -1,16 +1,43 @@
 {
   "version": 1,
   "domainRoots": {
-    "identity": ["auth", "user"],
-    "content": ["posts", "sections", "tags", "threads"],
-    "interaction": ["bookmarks"],
-    "notifications": ["notifications"],
-    "storage": ["storage"],
-    "ai": ["ai"],
-    "governance": ["admin", "moderation", "governance"],
-    "infrastructure": ["bootstrap", "common", "config"]
+    "identity": [
+      "auth",
+      "user"
+    ],
+    "content": [
+      "posts",
+      "sections",
+      "tags",
+      "threads"
+    ],
+    "interaction": [
+      "bookmarks"
+    ],
+    "notifications": [
+      "notifications"
+    ],
+    "storage": [
+      "storage"
+    ],
+    "ai": [
+      "ai"
+    ],
+    "governance": [
+      "admin",
+      "moderation",
+      "governance"
+    ],
+    "infrastructure": [
+      "bootstrap",
+      "common",
+      "config"
+    ]
   },
-  "guardedLayers": ["entity", "repo"],
+  "guardedLayers": [
+    "entity",
+    "repo"
+  ],
   "allowedCrossDomainDependencies": [
     {
       "source": "backend/src/main/java/com/example/demo/governance/repo/SectionGovernanceRepository.java",
@@ -39,14 +66,6 @@
     {
       "source": "backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java",
       "target": "com.example.demo.user.repo.UserRepository"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/ai/controller/AiController.java",
-      "target": "com.example.demo.threads.entity.Thread"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/ai/controller/AiController.java",
-      "target": "com.example.demo.threads.repo.ThreadRepository"
     },
     {
       "source": "backend/src/main/java/com/example/demo/auth/service/apple/AppleOAuthHandler.java",

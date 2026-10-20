@@ -156,7 +156,7 @@ class InteractionsConcurrencyIT {
         threadService.update(actorId, threadId, update);
         Thread edited = threadRepository.findById(threadId).orElseThrow();
         assertThat(edited.getSummary()).isNull();
-        assertThat(edited.getSummaryStatus()).isEqualTo("PENDING");
+        assertThat(edited.getSummaryStatus()).isEqualTo("IDLE");
         assertThat(edited.getSummaryOwner()).isNull();
         assertThat(edited.getSummaryLeaseUntil()).isNull();
         assertThat(edited.getSummaryAttempts()).isZero();

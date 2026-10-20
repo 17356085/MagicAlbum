@@ -1,21 +1,56 @@
 import client, { handleCurrentTokenUnauthorized } from './client'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { Id } from '@/types'
-import type { AxiosResponse } from 'axios'
 
 export interface AiChatMessage {
   role: string
   content: string
 }
 
-export interface AiSummaryData {
-  summary?: string
-  status?: string
+export type AiSummaryStatus =
+  | 'IDLE'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'SUPERSEDED'
+
+export interface AiSummary {
+  threadId: Id
+  taskId: string | null
+  contentVersion: number
+  taskContentVersion: number | null
+  status: AiSummaryStatus
+  summary: string
+  canManage: boolean
+  attempts: number
+  errorCode: string | null
+  provider: string | null
+  model: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  usageEstimated: boolean
+  chargedTokens: number
+  requestId: string | null
+  updatedAt: string | null
 }
 
-export interface AiSummaryResponse {
-  data?: AiSummaryData
-  [key: string]: unknown
+// Keep the old names available to callers while making the direct response
+// shape explicit at the API boundary.
+export type AiSummaryData = AiSummary
+export type AiSummaryResponse = AiSummary
+
+export interface SummaryRequestOptions {
+  key?: string
+  signal?: AbortSignal
+}
+
+export class AiSummaryResponseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AiSummaryResponseError'
+  }
 }
 
 type ChatStreamMessageHandler = (data: unknown) => void
@@ -32,12 +67,205 @@ type SseEvent = {
   data: string
 }
 
-export function getSummary(threadId: Id): Promise<AxiosResponse<AiSummaryResponse>> {
-  return client.get(`/ai/summary/${threadId}`)
+export async function getSummary(threadId: Id, signal?: AbortSignal): Promise<AiSummary> {
+  const endpoint = `/ai/summary/${encodeURIComponent(String(threadId))}`
+  const response = signal
+    ? await client.get(endpoint, { signal })
+    : await client.get(endpoint)
+  return decodeAiSummary(response.data, endpoint)
 }
 
-export function triggerSummary(threadId: Id, force = false): Promise<AxiosResponse<unknown>> {
-  return client.post(`/ai/summary/${threadId}?force=${force}`)
+export function triggerSummary(
+  threadId: Id,
+  force?: boolean,
+  key?: string,
+  signal?: AbortSignal,
+): Promise<AiSummary>
+export function triggerSummary(
+  threadId: Id,
+  force?: boolean,
+  options?: SummaryRequestOptions,
+): Promise<AiSummary>
+export async function triggerSummary(
+  threadId: Id,
+  force = false,
+  keyOrOptions?: string | SummaryRequestOptions,
+  signal?: AbortSignal,
+): Promise<AiSummary> {
+  const options = normalizeSummaryRequestOptions(keyOrOptions, signal)
+  const idempotencyKey = options.key ?? createSummaryRequestKey()
+  if (!isUuidV4(idempotencyKey)) {
+    throw new Error('摘要请求幂等键格式无效')
+  }
+
+  const endpoint = `/ai/summary/${encodeURIComponent(String(threadId))}?force=${force}`
+  const config = {
+    headers: { 'Idempotency-Key': idempotencyKey },
+    ...(options.signal ? { signal: options.signal } : {}),
+  }
+  const response = await client.post(endpoint, undefined, config)
+  return decodeAiSummary(response.data, endpoint)
+}
+
+export async function getSummaryTask(taskId: string, signal?: AbortSignal): Promise<AiSummary> {
+  const normalizedTaskId = String(taskId || '').trim()
+  if (!normalizedTaskId) throw new Error('摘要任务 ID 不能为空')
+  const endpoint = `/ai/summary/tasks/${encodeURIComponent(normalizedTaskId)}`
+  const response = signal
+    ? await client.get(endpoint, { signal })
+    : await client.get(endpoint)
+  return decodeAiSummary(response.data, endpoint)
+}
+
+export async function cancelSummary(
+  threadId: Id,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<AiSummary> {
+  const normalizedTaskId = String(taskId || '').trim()
+  if (!normalizedTaskId) throw new Error('摘要任务 ID 不能为空')
+  const endpoint = `/ai/summary/${encodeURIComponent(String(threadId))}/tasks/${encodeURIComponent(normalizedTaskId)}/cancel`
+  const response = signal
+    ? await client.post(endpoint, undefined, { signal })
+    : await client.post(endpoint)
+  return decodeAiSummary(response.data, endpoint)
+}
+
+export const cancelSummaryTask = cancelSummary
+
+export function createSummaryRequestKey(): string {
+  const cryptoApi = globalThis.crypto
+  try {
+    if (typeof cryptoApi?.randomUUID === 'function') {
+      return cryptoApi.randomUUID()
+    }
+  } catch (_) {
+    // Some browsers expose randomUUID but reject it outside a secure context.
+  }
+
+  const bytes = new Uint8Array(16)
+  try {
+    if (typeof cryptoApi?.getRandomValues === 'function') {
+      cryptoApi.getRandomValues(bytes)
+    } else {
+      fillRandomBytes(bytes)
+    }
+  } catch (_) {
+    fillRandomBytes(bytes)
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function normalizeSummaryRequestOptions(
+  keyOrOptions?: string | SummaryRequestOptions,
+  signal?: AbortSignal,
+): SummaryRequestOptions {
+  if (typeof keyOrOptions === 'string') return { key: keyOrOptions, signal }
+  return { ...(keyOrOptions || {}), signal: keyOrOptions?.signal || signal }
+}
+
+function isUuidV4(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function fillRandomBytes(bytes: Uint8Array): void {
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Math.floor(Math.random() * 256)
+  }
+}
+
+export function decodeAiSummary(value: unknown, endpoint = '/ai/summary'): AiSummary {
+  const record = asRecord(value, endpoint)
+  return {
+    threadId: decodeId(requiredField(record, 'threadId', endpoint), 'threadId', endpoint),
+    taskId: decodeNullableNonEmptyString(requiredField(record, 'taskId', endpoint), 'taskId', endpoint),
+    contentVersion: decodeNonNegativeInteger(requiredField(record, 'contentVersion', endpoint), 'contentVersion', endpoint),
+    taskContentVersion: decodeNullableNonNegativeInteger(
+      requiredField(record, 'taskContentVersion', endpoint),
+      'taskContentVersion',
+      endpoint,
+    ),
+    status: decodeStatus(requiredField(record, 'status', endpoint), endpoint),
+    summary: decodeString(requiredField(record, 'summary', endpoint), 'summary', endpoint),
+    canManage: decodeBoolean(requiredField(record, 'canManage', endpoint), 'canManage', endpoint),
+    attempts: decodeNonNegativeInteger(requiredField(record, 'attempts', endpoint), 'attempts', endpoint),
+    errorCode: decodeNullableString(requiredField(record, 'errorCode', endpoint), 'errorCode', endpoint),
+    provider: decodeNullableString(requiredField(record, 'provider', endpoint), 'provider', endpoint),
+    model: decodeNullableString(requiredField(record, 'model', endpoint), 'model', endpoint),
+    inputTokens: decodeNullableNonNegativeInteger(requiredField(record, 'inputTokens', endpoint), 'inputTokens', endpoint),
+    outputTokens: decodeNullableNonNegativeInteger(requiredField(record, 'outputTokens', endpoint), 'outputTokens', endpoint),
+    usageEstimated: decodeBoolean(requiredField(record, 'usageEstimated', endpoint), 'usageEstimated', endpoint),
+    chargedTokens: decodeNonNegativeInteger(requiredField(record, 'chargedTokens', endpoint), 'chargedTokens', endpoint),
+    requestId: decodeNullableString(requiredField(record, 'requestId', endpoint), 'requestId', endpoint),
+    updatedAt: decodeNullableString(requiredField(record, 'updatedAt', endpoint), 'updatedAt', endpoint),
+  }
+}
+
+type RecordValue = Record<string, unknown>
+
+function responseError(endpoint: string, detail: string): AiSummaryResponseError {
+  return new AiSummaryResponseError(`Invalid AI summary response for ${endpoint}: ${detail}`)
+}
+
+function asRecord(value: unknown, endpoint: string): RecordValue {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw responseError(endpoint, 'expected a direct object')
+  }
+  return value as RecordValue
+}
+
+function requiredField(record: RecordValue, field: string, endpoint: string): unknown {
+  if (!Object.prototype.hasOwnProperty.call(record, field)) {
+    throw responseError(endpoint, `missing ${field}`)
+  }
+  return record[field]
+}
+
+function decodeId(value: unknown, field: string, endpoint: string): Id {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value
+  if (typeof value === 'string' && value.trim()) return value
+  throw responseError(endpoint, `${field} must be a non-empty id`)
+}
+
+function decodeString(value: unknown, field: string, endpoint: string): string {
+  if (typeof value === 'string') return value
+  throw responseError(endpoint, `${field} must be a string`)
+}
+
+function decodeNullableString(value: unknown, field: string, endpoint: string): string | null {
+  if (value === null) return null
+  return decodeString(value, field, endpoint)
+}
+
+function decodeNullableNonEmptyString(value: unknown, field: string, endpoint: string): string | null {
+  if (value === null) return null
+  const decoded = decodeString(value, field, endpoint).trim()
+  if (decoded) return decoded
+  throw responseError(endpoint, `${field} must be null or a non-empty string`)
+}
+
+function decodeBoolean(value: unknown, field: string, endpoint: string): boolean {
+  if (typeof value === 'boolean') return value
+  throw responseError(endpoint, `${field} must be a boolean`)
+}
+
+function decodeNonNegativeInteger(value: unknown, field: string, endpoint: string): number {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
+  throw responseError(endpoint, `${field} must be a non-negative safe integer`)
+}
+
+function decodeNullableNonNegativeInteger(value: unknown, field: string, endpoint: string): number | null {
+  if (value === null) return null
+  return decodeNonNegativeInteger(value, field, endpoint)
+}
+
+function decodeStatus(value: unknown, endpoint: string): AiSummaryStatus {
+  const statuses: AiSummaryStatus[] = ['IDLE', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED']
+  if (typeof value === 'string' && statuses.includes(value as AiSummaryStatus)) return value as AiSummaryStatus
+  throw responseError(endpoint, 'status is invalid')
 }
 
 export function createChatStream(

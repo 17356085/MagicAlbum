@@ -16,6 +16,21 @@ public interface AiProvider {
     String generateSummary(String content);
 
     /**
+     * Start a bounded, cancellable summary request.
+     */
+    AiSummaryCall requestSummary(String content, int maxOutputTokens);
+
+    /**
+     * Provider identifier available before a request is sent.
+     */
+    String summaryProviderName();
+
+    /**
+     * Request model available before a request is sent.
+     */
+    String summaryModelName();
+
+    /**
      * Stream chat output from the provider. Implementations must not expose
      * provider errors or credentials to the caller.
      */

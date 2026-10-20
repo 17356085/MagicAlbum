@@ -24,7 +24,7 @@
 
 当前前端重新生成固定传 `force=true`，没有任务 ID 或取消请求；后端在登录和限流后把线程置为 PENDING，消息只携带线程 ID。消费者临时生成 owner，180 秒租约，最多五次领取；完成保护依赖 owner、租约及 `updatedAt`，尚未显式绑定 `contentVersion`。真实 provider 有 HTTP transport，但失败类别合并，未持久化模型用量和关联证据；Compose 仍配置 Mock。
 
-实现依据：[摘要接口](../../backend/src/main/java/com/example/demo/ai/controller/AiController.java)、[摘要消费者](../../backend/src/main/java/com/example/demo/threads/service/ThreadSummaryListener.java)、[结果条件更新](../../backend/src/main/java/com/example/demo/threads/repo/ThreadRepository.java)、[真实 provider](../../backend/src/main/java/com/example/demo/ai/service/RealAiProvider.java)、[页面调用](../../frontend/src/pages/thread-detail/ThreadDetailSummary.vue)。现有本机 HTTP 模拟服务和 H2/Mockito 测试不能证明外部模型已执行。
+实现依据：[摘要接口](../../backend/src/main/java/com/example/demo/ai/controller/AiController.java)、[摘要消费者](../../backend/src/main/java/com/example/demo/ai/summary/service/SummaryQueueConsumer.java)、[结果条件更新](../../backend/src/main/java/com/example/demo/threads/repo/ThreadRepository.java)、[真实 provider](../../backend/src/main/java/com/example/demo/ai/service/RealAiProvider.java)、[页面调用](../../frontend/src/pages/thread-detail/ThreadDetailSummary.vue)。现有本机 HTTP 模拟服务和 H2/Mockito 测试不能证明外部模型已执行。
 
 实施边界：
 

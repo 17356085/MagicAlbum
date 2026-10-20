@@ -469,7 +469,7 @@ M1 的界面与模块任务可以在接口固定后分工；M2 消费契约稳�
 - 草稿与历史：[发帖页](../../frontend/src/pages/ThreadCreate.vue)、[最近浏览状态](../../frontend/src/composables/useRecentVisits.ts)、[侧栏浏览面板](../../frontend/src/components/sidebar/RecentVisitsPanel.vue)。
 - 通知体验：[顶部通知菜单](../../frontend/src/components/header/NotificationsMenu.vue)。
 - 图片：[上传 API](../../backend/src/main/java/com/example/demo/storage/controller/UploadController.java)、[存储服务](../../backend/src/main/java/com/example/demo/storage/service/StorageService.java)、[前端上传调用](../../frontend/src/api/uploads.ts)。
-- AI：[摘要队列消费者](../../backend/src/main/java/com/example/demo/threads/service/ThreadSummaryListener.java)、[AI 服务](../../backend/src/main/java/com/example/demo/ai/service/AiService.java)。
+- AI：[摘要队列消费者](../../backend/src/main/java/com/example/demo/ai/summary/service/SummaryQueueConsumer.java)、[AI 服务](../../backend/src/main/java/com/example/demo/ai/service/AiService.java)。
 - 管理：[管理员判定](../../backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java)、[举报服务](../../backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java)。
 
 ### 15.2 官方资料的使用边界

@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261020.2";
+    private static final String LATEST_MIGRATION_VERSION = "20261020.3";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
     private static final String UPGRADE_USERNAME = "CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME";
     private static final String UPGRADE_PASSWORD = "CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD";
@@ -63,6 +63,10 @@ class ContentEventMySqlUpgradeAcceptance {
             long versionedThreadId = insertVersionedThread(connection, legacyThreadId);
             String eventId = UUID.randomUUID().toString();
             insertEvent(connection, eventId, versionedThreadId, 1L);
+            try (PreparedStatement oldSummary = connection.prepareStatement("UPDATE threads SET summary='unversioned legacy summary',summary_status='PROCESSING',summary_owner='legacy-owner',summary_attempts=2,summary_lease_until=CURRENT_TIMESTAMP(6) WHERE id=?")) {
+                oldSummary.setLong(1, legacyThreadId);
+                oldSummary.executeUpdate();
+            }
 
             Flyway complete = flyway(url, username, password).load();
             complete.migrate();
@@ -81,6 +85,13 @@ class ContentEventMySqlUpgradeAcceptance {
             assertIndex(connection, "idx_content_event_outbox_delivery_claim");
             assertIndex(connection, "idx_content_event_outbox_delivery_lease");
             assertFlywayVersion(connection, LATEST_MIGRATION_VERSION);
+            assertThat(count(connection, "SELECT COUNT(*) FROM threads WHERE id=? AND content_md='Legacy body' "
+                    + "AND summary IS NULL AND summary_task_id IS NULL AND summary_status='IDLE' "
+                    + "AND summary_owner IS NULL AND summary_lease_until IS NULL AND summary_attempts=0", legacyThreadId))
+                    .as("summary migration clears only unversioned derived state and preserves source content").isEqualTo(1);
+            assertThat(count(connection, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() "
+                    + "AND table_name IN ('ai_summary_task','ai_summary_attempt','ai_summary_budget','ai_summary_request')"))
+                    .as("versioned summary task, attempt, budget and request bindings").isEqualTo(4);
             assertThat(count(connection, "SELECT COUNT(*) FROM content_event_outbox WHERE event_id=? "
                     + "AND attempts=0 AND available_at=occurred_at AND status='PENDING' "
                     + "AND lease_owner IS NULL AND lease_until IS NULL AND published_at IS NULL "

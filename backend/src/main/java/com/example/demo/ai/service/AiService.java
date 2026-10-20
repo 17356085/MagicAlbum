@@ -50,6 +50,18 @@ public class AiService {
         return aiProvider.generateSummary(content);
     }
 
+    public AiSummaryCall requestSummary(String content, int maxOutputTokens) {
+        return aiProvider.requestSummary(content, maxOutputTokens);
+    }
+
+    public String summaryProviderName() {
+        return aiProvider.summaryProviderName();
+    }
+
+    public String summaryModelName() {
+        return aiProvider.summaryModelName();
+    }
+
     public AiStreamHandle chatStream(
             List<Map<String, String>> messages,
             int maxOutputTokens,

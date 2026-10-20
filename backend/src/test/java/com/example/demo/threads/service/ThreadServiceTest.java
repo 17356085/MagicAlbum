@@ -1,7 +1,6 @@
 package com.example.demo.threads.service;
 
 import com.example.demo.ai.service.AiSummaryCacheService;
-import com.example.demo.common.config.RabbitMQConfig;
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
@@ -33,6 +32,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -134,7 +134,7 @@ class ThreadServiceTest {
         ThreadDto dto;
         try {
             dto = service.create(1L, req);
-            verify(rabbitTemplate, never()).convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, 123L);
+            verifyNoInteractions(rabbitTemplate);
 
             for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
                 synchronization.afterCommit();
@@ -149,7 +149,7 @@ class ThreadServiceTest {
         assertThat(savedCaptor.getValue().getSectionId()).isEqualTo(7L);
         assertThat(savedCaptor.getValue().getAuthorId()).isEqualTo(1L);
 
-        verify(rabbitTemplate).convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, 123L);
+        verifyNoInteractions(rabbitTemplate);
 
         assertThat(dto.getId()).isEqualTo(123L);
         assertThat(dto.getSectionName()).isEqualTo("Tech");
@@ -161,7 +161,7 @@ class ThreadServiceTest {
     }
 
     @Test
-    void create_should_not_fail_when_rabbitmq_send_throws() {
+    void create_should_not_request_paid_summary_even_when_rabbit_is_configured() {
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         when(mpProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
@@ -196,8 +196,6 @@ class ThreadServiceTest {
                 "World"
         );
         when(threadRepository.findViewsByIdIn(List.of(123L))).thenReturn(List.of(createdView));
-        doThrow(new RuntimeException("rabbit down"))
-                .when(rabbitTemplate).convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, 123L);
 
         CreateThreadRequest req = new CreateThreadRequest();
         req.setSectionId(7L);

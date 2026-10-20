@@ -58,7 +58,10 @@ public class Thread {
     private String summary;
 
     @Column(name = "summary_status", length = 32)
-    private String summaryStatus = "PENDING";
+    private String summaryStatus = "IDLE";
+
+    @Column(name = "summary_task_id", length = 36)
+    private String summaryTaskId;
 
     @Column(name = "summary_owner", length = 36)
     private String summaryOwner;
@@ -76,7 +79,7 @@ public class Thread {
         if (updatedAt == null) updatedAt = now;
         if (status == null || status.isBlank()) status = "NORMAL";
         if (spoiler == null) spoiler = false;
-        if (summaryStatus == null) summaryStatus = "PENDING";
+        if (summaryStatus == null) summaryStatus = "IDLE";
     }
 
     @PreUpdate
@@ -108,6 +111,8 @@ public class Thread {
     public void setSummary(String summary) { this.summary = summary; }
     public String getSummaryStatus() { return summaryStatus; }
     public void setSummaryStatus(String summaryStatus) { this.summaryStatus = summaryStatus; }
+    public String getSummaryTaskId() { return summaryTaskId; }
+    public void setSummaryTaskId(String id) { this.summaryTaskId = id; }
     public String getSummaryOwner() { return summaryOwner; }
     public void setSummaryOwner(String owner) { this.summaryOwner = owner; }
     public Instant getSummaryLeaseUntil() { return summaryLeaseUntil; }

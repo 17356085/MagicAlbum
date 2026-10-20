@@ -19,7 +19,6 @@ import com.example.demo.threads.event.entity.ContentEventType;
 import com.example.demo.threads.event.service.ContentEventRecorder;
 import com.example.demo.threads.repo.ThreadLikeRepository;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.common.config.RabbitMQConfig;
 import com.example.demo.user.repo.UserRepository;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
@@ -186,7 +185,6 @@ public class ThreadService {
         dto.setTags(normalizeTags(req.getTags()));
         afterCommit(() -> {
             cache.evictLists();
-            publishSummaryGeneration(saved.getId());
         });
         return dto;
     }
@@ -202,18 +200,6 @@ public class ThreadService {
             return;
         }
         action.run();
-    }
-
-    private void publishSummaryGeneration(Long threadId) {
-        if (!rabbitEnabled || rabbitTemplate == null) {
-            return;
-        }
-        try {
-            rabbitTemplate.convertAndSend(RabbitMQConfig.QUEUE_THREAD_SUMMARY, threadId);
-        } catch (Exception e) {
-            log.warn("Failed to send summary generation task for thread {}: {}",
-                    threadId, e.getClass().getSimpleName());
-        }
     }
 
     public Page<ThreadDto> list(String q, String tag, Long sectionId, int page, int size) {
@@ -501,7 +487,7 @@ public class ThreadService {
         }
         if (contentChanged) {
             t.setSummary(null);
-            t.setSummaryStatus("PENDING");
+            t.setSummaryStatus("IDLE");
             t.setSummaryOwner(null);
             t.setSummaryLeaseUntil(null);
             t.setSummaryAttempts(0);
@@ -562,8 +548,22 @@ public class ThreadService {
         evictThreadCachesAfterCommit(threadId);
     }
 
+    @Autowired
+    void configureSummaryLifecycle(com.example.demo.ai.summary.service.SummaryContentLifecycle lifecycle) {
+        this.summaryLifecycle = lifecycle;
+    }
+
+    private com.example.demo.ai.summary.service.SummaryContentLifecycle summaryLifecycle;
+
     private void advanceContentVersion(Thread thread) {
         thread.setContentVersion(Math.addExact(thread.getContentVersion(), 1L));
+        thread.setSummaryTaskId(null);
+        thread.setSummary(null);
+        thread.setSummaryStatus("IDLE");
+        thread.setSummaryOwner(null);
+        thread.setSummaryLeaseUntil(null);
+        thread.setSummaryAttempts(0);
+        if (summaryLifecycle != null) summaryLifecycle.invalidate(thread.getId(), thread.getContentVersion());
     }
 
     private void recordContentEvent(Thread thread, ContentEventType eventType) {
@@ -602,9 +602,6 @@ public class ThreadService {
             markdownRenderService.evict(threadId);
             if (aiSummaryCacheService != null) {
                 aiSummaryCacheService.evict(threadId);
-            }
-            if (republishSummary) {
-                publishSummaryGeneration(threadId);
             }
         });
     }

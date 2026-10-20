@@ -111,7 +111,7 @@ public class SecurityConfig {
         // 允许常见方法
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         // 允许请求头（Authorization 用于携带 JWT；Content-Type 用于 JSON）
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "X-Device-Id", "X-Session-Id", "X-Request-Id"));
+        config.setAllowedHeaders(List.of("Idempotency-Key", "Authorization", "Content-Type", "X-Requested-With", "X-Device-Id", "X-Session-Id", "X-Request-Id"));
         // 若前端使用 withCredentials，需要允许凭证
         config.setAllowCredentials(true);
         // 可选：暴露部分响应头（如 Location 等）
