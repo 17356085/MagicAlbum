@@ -121,19 +121,6 @@ export function readOAuthBrowserProof(provider?: OAuthProvider, now = Date.now()
   return proof
 }
 
-export function consumeOAuthBrowserProof(provider: OAuthProvider, now = Date.now()): string | null {
-  const proof = readOAuthBrowserProof(provider, now)
-  if (!proof) return null
-  const storage = getSessionStorage()
-  if (!storage) return null
-  try {
-    storage.removeItem(OAUTH_BROWSER_PROOF_STORAGE_KEY)
-  } catch (_) {
-    return null
-  }
-  return proof.verifier
-}
-
 export function clearOAuthBrowserProof(expected?: OAuthBrowserProof): void {
   const storage = getSessionStorage()
   if (!storage) return

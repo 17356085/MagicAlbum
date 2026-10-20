@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -53,6 +54,16 @@ public class RealAiProvider implements AiProvider {
     private final Duration timeout;
 
     public RealAiProvider(String baseUrl, String apiKey, String modelName, Duration timeout) {
+        this(baseUrl, apiKey, modelName, timeout, null);
+    }
+
+    RealAiProvider(
+            String baseUrl,
+            String apiKey,
+            String modelName,
+            Duration timeout,
+            HttpClient httpClient
+    ) {
         URI baseUri = validateBaseUrl(baseUrl);
         this.timeout = safeTimeout(timeout);
         this.apiKey = apiKey == null ? "" : apiKey.trim();
@@ -65,9 +76,9 @@ public class RealAiProvider implements AiProvider {
         this.objectMapper = new ObjectMapper();
         this.providerName = baseUri.getHost();
         this.completionUri = URI.create(baseUri.toString() + "/chat/completions");
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(this.timeout)
-                .build();
+        this.httpClient = httpClient == null
+                ? HttpClient.newBuilder().connectTimeout(this.timeout).build()
+                : Objects.requireNonNull(httpClient, "httpClient");
     }
 
     @Override
@@ -166,6 +177,10 @@ public class RealAiProvider implements AiProvider {
                 @Override
                 public void onSubscribe(Flow.Subscription subscription) {
                     subscriptionRef.set(subscription);
+                    if (finished.get()) {
+                        subscription.cancel();
+                        return;
+                    }
                     subscription.request(1);
                 }
 
@@ -369,9 +384,6 @@ public class RealAiProvider implements AiProvider {
                 HttpResponse<Flow.Publisher<List<ByteBuffer>>> response,
                 Throwable error
         ) {
-            if (finished.get()) {
-                return;
-            }
             if (error != null) {
                 fail(summaryFailureCode(error));
                 return;

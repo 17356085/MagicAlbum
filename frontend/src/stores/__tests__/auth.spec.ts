@@ -17,6 +17,7 @@ vi.mock('@/api/auth', () => apiMocks)
 vi.mock('@/api/users', () => userApiMocks)
 
 import { AuthOperationSupersededError, useAuthStore } from '../auth'
+import { storeOAuthBrowserProof } from '@/utils/oauthBrowserProof'
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -39,6 +40,7 @@ const loginResponse = (accessToken: string, nextUser: User | null): LoginRespons
 describe('auth draft ownership', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     vi.clearAllMocks()
     userApiMocks.getCurrentUser.mockResolvedValue(null)
     setActivePinia(createPinia())
@@ -57,6 +59,46 @@ describe('auth draft ownership', () => {
     expect(localStorage.getItem('thread-draft-v1')).toBe(legacy)
     expect(localStorage.getItem('thread-draft-v1:7')).toBe(accountDraft)
     expect(auth.isLoggedIn).toBe(false)
+  })
+
+  it('clears an OAuth browser proof when a new auth operation starts', () => {
+    storeOAuthBrowserProof({ provider: 'google', verifier: 'v'.repeat(43), expiresAt: Date.now() + 300_000 })
+    const auth = useAuthStore()
+
+    auth.invalidateAuthOperations()
+
+    expect(sessionStorage.getItem('oauthBrowserProof')).toBeNull()
+  })
+
+  it('shares one callback generation for the same proof and expires it on a new auth intent', () => {
+    const proof = { provider: 'google' as const, verifier: 'v'.repeat(43), expiresAt: Date.now() + 300_000 }
+    storeOAuthBrowserProof(proof)
+    const auth = useAuthStore()
+
+    const firstGeneration = auth.beginOAuthCallbackOperation(proof)
+    const secondGeneration = auth.beginOAuthCallbackOperation(proof)
+
+    expect(firstGeneration).not.toBeNull()
+    expect(secondGeneration).toBe(firstGeneration)
+    auth.invalidateAuthOperations()
+
+    if (firstGeneration === null) throw new Error('expected callback generation')
+    expect(auth.isAuthGenerationCurrent(firstGeneration)).toBe(false)
+    expect(sessionStorage.getItem('oauthBrowserProof')).toBeNull()
+  })
+
+  it('clears the callback claim and proof on logout', () => {
+    const proof = { provider: 'google' as const, verifier: 'v'.repeat(43), expiresAt: Date.now() + 300_000 }
+    storeOAuthBrowserProof(proof)
+    const auth = useAuthStore()
+    const oldGeneration = auth.beginOAuthCallbackOperation(proof)
+
+    auth.logout()
+    expect(sessionStorage.getItem('oauthBrowserProof')).toBeNull()
+
+    storeOAuthBrowserProof(proof)
+    const nextGeneration = auth.beginOAuthCallbackOperation(proof)
+    expect(nextGeneration).not.toBe(oldGeneration)
   })
 
   it('keeps account-scoped drafts across logout for local recovery', () => {

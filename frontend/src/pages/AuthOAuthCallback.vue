@@ -19,6 +19,16 @@
 
       <div class="mt-6 flex items-center justify-center gap-3">
         <button
+          v-if="!success && retryAvailable"
+          data-test="oauth-retry"
+          type="button"
+          class="ui-button-primary"
+          :disabled="exchangePending"
+          @click="retryExchange"
+        >
+          {{ exchangePending ? '正在重试…' : '重试登录' }}
+        </button>
+        <button
           type="button"
           class="ui-button-primary"
           @click="goNext"
@@ -36,7 +46,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { exchangeOAuthCode } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { clearPendingAuthRedirect, getPendingAuthRedirect } from '@/utils/authStorage'
-import { consumeOAuthBrowserProof, isOAuthProvider } from '@/utils/oauthBrowserProof'
+import {
+  clearOAuthBrowserProof,
+  isOAuthProvider,
+  readOAuthBrowserProof,
+  type OAuthBrowserProof,
+} from '@/utils/oauthBrowserProof'
 import { getSingleQueryValue } from '@/utils/router'
 
 const route = useRoute()
@@ -47,8 +62,12 @@ const finished = ref(false)
 const success = ref(false)
 const message = ref('正在处理第三方登录结果…')
 const successRedirect = ref('/discover')
+const pendingCode = ref('')
+const pendingProof = ref<OAuthBrowserProof | null>(null)
+const pendingGeneration = ref<number | null>(null)
+const exchangePending = ref(false)
+const retryAvailable = ref(false)
 let disposed = false
-let operationGeneration: number | null = null
 let redirectTimer: ReturnType<typeof setTimeout> | null = null
 
 function isCurrentOperation(generation: number): boolean {
@@ -59,6 +78,98 @@ const nextPath = computed(() => {
   const redirect = getPendingAuthRedirect()
   return redirect || '/discover'
 })
+
+function isCurrentBrowserProof(expected: OAuthBrowserProof): boolean {
+  const current = readOAuthBrowserProof(expected.provider)
+  return !!current
+    && current.provider === expected.provider
+    && current.verifier === expected.verifier
+    && current.expiresAt === expected.expiresAt
+}
+
+function responseStatus(error: unknown): number {
+  if (typeof error !== 'object' || error === null || !('response' in error)) return 0
+  const response = (error as { response?: { status?: unknown } }).response
+  const status = Number(response?.status ?? 0)
+  return Number.isFinite(status) ? status : 0
+}
+
+async function exchangePendingCode(): Promise<boolean> {
+  if (exchangePending.value) return false
+  const code = pendingCode.value
+  const proof = pendingProof.value
+  const generation = pendingGeneration.value
+  if (!code || !proof || generation === null) return false
+  if (!isCurrentOperation(generation)) {
+    retryAvailable.value = false
+    return false
+  }
+  if (!isCurrentBrowserProof(proof)) {
+    pendingCode.value = ''
+    pendingProof.value = null
+    retryAvailable.value = false
+    message.value = '当前标签页的 OAuth 登录校验已更新，请重新发起登录。'
+    return false
+  }
+
+  exchangePending.value = true
+  try {
+    const authResponse = await exchangeOAuthCode(code, proof.verifier)
+    if (!isCurrentOperation(generation)) return false
+    if (!isCurrentBrowserProof(proof)) {
+      pendingCode.value = ''
+      pendingProof.value = null
+      retryAvailable.value = false
+      message.value = '当前标签页的 OAuth 登录校验已更新，请重新发起登录。'
+      return false
+    }
+    if (!authResponse.accessToken) {
+      throw new Error('OAuth code exchange returned no access token')
+    }
+    clearOAuthBrowserProof(proof)
+    authStore.loginWithAuthResponse(authResponse)
+    pendingCode.value = ''
+    pendingProof.value = null
+    pendingGeneration.value = null
+    return true
+  } catch (error) {
+    if (!isCurrentOperation(generation)) return false
+    if (!isCurrentBrowserProof(proof)) {
+      pendingCode.value = ''
+      pendingProof.value = null
+      retryAvailable.value = false
+      message.value = '当前标签页的 OAuth 登录校验已失效，请重新发起登录。'
+      return false
+    }
+    if (responseStatus(error) === 400) {
+      pendingCode.value = ''
+      pendingProof.value = null
+      retryAvailable.value = false
+      message.value = '第三方登录 code 已失效或已使用，请重新发起登录。'
+      return false
+    }
+    retryAvailable.value = true
+    success.value = false
+    message.value = '第三方登录暂未完成，请点击重试。'
+    return false
+  } finally {
+    exchangePending.value = false
+  }
+}
+
+function completeSuccess(): void {
+  if (success.value) return
+  success.value = true
+  message.value = '已完成登录收口，正在返回原页面。'
+  successRedirect.value = nextPath.value
+  clearPendingAuthRedirect()
+
+  const committedGeneration = authStore.getAuthGeneration()
+  redirectTimer = setTimeout(() => {
+    redirectTimer = null
+    if (isCurrentOperation(committedGeneration)) void router.replace(successRedirect.value)
+  }, 500)
+}
 
 async function finalizeSuccess(): Promise<void> {
   const providerValue = getSingleQueryValue(route.query.provider).trim().toLowerCase()
@@ -76,42 +187,32 @@ async function finalizeSuccess(): Promise<void> {
     return
   }
 
-  const codeVerifier = consumeOAuthBrowserProof(providerValue)
-  if (!codeVerifier) {
+  const proof = readOAuthBrowserProof(providerValue)
+  if (!proof) {
     success.value = false
     message.value = '当前标签页的 OAuth 登录校验已失效，请重新发起登录。'
     clearCallbackQuery()
     return
   }
 
-  clearCallbackQuery()
-  const generation = authStore.invalidateAuthOperations()
-  operationGeneration = generation
-  try {
-    const authResponse = await exchangeOAuthCode(code, codeVerifier)
-    if (!isCurrentOperation(generation)) return
-    if (!authResponse.accessToken) {
-      throw new Error('OAuth code exchange returned no access token')
-    }
-    authStore.loginWithAuthResponse(authResponse)
-    operationGeneration = null
-  } catch (_) {
-    if (!isCurrentOperation(generation)) return
+  const generation = authStore.beginOAuthCallbackOperation(proof)
+  if (generation === null) {
     success.value = false
-    message.value = '第三方登录 code 无效、已过期或已使用，请重新发起登录。'
+    message.value = '当前标签页的 OAuth 登录校验已更新，请重新发起登录。'
+    clearCallbackQuery()
     return
   }
 
-  success.value = true
-  message.value = '已完成登录收口，正在返回原页面。'
-  successRedirect.value = nextPath.value
-  clearPendingAuthRedirect()
+  pendingCode.value = code
+  pendingProof.value = proof
+  pendingGeneration.value = generation
+  clearCallbackQuery()
+  if (await exchangePendingCode()) completeSuccess()
+}
 
-  const committedGeneration = authStore.getAuthGeneration()
-  redirectTimer = setTimeout(() => {
-    redirectTimer = null
-    if (isCurrentOperation(committedGeneration)) void router.replace(successRedirect.value)
-  }, 500)
+async function retryExchange(): Promise<void> {
+  if (!retryAvailable.value) return
+  if (await exchangePendingCode()) completeSuccess()
 }
 
 function finalizeError(): void {
@@ -137,7 +238,7 @@ function clearCallbackQuery(): void {
     const cleanUrl = `${window.location.pathname}${window.location.hash}`
     window.history.replaceState(window.history.state, document.title, cleanUrl)
   } catch (_) {
-    // URL cleanup is defense in depth; the one-time code is still exchanged by POST.
+    // URL cleanup is defense in depth; the one-time code remains in component memory.
   }
 }
 
@@ -163,8 +264,5 @@ onMounted(async () => {
 onUnmounted(() => {
   disposed = true
   if (redirectTimer) clearTimeout(redirectTimer)
-  if (operationGeneration !== null && authStore.isAuthGenerationCurrent(operationGeneration)) {
-    authStore.invalidateAuthOperations()
-  }
 })
 </script>

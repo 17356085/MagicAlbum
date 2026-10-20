@@ -15,6 +15,11 @@ import {
   isMockToken,
   persistAuthState,
 } from '@/utils/authStorage'
+import {
+  clearOAuthBrowserProof,
+  readOAuthBrowserProof,
+  type OAuthBrowserProof,
+} from '@/utils/oauthBrowserProof'
 import type {
   FinishPhoneCodeLoginRequest,
   FinishEmailCodeLoginRequest,
@@ -46,6 +51,12 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string>(getStoredAccessToken())
   const useMock = import.meta.env.VITE_USE_API_MOCK === 'true'
   let authGeneration = 0
+  let oauthCallbackClaim: {
+    provider: OAuthBrowserProof['provider']
+    verifier: string
+    expiresAt: number
+    generation: number
+  } | null = null
 
   // Clean mock token if needed
   if (!useMock && isMockToken(token.value)) {
@@ -71,6 +82,35 @@ export const useAuthStore = defineStore('auth', () => {
 
   function invalidateAuthOperations(): number {
     authGeneration += 1
+    clearOAuthBrowserProof()
+    oauthCallbackClaim = null
+    return authGeneration
+  }
+
+  function beginOAuthCallbackOperation(proof: OAuthBrowserProof): number | null {
+    const current = readOAuthBrowserProof(proof.provider)
+    if (!current
+      || current.provider !== proof.provider
+      || current.verifier !== proof.verifier
+      || current.expiresAt !== proof.expiresAt) {
+      return null
+    }
+
+    if (oauthCallbackClaim
+      && oauthCallbackClaim.provider === proof.provider
+      && oauthCallbackClaim.verifier === proof.verifier
+      && oauthCallbackClaim.expiresAt === proof.expiresAt
+      && oauthCallbackClaim.generation === authGeneration) {
+      return oauthCallbackClaim.generation
+    }
+
+    authGeneration += 1
+    oauthCallbackClaim = {
+      provider: proof.provider,
+      verifier: proof.verifier,
+      expiresAt: proof.expiresAt,
+      generation: authGeneration,
+    }
     return authGeneration
   }
 
@@ -183,6 +223,7 @@ export const useAuthStore = defineStore('auth', () => {
     isLoggedIn,
     applyAuthState,
     clearAuthState,
+    beginOAuthCallbackOperation,
     getAuthGeneration,
     handleUnauthorized,
     invalidateAuthOperations,

@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   OAUTH_BROWSER_PROOF_STORAGE_KEY,
   OAUTH_BROWSER_PROOF_TTL_MS,
-  consumeOAuthBrowserProof,
+  clearOAuthBrowserProof,
   createOAuthBrowserProof,
   createOAuthCodeChallenge,
   readOAuthBrowserProof,
@@ -38,11 +38,14 @@ describe('OAuth browser proof', () => {
     expect(sessionStorage.getItem(OAUTH_BROWSER_PROOF_STORAGE_KEY)).toBeNull()
   })
 
-  it('consumes a matching proof exactly once', () => {
-    storeOAuthBrowserProof({ provider: 'github', verifier: 'v'.repeat(43), expiresAt: 5_000 })
+  it('clears only the exact expected proof snapshot', () => {
+    const proof = { provider: 'google' as const, verifier: 'v'.repeat(43), expiresAt: 5_000 }
+    storeOAuthBrowserProof(proof)
 
-    expect(consumeOAuthBrowserProof('github', 4_000)).toBe('v'.repeat(43))
-    expect(consumeOAuthBrowserProof('github', 4_000)).toBeNull()
+    clearOAuthBrowserProof({ ...proof, verifier: 'n'.repeat(43) })
+    expect(readOAuthBrowserProof('google', 4_000)).toEqual(proof)
+
+    clearOAuthBrowserProof(proof)
     expect(sessionStorage.getItem(OAUTH_BROWSER_PROOF_STORAGE_KEY)).toBeNull()
   })
 
@@ -55,16 +58,4 @@ describe('OAuth browser proof', () => {
     expect(readOAuthBrowserProof('google', 4_000)).toBeNull()
   })
 
-  it('does not claim one-time consumption when sessionStorage removal fails', () => {
-    storeOAuthBrowserProof({ provider: 'google', verifier: 'v'.repeat(43), expiresAt: 5_000 })
-    const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
-      throw new Error('storage unavailable')
-    })
-    try {
-      expect(consumeOAuthBrowserProof('google', 4_000)).toBeNull()
-    } finally {
-      removeItem.mockRestore()
-      sessionStorage.clear()
-    }
-  })
 })

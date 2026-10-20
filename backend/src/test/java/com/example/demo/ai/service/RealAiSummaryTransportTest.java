@@ -3,6 +3,7 @@ package com.example.demo.ai.service;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -197,22 +198,32 @@ class RealAiSummaryTransportTest {
     @Test
     void cancelStopsReadingAnOpenResponse() throws Exception {
         CountDownLatch requestStarted = new CountDownLatch(1);
+        CountDownLatch prefixFlushed = new CountDownLatch(1);
+        CountDownLatch allowProbe = new CountDownLatch(1);
+        CountDownLatch probeStarted = new CountDownLatch(1);
         AtomicBoolean connectionClosed = new AtomicBoolean();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/chat/completions", exchange -> {
             requestStarted.countDown();
-            exchange.sendResponseHeaders(200, 0);
-            try (var output = exchange.getResponseBody()) {
-                output.write("{\"choices\":[".getBytes(StandardCharsets.UTF_8));
-                output.flush();
-                try {
+            try {
+                exchange.sendResponseHeaders(200, 0);
+                try (var output = exchange.getResponseBody()) {
+                    output.write("{\"choices\":[".getBytes(StandardCharsets.UTF_8));
+                    output.flush();
+                    prefixFlushed.countDown();
+                    if (!allowProbe.await(2, TimeUnit.SECONDS)) {
+                        return;
+                    }
+                    probeStarted.countDown();
                     while (true) {
                         output.write(new byte[8_192]);
                         output.flush();
                     }
-                } catch (Exception ex) {
-                    connectionClosed.set(true);
                 }
+            } catch (IOException ex) {
+                connectionClosed.set(true);
+            } catch (InterruptedException ex) {
+                java.lang.Thread.currentThread().interrupt();
             }
         });
         server.start();
@@ -220,15 +231,20 @@ class RealAiSummaryTransportTest {
             var provider = provider(server, Duration.ofSeconds(10));
             AiSummaryCall call = provider.requestSummary("content", 512);
             assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(prefixFlushed.await(2, TimeUnit.SECONDS)).isTrue();
             call.cancel();
             AiSummaryException failure = failure(call);
             assertThat(failure.code()).isEqualTo(AiSummaryFailureCode.CANCELLED);
+            allowProbe.countDown();
+            assertThat(probeStarted.await(2, TimeUnit.SECONDS))
+                    .as("cancel should allow a post-cancel socket probe").isTrue();
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
             while (!connectionClosed.get() && System.nanoTime() < deadline) {
                 java.lang.Thread.sleep(10);
             }
             assertThat(connectionClosed).as("cancel should close the response transport").isTrue();
         } finally {
+            allowProbe.countDown();
             server.stop(0);
         }
     }
