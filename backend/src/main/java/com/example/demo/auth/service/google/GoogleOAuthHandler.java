@@ -35,13 +35,14 @@ public class GoogleOAuthHandler implements OAuthProviderHandler {
     }
 
     @Override
-    public String buildAuthorizeRedirect() {
-        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.google);
+    public String buildAuthorizeRedirect(String codeChallenge) {
+        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.google, codeChallenge);
     }
 
     @Override
     public String handleCallback(String code, String state, String error) {
-        if (!authOAuthService.consumeStateSafely(OAuthProvider.google, state)) {
+        String codeChallenge = authOAuthService.consumeStateProof(OAuthProvider.google, state);
+        if (codeChallenge == null) {
             return authOAuthService.buildProviderErrorRedirect(OAuthProvider.google, "OAuth state 无效或已过期");
         }
         if (error != null && !error.isBlank()) {
@@ -61,6 +62,6 @@ public class GoogleOAuthHandler implements OAuthProviderHandler {
         }
 
         User user = oauthUserProvisioningService.resolveOrCreateGoogleUser(googleUser);
-        return authOAuthService.buildSuccessRedirect(OAuthProvider.google, user, state);
+        return authOAuthService.buildSuccessRedirect(OAuthProvider.google, user, codeChallenge);
     }
 }

@@ -133,7 +133,7 @@ class ContentReportServiceTest {
     }
 
     @Test
-    void post_report_context_includes_parent_thread_and_is_null_after_post_deletion() {
+    void post_report_context_includes_parent_thread_after_soft_deletion() {
         ContentReport postReport = report(31L, 7L, ReportTargetType.POST, 21L, ReportStatus.PENDING);
         Page<ContentReport> stored = new PageImpl<>(
                 List.of(postReport),
@@ -159,7 +159,25 @@ class ContentReportServiceTest {
         when(postRepository.findById(21L)).thenReturn(Optional.of(post));
         ReportResponse softDeletedResponse = service.list(ReportStatus.PENDING, 1, 20).getContent().get(0);
 
-        org.junit.jupiter.api.Assertions.assertNull(softDeletedResponse.getTargetThreadId());
+        assertEquals(11L, softDeletedResponse.getTargetThreadId());
+    }
+
+    @Test
+    void pending_report_for_soft_deleted_post_can_be_dismissed() {
+        ContentReport pending = report(31L, 7L, ReportTargetType.POST, 21L, ReportStatus.PENDING);
+        Post post = new Post();
+        post.setId(21L);
+        post.setThreadId(11L);
+        post.setStatus("DELETED");
+        when(reportRepository.findByIdForUpdate(31L)).thenReturn(Optional.of(pending));
+        when(postRepository.findById(21L)).thenReturn(Optional.of(post));
+        when(reportRepository.save(any(ContentReport.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ReportResolutionResponse response = service.resolve(42L, 31L, resolveRequest(ReportAction.DISMISS));
+
+        assertEquals(ReportStatus.DISMISSED, response.getStatus());
+        assertEquals(11L, response.getTargetThreadId());
+        verify(reportRepository).save(pending);
     }
 
     @Test

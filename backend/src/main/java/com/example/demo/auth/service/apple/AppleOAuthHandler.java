@@ -35,13 +35,14 @@ public class AppleOAuthHandler implements OAuthProviderHandler {
     }
 
     @Override
-    public String buildAuthorizeRedirect() {
-        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.apple);
+    public String buildAuthorizeRedirect(String codeChallenge) {
+        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.apple, codeChallenge);
     }
 
     @Override
     public String handleCallback(String code, String state, String error) {
-        if (!authOAuthService.consumeStateSafely(OAuthProvider.apple, state)) {
+        String codeChallenge = authOAuthService.consumeStateProof(OAuthProvider.apple, state);
+        if (codeChallenge == null) {
             return authOAuthService.buildProviderErrorRedirect(OAuthProvider.apple, "OAuth state 无效或已过期");
         }
         if (error != null && !error.isBlank()) {
@@ -61,6 +62,6 @@ public class AppleOAuthHandler implements OAuthProviderHandler {
         }
 
         User user = oauthUserProvisioningService.resolveOrCreateAppleUser(appleUser);
-        return authOAuthService.buildSuccessRedirect(OAuthProvider.apple, user, state);
+        return authOAuthService.buildSuccessRedirect(OAuthProvider.apple, user, codeChallenge);
     }
 }

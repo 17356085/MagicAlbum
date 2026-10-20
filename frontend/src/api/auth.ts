@@ -332,9 +332,13 @@ export async function exchangeQrLoginSession(qrId: string, pollToken: string): P
   return normalizeAuthResponse(data)
 }
 
-export async function exchangeOAuthCode(code: string): Promise<LoginResponse> {
+export async function exchangeOAuthCode(code: string, codeVerifier: string): Promise<LoginResponse> {
   const normalizedCode = requireNonEmptyString(code, 'code', 'OAuth 交换请求')
-  const { data } = await api.post('/auth/oauth/exchange', { code: normalizedCode })
+  const normalizedVerifier = requireNonEmptyString(codeVerifier, 'codeVerifier', 'OAuth 交换请求')
+  const { data } = await api.post('/auth/oauth/exchange', {
+    code: normalizedCode,
+    codeVerifier: normalizedVerifier,
+  })
   return normalizeAuthResponse(data)
 }
 

@@ -125,7 +125,7 @@ try {
     $notification = Start-App 'notification' $notificationJar $NotificationPort 'ba_verify_notifications'
     Check ((Sql "SELECT COUNT(*) FROM ba_verify_notifications.notification_flyway_schema_history WHERE version='3' AND success=1;") -eq '1') 'Notification V3 migration committed in MySQL'
     $coreExtra = @('--app.rabbit.enabled=false','--management.health.rabbit.enabled=false','--app.auth.verify.mode=off',
-        '--app.rate-limit.fail-closed=false','--app.ai.rate-limit.fail-closed=false','--app.admin.email=',
+        '--app.rate-limit.fail-closed=false','--app.ai.rate-limit.fail-closed=false','--app.admin.email=','--app.admin.user-id=0',
         '--app.notifications.client.mode=remote','--app.notifications.outbox.poll-interval-ms=250',
         "--app.notifications.client.base-url=http://127.0.0.1:$NotificationPort",'--feature.mp.read.threads=false',
         '--app.storage.type=local',"`"--app.storage.local.baseDir=$(Join-Path $ArtifactDirectory 'uploads')`"",

@@ -295,6 +295,7 @@ class ComposeRuntime:
             "RABBITMQ_USER": "bluealbum_m3",
             "JWT_ISSUER": "MagicAlbum",
             "APP_ADMIN_EMAIL": "",
+            "APP_ADMIN_USER_ID": "0",
             "APP_AUTH_VERIFY_MODE": "off",
             "APP_RABBIT_ENABLED": "true",
             "APP_CORS_ALLOWED_ORIGINS": self.env_values.get("APP_CORS_ALLOWED_ORIGINS", "http://127.0.0.1:5173"),

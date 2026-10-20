@@ -30,14 +30,17 @@ class CommunityRuntimeGuards(unittest.TestCase):
         runtime = gate.ComposeRuntime(self.root)
         runtime.update_public_base_url(12345)
         runtime.update_browser_origin(23456)
-        runtime.set_admin_email("admin@example.test")
+        runtime.set_admin_identity("admin@example.test", 42)
         runtime.update_public_base_url(12345)
         self.assertTrue(runtime.project.startswith("bluealbum-m4-"))
         self.assertEqual(runtime.env_values["APP_ADMIN_EMAIL"], "admin@example.test")
+        self.assertEqual(runtime.env_values["APP_ADMIN_USER_ID"], "42")
         self.assertEqual(runtime.env_values["APP_CORS_ALLOWED_ORIGINS"], "http://127.0.0.1:23456")
         self.assertEqual(runtime.env_values["S3_PUBLIC_BASE_URL"], "http://127.0.0.1:12345/media-test")
         with self.assertRaises(gate.GateFailure):
-            runtime.set_admin_email("admin@example.test\nOTHER=value")
+            runtime.set_admin_identity("admin@example.test\nOTHER=value", 42)
+        with self.assertRaises(gate.GateFailure):
+            runtime.set_admin_identity("admin@example.test", 0)
         runtime.cleanup()
         self.assertFalse(runtime.env_file.exists())
 
@@ -154,7 +157,7 @@ class CommunityRuntimeGuards(unittest.TestCase):
             runtime.ports["frontend"] += 1
         runtime.refresh_ports = refresh
         with self.assertRaises(gate.GateFailure):
-            runtime.restart_backend_with_admin_email()
+            runtime.restart_backend_with_admin_identity()
         runtime.cleanup()
 
     def test_runtime_construction_failure_cannot_exit_success(self):

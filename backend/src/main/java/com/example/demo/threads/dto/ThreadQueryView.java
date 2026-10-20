@@ -15,4 +15,5 @@ public interface ThreadQueryView {
     String getStatus();
     Instant getCreatedAt();
     Instant getUpdatedAt();
+    Long getReplyCount();
 }

@@ -62,7 +62,7 @@ class AuthOAuthServiceTest {
                 mockJwtTokenProvider()
         );
 
-        String redirect = service.buildAuthorizeRedirect(OAuthProvider.github);
+        String redirect = service.buildAuthorizeRedirect(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
 
         assertTrue(redirect.startsWith("https://github.com/login/oauth/authorize"));
         assertTrue(redirect.contains("client_id=github-client-id"));
@@ -100,7 +100,7 @@ class AuthOAuthServiceTest {
 
         ResponseStatusException ex = assertThrows(
                 ResponseStatusException.class,
-                () -> service.buildAuthorizeRedirect(OAuthProvider.github)
+                () -> service.buildAuthorizeRedirect(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
         );
 
         assertEquals(503, ex.getStatusCode().value());
@@ -160,7 +160,7 @@ class AuthOAuthServiceTest {
         );
         GithubOAuthHandler handler = new GithubOAuthHandler(service, githubOAuthClient, provisioningService, jwtTokenProvider);
 
-        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.github);
+        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         String state = authorizeUrl.substring(authorizeUrl.indexOf("state=") + 6);
 
         String redirect = handler.handleCallback("github-code", state, null);
@@ -213,7 +213,7 @@ class AuthOAuthServiceTest {
         );
         GithubOAuthHandler handler = new GithubOAuthHandler(service, githubOAuthClient, provisioningService, jwtTokenProvider);
 
-        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.github);
+        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         String state = authorizeUrl.substring(authorizeUrl.indexOf("state=") + 6);
 
         String redirect = handler.handleCallback(null, state, "access_denied");
@@ -309,7 +309,7 @@ class AuthOAuthServiceTest {
         );
         GoogleOAuthHandler handler = new GoogleOAuthHandler(service, googleOAuthClient, provisioningService, jwtTokenProvider);
 
-        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.github);
+        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         String state = authorizeUrl.substring(authorizeUrl.indexOf("state=") + 6);
 
         String redirect = handler.handleCallback("google-code", state, null);
@@ -346,7 +346,7 @@ class AuthOAuthServiceTest {
                 mockJwtTokenProvider()
         );
 
-        String redirect = service.buildAuthorizeRedirect(OAuthProvider.apple);
+        String redirect = service.buildAuthorizeRedirect(OAuthProvider.apple, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
 
         assertTrue(redirect.startsWith("https://appleid.apple.com/auth/authorize"));
         assertTrue(redirect.contains("client_id=apple-services-id"));
@@ -410,7 +410,7 @@ class AuthOAuthServiceTest {
         );
         AppleOAuthHandler handler = new AppleOAuthHandler(service, appleOAuthClient, provisioningService, jwtTokenProvider);
 
-        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.apple);
+        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.apple, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         String state = authorizeUrl.substring(authorizeUrl.indexOf("state=") + 6);
 
         String redirect = handler.handleCallback("apple-code", state, null);
@@ -450,7 +450,7 @@ class AuthOAuthServiceTest {
                 mockJwtTokenProvider()
         );
 
-        String redirect = service.buildAuthorizeRedirect(OAuthProvider.google);
+        String redirect = service.buildAuthorizeRedirect(OAuthProvider.google, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
 
         assertTrue(redirect.startsWith("https://accounts.google.com/o/oauth2/v2/auth"));
         assertTrue(redirect.contains("client_id=google-client-id"));
@@ -513,7 +513,7 @@ class AuthOAuthServiceTest {
         );
         GoogleOAuthHandler handler = new GoogleOAuthHandler(service, googleOAuthClient, provisioningService, jwtTokenProvider);
 
-        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.google);
+        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.google, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         String state = authorizeUrl.substring(authorizeUrl.indexOf("state=") + 6);
 
         String redirect = handler.handleCallback("google-code", state, null);
@@ -553,7 +553,7 @@ class AuthOAuthServiceTest {
                 mockJwtTokenProvider()
         );
 
-        String redirect = service.buildAuthorizeRedirect(OAuthProvider.wechat);
+        String redirect = service.buildAuthorizeRedirect(OAuthProvider.wechat, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
 
         assertTrue(redirect.startsWith("https://open.weixin.qq.com/connect/qrconnect"));
         assertTrue(redirect.contains("appid=wechat-app-id"));
@@ -596,7 +596,7 @@ class AuthOAuthServiceTest {
         );
         WechatOAuthHandler handler = new WechatOAuthHandler(service);
 
-        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.wechat);
+        String authorizeUrl = service.buildAuthorizeRedirect(OAuthProvider.wechat, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         String state = authorizeUrl.substring(authorizeUrl.indexOf("state=") + 6, authorizeUrl.indexOf("#wechat_redirect"));
 
         String redirect = handler.handleCallback("wechat-code", state, null);
@@ -635,6 +635,7 @@ class AuthOAuthServiceTest {
         profile.setSub("google-sub-2002");
         profile.setName("Google User");
         profile.setEmail("google@example.com");
+        profile.setEmailVerified(true);
         profile.setPicture("https://lh3.googleusercontent.com/a/example");
         when(client.fetchUserProfile("google-access-token")).thenReturn(profile);
 

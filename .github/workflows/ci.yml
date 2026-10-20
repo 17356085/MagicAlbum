@@ -454,8 +454,9 @@ jobs:
               or quota.get('concurrentRejected') != 6 or quota.get('remainingLiveLeases') != 2
               or quota.get('lateReleasePreservedReplacement') is not True
               or quota.get('expiredReleasePreservedReplacement') is not True
+              or quota.get('oauthCodeBindingVerified') is not True
               or not 0 < quota.get('ttlMillis', 0) <= 180000):
-              raise SystemExit('Real Redis concurrency lease evidence is incomplete')
+              raise SystemExit('Real Redis concurrency lease or OAuth code binding evidence is incomplete')
           print(f"M4B summary: {len(cases)} executed cases, four screenshots, controlled fixture only, cleanup passed")
           PY
       - name: Upload summary task and browser evidence

@@ -41,7 +41,7 @@ class PostServiceNotificationFailureTest {
         thread.setAuthorId(2L);
         thread.setTitle("Thread");
         thread.setStatus("NORMAL");
-        when(threads.findById(7L)).thenReturn(Optional.of(thread));
+        when(threads.findByIdForInteraction(7L)).thenReturn(Optional.of(thread));
         when(users.existsById(1L)).thenReturn(true);
 
         Post saved = new Post();

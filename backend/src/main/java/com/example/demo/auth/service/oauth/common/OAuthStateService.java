@@ -38,19 +38,20 @@ public class OAuthStateService {
         return new OAuthStateService(stateTtlSeconds, (StringRedisTemplate) null);
     }
 
-    public String issue(OAuthProvider provider) {
+    public String issue(OAuthProvider provider, String codeChallenge) {
+        OAuthBrowserProof.requireChallenge(codeChallenge);
         purgeExpiredStates();
         String state = UUID.randomUUID().toString().replace("-", "");
         OffsetDateTime expiresAt = OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(stateTtlSeconds);
         if (redisTemplate == null) {
-            stateStore.put(state, new OAuthStateSession(provider, expiresAt));
+            stateStore.put(state, new OAuthStateSession(provider, codeChallenge, expiresAt));
         } else {
-            storeInRedis(state, provider);
+            storeInRedis(state, provider, codeChallenge);
         }
         return state;
     }
 
-    public void consume(OAuthProvider provider, String state) {
+    public String consume(OAuthProvider provider, String state) {
         String normalized = trimToEmpty(state);
         if (normalized.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少 OAuth state");
@@ -69,6 +70,7 @@ public class OAuthStateService {
         if (session.provider() != provider) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OAuth state 与当前 Provider 不匹配");
         }
+        return OAuthBrowserProof.requireChallenge(session.codeChallenge());
     }
 
     public boolean consumeSafely(OAuthProvider provider, String state) {
@@ -85,12 +87,12 @@ public class OAuthStateService {
         stateStore.entrySet().removeIf(entry -> entry.getValue().expiresAt().isBefore(now));
     }
 
-    private boolean storeInRedis(String state, OAuthProvider provider) {
+    private boolean storeInRedis(String state, OAuthProvider provider, String codeChallenge) {
         if (redisTemplate == null || provider == null) {
             return false;
         }
         try {
-            redisTemplate.opsForValue().set(redisKey(state), provider.name(), Duration.ofSeconds(stateTtlSeconds));
+            redisTemplate.opsForValue().set(redisKey(state), provider.name() + ":" + codeChallenge, Duration.ofSeconds(stateTtlSeconds));
             return true;
         } catch (Exception ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "OAuth state 服务暂不可用");
@@ -106,8 +108,10 @@ public class OAuthStateService {
             if (providerName == null || providerName.isBlank()) {
                 return null;
             }
-            OAuthProvider provider = OAuthProvider.valueOf(providerName);
-            return new OAuthStateSession(provider, OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(stateTtlSeconds));
+            String[] binding = providerName.split(":", 2);
+            if (binding.length != 2) return null; // Pre-upgrade unbound states fail closed.
+            OAuthProvider provider = OAuthProvider.valueOf(binding[0]);
+            return new OAuthStateSession(provider, binding[1], OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(stateTtlSeconds));
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "OAuth state 服务返回无效数据");
         } catch (Exception ex) {
@@ -125,6 +129,7 @@ public class OAuthStateService {
 
     private record OAuthStateSession(
             OAuthProvider provider,
+            String codeChallenge,
             OffsetDateTime expiresAt
     ) {}
 }

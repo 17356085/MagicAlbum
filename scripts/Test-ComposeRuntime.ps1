@@ -167,7 +167,7 @@ try {
         'DB_NAME=bluealbum_m0', 'NOTIFICATION_DB_NAME=bluealbum_m0_notifications', 'DB_USER=bluealbum',
         "DB_PASSWORD=$(New-ComposeSecret)", "DB_ROOT_PASSWORD=$(New-ComposeSecret)", "REDIS_PASSWORD=$(New-ComposeSecret)",
         'RABBITMQ_USER=bluealbum', "RABBITMQ_PASSWORD=$(New-ComposeSecret)", "JWT_SECRET=$(New-ComposeSecret)",
-        'JWT_ISSUER=MagicAlbum', "INTERNAL_SERVICE_TOKEN=$(New-ComposeSecret)", 'APP_ADMIN_EMAIL='
+        'JWT_ISSUER=MagicAlbum', "INTERNAL_SERVICE_TOKEN=$(New-ComposeSecret)", 'APP_ADMIN_EMAIL=', 'APP_ADMIN_USER_ID=0'
     )
     $sourceLines = @($credentials)
     $restoreLines = @($credentials)
@@ -357,17 +357,22 @@ services:
     if ($image.url -notmatch '^/uploads/[A-Za-z0-9_./-]+$' -or $image.url.Contains('..')) { throw 'Unexpected image URL' }
     $beforeImage = Invoke-WebRequest "$sourceUrl$($image.url)" -TimeoutSec 15
     Confirm-Check (($beforeImage.Headers['Content-Type'] -like 'image/*') -and
-        [Linq.Enumerable]::SequenceEqual([byte[]]$beforeImage.Content, $imageBytes)) 'Uploaded image is served as exact image bytes'
+        (Test-RuntimeByteSequenceEqual -Left ([byte[]]$beforeImage.Content) -Right $imageBytes)) 'Uploaded image is served as exact image bytes'
     $null = Send-VerificationRequest $sourceUrl PATCH "/threads/$($thread.id)" @{
         title = $thread.title; content = "Persisted restore verification ![M0]($($image.url))"
     } $login.accessToken
     $stageFixture = $null
     if ($IncludeStageFixtures) {
+        if ([long]$account.id -le 0 -or [long]$login.user.id -ne [long]$account.id) {
+            throw 'Bootstrap administrator must match the successfully authenticated fixture identity'
+        }
         # Bootstrap only after this isolated fixture account exists. Restart alone
         # cannot apply changed Compose environment values; recreate this backend.
         foreach ($environmentFile in @($sourceEnvironment, $restoreEnvironment)) {
             $lines = [IO.File]::ReadAllLines($environmentFile) | ForEach-Object {
-                if ($_.StartsWith('APP_ADMIN_EMAIL=')) { "APP_ADMIN_EMAIL=$accountEmail" } else { $_ }
+                if ($_.StartsWith('APP_ADMIN_EMAIL=')) { "APP_ADMIN_EMAIL=$accountEmail" }
+                elseif ($_.StartsWith('APP_ADMIN_USER_ID=')) { "APP_ADMIN_USER_ID=$($account.id)" }
+                else { $_ }
             }
             [IO.File]::WriteAllLines($environmentFile, [string[]]$lines)
         }
@@ -411,7 +416,7 @@ services:
     Confirm-Check ([bool]$bookmark.bookmarked) 'Restored bookmark retains account ownership'
     $afterImage = Invoke-WebRequest "$restoreUrl$($image.url)" -TimeoutSec 15
     Confirm-Check (($afterImage.Headers['Content-Type'] -like 'image/*') -and
-        [Linq.Enumerable]::SequenceEqual([byte[]]$afterImage.Content, $imageBytes)) 'Restored application serves the exact uploaded image bytes'
+        (Test-RuntimeByteSequenceEqual -Left ([byte[]]$afterImage.Content) -Right $imageBytes)) 'Restored application serves the exact uploaded image bytes'
     if ($IncludeStageFixtures) {
         $restoredOtherLogin = Send-VerificationRequest $restoreUrl POST '/auth/login' @{email = $otherEmail; password = $otherPassword}
         $stageReadback = Assert-StageRestoreFixture -BaseUrl $restoreUrl -Token $restoredLogin.accessToken `

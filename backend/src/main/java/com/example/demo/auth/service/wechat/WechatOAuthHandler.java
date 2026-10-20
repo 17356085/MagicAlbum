@@ -19,13 +19,14 @@ public class WechatOAuthHandler implements OAuthProviderHandler {
     }
 
     @Override
-    public String buildAuthorizeRedirect() {
-        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.wechat);
+    public String buildAuthorizeRedirect(String codeChallenge) {
+        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.wechat, codeChallenge);
     }
 
     @Override
     public String handleCallback(String code, String state, String error) {
-        if (!authOAuthService.consumeStateSafely(OAuthProvider.wechat, state)) {
+        String codeChallenge = authOAuthService.consumeStateProof(OAuthProvider.wechat, state);
+        if (codeChallenge == null) {
             return authOAuthService.buildProviderErrorRedirect(OAuthProvider.wechat, "OAuth state 无效或已过期");
         }
         if (error != null && !error.isBlank()) {

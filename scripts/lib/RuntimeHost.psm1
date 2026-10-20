@@ -1,5 +1,13 @@
 Set-StrictMode -Version 3.0
 
+function Test-RuntimeByteSequenceEqual {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Left,
+          [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Right)
+    if ($Left.Length -ne $Right.Length) { return $false }
+    return [Convert]::ToBase64String($Left) -ceq [Convert]::ToBase64String($Right)
+}
+
 $script:RuntimePngFixtureBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
 function Get-RuntimeBrowserTempEnvironment {
@@ -152,6 +160,7 @@ function Get-RuntimePngFixtureBytes {
 }
 
 Export-ModuleMember -Function @(
+    'Test-RuntimeByteSequenceEqual',
     'Get-RuntimeBrowserTempEnvironment',
     'Get-RuntimeDefaultPythonExecutable',
     'Test-RuntimeTcpPortAvailable',

@@ -41,6 +41,21 @@ function runPowerShell(source) {
   }
 }
 
+test('image byte equality rejects same-length changes and truncation without LINQ inference', () => {
+  const result = runPowerShell(`
+$ErrorActionPreference = 'Stop'
+Import-Module ${quotePowerShell(modulePath)} -Force
+$bytes = Get-RuntimePngFixtureBytes
+if (-not (Test-RuntimeByteSequenceEqual -Left $bytes -Right ([byte[]]$bytes.Clone()))) { throw 'equal bytes rejected' }
+$changed = [byte[]]$bytes.Clone()
+$changed[20] = $changed[20] -bxor 1
+if (Test-RuntimeByteSequenceEqual -Left $bytes -Right $changed) { throw 'changed byte accepted' }
+if (Test-RuntimeByteSequenceEqual -Left $bytes -Right ([byte[]]@(1))) { throw 'truncated image accepted' }
+if (-not (Test-RuntimeByteSequenceEqual -Left ([byte[]]@()) -Right ([byte[]]@()))) { throw 'empty sequences rejected' }
+`);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
 test('browser temp override preserves Linux native socket paths and Windows workspace isolation', () => {
   const result = runPowerShell(`
 $ErrorActionPreference = 'Stop'

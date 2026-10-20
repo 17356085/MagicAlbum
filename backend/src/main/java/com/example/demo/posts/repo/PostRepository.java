@@ -40,13 +40,13 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
             LEFT JOIN com.example.demo.threads.entity.Thread th ON th.id = p.threadId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = p.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = p.authorId
-            LEFT JOIN Post parent ON parent.id = p.replyToPostId
+            LEFT JOIN Post parent ON parent.id = p.replyToPostId AND parent.status = 'NORMAL'
             LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
-            WHERE p.threadId = :threadId AND p.status = 'NORMAL'
+            WHERE p.threadId = :threadId AND p.status = 'NORMAL' AND th.status = 'NORMAL'
             ORDER BY p.createdAt ASC
             """,
-            countQuery = "SELECT COUNT(p) FROM Post p WHERE p.threadId = :threadId AND p.status = 'NORMAL'")
+            countQuery = "SELECT COUNT(p) FROM Post p, com.example.demo.threads.entity.Thread th WHERE p.threadId = :threadId AND p.status = 'NORMAL' AND th.id = p.threadId AND th.status = 'NORMAL'")
     Page<PostQueryView> findByThreadAscView(Long threadId, Pageable pageable);
 
     @Query(value = """
@@ -69,13 +69,13 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
             LEFT JOIN com.example.demo.threads.entity.Thread th ON th.id = p.threadId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = p.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = p.authorId
-            LEFT JOIN Post parent ON parent.id = p.replyToPostId
+            LEFT JOIN Post parent ON parent.id = p.replyToPostId AND parent.status = 'NORMAL'
             LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
-            WHERE p.threadId = :threadId AND p.status = 'NORMAL'
+            WHERE p.threadId = :threadId AND p.status = 'NORMAL' AND th.status = 'NORMAL'
             ORDER BY (SELECT COUNT(pl) FROM com.example.demo.posts.entity.PostLike pl WHERE pl.postId = p.id) DESC, p.createdAt ASC
             """,
-            countQuery = "SELECT COUNT(p) FROM Post p WHERE p.threadId = :threadId AND p.status = 'NORMAL'")
+            countQuery = "SELECT COUNT(p) FROM Post p, com.example.demo.threads.entity.Thread th WHERE p.threadId = :threadId AND p.status = 'NORMAL' AND th.id = p.threadId AND th.status = 'NORMAL'")
     Page<PostQueryView> findByThreadLikeCountDescView(Long threadId, Pageable pageable);
 
     @Query(value = """
@@ -98,7 +98,7 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
             LEFT JOIN com.example.demo.threads.entity.Thread th ON th.id = p.threadId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = p.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = p.authorId
-            LEFT JOIN Post parent ON parent.id = p.replyToPostId
+            LEFT JOIN Post parent ON parent.id = p.replyToPostId AND parent.status = 'NORMAL'
             LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
             WHERE p.authorId = :authorId
@@ -141,7 +141,7 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
             LEFT JOIN com.example.demo.threads.entity.Thread th ON th.id = p.threadId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = p.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = p.authorId
-            LEFT JOIN Post parent ON parent.id = p.replyToPostId
+            LEFT JOIN Post parent ON parent.id = p.replyToPostId AND parent.status = 'NORMAL'
             LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
             WHERE p.authorId = :authorId
@@ -184,10 +184,10 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
             LEFT JOIN com.example.demo.threads.entity.Thread th ON th.id = p.threadId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = p.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = p.authorId
-            LEFT JOIN Post parent ON parent.id = p.replyToPostId
+            LEFT JOIN Post parent ON parent.id = p.replyToPostId AND parent.status = 'NORMAL'
             LEFT JOIN com.example.demo.user.entity.User pu ON pu.id = parent.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile pup ON pup.userId = parent.authorId
-            WHERE p.id = :id
+            WHERE p.id = :id AND p.status = 'NORMAL' AND th.status = 'NORMAL'
             """)
     Optional<PostQueryView> findViewById(Long id);
 }

@@ -106,6 +106,7 @@ const seedPhone = ref('')
 const seedEmail = ref('')
 const toast = ref('')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
+let oauthRequestId = 0
 
 const currentTitle = computed(() => {
   if (authView.value === 'register') return `注册 ${SITE_NAME}`
@@ -163,12 +164,20 @@ function onLoginSuccess(): void {
 }
 
 function onClose(): void {
+  oauthRequestId += 1
   authStore.invalidateAuthOperations()
   emit('close')
 }
 
-function notifyThirdParty(provider: OAuthProvider): void {
-  const result = startOAuthAuthorize(provider, window.location.pathname + window.location.search + window.location.hash)
+async function notifyThirdParty(provider: OAuthProvider): Promise<void> {
+  const requestId = ++oauthRequestId
+  const generation = authStore.invalidateAuthOperations()
+  const result = await startOAuthAuthorize(
+    provider,
+    window.location.pathname + window.location.search + window.location.hash,
+    () => requestId === oauthRequestId && authStore.isAuthGenerationCurrent(generation),
+  )
+  if (requestId !== oauthRequestId || !authStore.isAuthGenerationCurrent(generation)) return
   showToast(result.message)
 }
 
@@ -178,6 +187,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  oauthRequestId += 1
   if (previousFocus?.isConnected) previousFocus.focus()
 })
 </script>

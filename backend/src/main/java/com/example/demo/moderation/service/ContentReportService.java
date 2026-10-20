@@ -278,7 +278,6 @@ public class ContentReportService {
             return null;
         }
         return postRepository.findById(report.getTargetId())
-                .filter(post -> !"DELETED".equals(post.getStatus()))
                 .map(Post::getThreadId)
                 .orElse(null);
     }

@@ -172,6 +172,49 @@ class PostServiceCacheTest {
     }
 
     @Test
+    void anonymous_cache_should_fallback_when_cached_parent_is_deleted() throws Exception {
+        PostRepository postRepository = mock(PostRepository.class);
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+
+        Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
+        PostDto dto = new PostDto();
+        dto.setId(1L);
+        dto.setThreadId(7L);
+        dto.setReplyToPostId(2L);
+        dto.setUpdatedAt(updatedAt);
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        when(valueOperations.get(anyString())).thenReturn(mapper.writeValueAsString(new Object() {
+            public final List<PostDto> items = List.of(dto);
+            public final long total = 1L;
+        }));
+
+        Post child = new Post();
+        child.setId(1L);
+        child.setThreadId(7L);
+        child.setStatus("NORMAL");
+        child.setUpdatedAt(updatedAt);
+        Post deletedParent = new Post();
+        deletedParent.setId(2L);
+        deletedParent.setThreadId(7L);
+        deletedParent.setStatus("DELETED");
+        deletedParent.setUpdatedAt(updatedAt);
+        when(postRepository.findAllById(List.of(1L))).thenReturn(List.of(child));
+        when(postRepository.findAllById(List.of(2L))).thenReturn(List.of(deletedParent));
+        when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, mapper);
+
+        assertThat(service.listByThread(7L, 1, 20).getContent()).isEmpty();
+        verify(postRepository).findByThreadAscView(7L, PageRequest.of(0, 20));
+    }
+
+    @Test
     void anonymous_cache_validation_failure_should_propagate_database_error() throws Exception {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
@@ -205,7 +248,7 @@ class PostServiceCacheTest {
         ThreadRepository threadRepository = mock(ThreadRepository.class);
         UserRepository userRepository = mock(UserRepository.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(normalThread()));
         when(userRepository.existsById(1L)).thenReturn(true);
         Cursor<String> cursor = mock(Cursor.class);
         when(redisTemplate.scan(any(ScanOptions.class))).thenReturn(cursor);
@@ -251,7 +294,7 @@ class PostServiceCacheTest {
         ThreadRepository threadRepository = mock(ThreadRepository.class);
         UserRepository userRepository = mock(UserRepository.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(normalThread()));
         when(userRepository.existsById(1L)).thenReturn(true);
         Post saved = new Post();
         saved.setId(10L);

@@ -9,6 +9,18 @@ const api = axios.create({
   withCredentials: false,
 })
 const requestAuthGenerations = new WeakMap<InternalAxiosRequestConfig, number>()
+const publicAuthenticationPaths = new Set([
+  '/auth/login', '/users/register', '/auth/code/start', '/auth/code/finish',
+  '/auth/oauth/authorize', '/auth/oauth/exchange', '/auth/qr', '/auth/qr/status',
+  '/auth/qr/cancel', '/auth/qr/exchange',
+])
+
+function isPublicAuthenticationRequest(url: string): boolean {
+  try {
+    const pathname = new URL(url, window.location.origin).pathname.replace(/^\/api\/v1(?=\/)/, '')
+    return publicAuthenticationPaths.has(pathname)
+  } catch { return false }
+}
 
 export function captureAuthGeneration(): number | undefined {
   try { return useAuthStore().getAuthGeneration() } catch { return undefined }
@@ -83,9 +95,7 @@ api.interceptors.response.use(
       try {
         const requestToken = getRequestBearerToken(error)
         const requestUrl = String(error?.config?.url || '')
-        const isAuthRequest =
-          /\/auth\/login\b/.test(requestUrl) ||
-          /\/users\/register\b/.test(requestUrl)
+        const isAuthRequest = isPublicAuthenticationRequest(requestUrl)
         const generation = error.config ? requestAuthGenerations.get(error.config) : undefined
         // A credential rejection describes this login attempt, not an existing bearer session.
         const sameAuthenticatedSession = !isAuthRequest && handleCurrentTokenUnauthorized(requestToken, generation)

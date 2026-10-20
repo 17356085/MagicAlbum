@@ -13,6 +13,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -70,13 +72,9 @@ public class OAuthUserProvisioningService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "OAuth 绑定用户不存在"));
         }
 
-        User user = tryFindByEmail(githubUser.getEmail());
-        if (user == null) {
-            user = tryFindByEmail(buildOAuthFallbackEmail("github", externalId));
-        }
-        if (user == null) {
-            user = createUserFromGithub(githubUser);
-        }
+        // GitHub's /user profile does not carry a verified-email assertion. Never
+        // use its email (or a predictable fallback) to select an existing user.
+        User user = createUserFromGithub(githubUser);
 
         userConnectedAccountsService.bindExternalAccount(user.getId(), "github", externalId, resolveDisplayName(githubUser));
         ensureUserProfile(user, githubUser);
@@ -95,13 +93,10 @@ public class OAuthUserProvisioningService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "OAuth 绑定用户不存在"));
         }
 
-        User user = tryFindByEmail(googleUser.getEmail());
-        if (user == null) {
-            user = tryFindByEmail(buildOAuthFallbackEmail("google", externalId));
-        }
-        if (user == null) {
-            user = createUserFromGoogle(googleUser);
-        }
+        String email = normalizeProviderEmail(googleUser.getEmail());
+        boolean emailVerified = isVerifiedEmail(googleUser.getEmailVerified(), email);
+        rejectExistingVerifiedEmail(email, emailVerified);
+        User user = createUserFromGoogle(googleUser, emailVerified);
 
         userConnectedAccountsService.bindExternalAccount(user.getId(), "google", externalId, resolveDisplayName(googleUser));
         ensureUserProfile(user, googleUser);
@@ -120,13 +115,10 @@ public class OAuthUserProvisioningService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "OAuth 绑定用户不存在"));
         }
 
-        User user = tryFindByEmail(appleUser.getEmail());
-        if (user == null) {
-            user = tryFindByEmail(buildOAuthFallbackEmail("apple", externalId));
-        }
-        if (user == null) {
-            user = createUserFromApple(appleUser);
-        }
+        String email = normalizeProviderEmail(appleUser.getEmail());
+        boolean emailVerified = isVerifiedEmail(appleUser.getEmailVerified(), email);
+        rejectExistingVerifiedEmail(email, emailVerified);
+        User user = createUserFromApple(appleUser, emailVerified);
 
         userConnectedAccountsService.bindExternalAccount(user.getId(), "apple", externalId, resolveDisplayName(appleUser));
         ensureUserProfile(user, appleUser);
@@ -149,37 +141,39 @@ public class OAuthUserProvisioningService {
         }
     }
 
-    private User tryFindByEmail(String email) {
-        String normalized = trimToEmpty(email);
-        if (normalized.isBlank()) {
-            return null;
-        }
-        return userRepository.findByEmail(normalized).orElse(null);
-    }
-
     private User createUserFromGithub(GithubUserProfile githubUser) {
         User user = new User();
         user.setUsername(resolveUniqueUsername(githubUser));
-        user.setEmail(resolveEmail(githubUser));
+        user.setEmail(createUniqueSyntheticOAuthEmail("github"));
+        user.setEmailVerified(false);
         user.setPhone(generateSyntheticPhone(githubUser.getId()));
+        user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
         return userRepository.save(user);
     }
 
-    private User createUserFromGoogle(GoogleUserProfile googleUser) {
+    private User createUserFromGoogle(GoogleUserProfile googleUser, boolean emailVerified) {
         User user = new User();
         user.setUsername(resolveUniqueUsername(googleUser));
-        user.setEmail(resolveEmail(googleUser));
+        user.setEmail(emailVerified
+                ? normalizeProviderEmail(googleUser.getEmail())
+                : createUniqueSyntheticOAuthEmail("google"));
+        user.setEmailVerified(emailVerified);
         user.setPhone(generateSyntheticPhone(googleUser.getSub()));
+        user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
         return userRepository.save(user);
     }
 
-    private User createUserFromApple(AppleIdTokenClaims appleUser) {
+    private User createUserFromApple(AppleIdTokenClaims appleUser, boolean emailVerified) {
         User user = new User();
         user.setUsername(resolveUniqueUsername(appleUser));
-        user.setEmail(resolveEmail(appleUser));
+        user.setEmail(emailVerified
+                ? normalizeProviderEmail(appleUser.getEmail())
+                : createUniqueSyntheticOAuthEmail("apple"));
+        user.setEmailVerified(emailVerified);
         user.setPhone(generateSyntheticPhone(appleUser.getSub()));
+        user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
         return userRepository.save(user);
     }
@@ -272,52 +266,43 @@ public class OAuthUserProvisioningService {
         return candidate;
     }
 
-    private String resolveEmail(GithubUserProfile githubUser) {
-        String email = trimToEmpty(githubUser.getEmail());
-        if (!email.isBlank() && !userRepository.existsByEmail(email)) {
-            return email;
+    private void rejectExistingVerifiedEmail(String email, boolean emailVerified) {
+        if (!emailVerified || !emailExists(email)) {
+            return;
         }
-        return resolveAvailableOAuthFallbackEmail("github", String.valueOf(githubUser.getId()));
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "该邮箱已绑定本地账号，请使用原登录方式");
     }
 
-    private String resolveEmail(GoogleUserProfile googleUser) {
-        String email = trimToEmpty(googleUser.getEmail());
-        if (!email.isBlank() && !userRepository.existsByEmail(email)) {
-            return email;
+    private boolean emailExists(String email) {
+        String normalized = normalizeProviderEmail(email);
+        if (normalized.isBlank()) {
+            return false;
         }
-        return resolveAvailableOAuthFallbackEmail("google", trimToEmpty(googleUser.getSub()));
+        List<User> matches = userRepository.findAllByEmailIgnoreCase(normalized);
+        if (matches != null && !matches.isEmpty()) {
+            return true;
+        }
+        return userRepository.findByEmail(normalized).isPresent() || userRepository.existsByEmail(normalized);
     }
 
-    private String resolveEmail(AppleIdTokenClaims appleUser) {
-        String email = trimToEmpty(appleUser.getEmail());
-        if (!email.isBlank() && !userRepository.existsByEmail(email)) {
-            return email;
+    private String createUniqueSyntheticOAuthEmail(String provider) {
+        String normalizedProvider = trimToEmpty(provider).toLowerCase(Locale.ROOT);
+        for (int attempt = 0; attempt < 16; attempt++) {
+            String candidate = "oauth-" + normalizedProvider + "-"
+                    + UUID.randomUUID().toString().replace("-", "") + "@oauth.invalid";
+            if (!userRepository.existsByEmail(candidate)) {
+                return candidate;
+            }
         }
-        return resolveAvailableOAuthFallbackEmail("apple", trimToEmpty(appleUser.getSub()));
+        throw new IllegalStateException("无法生成唯一的 OAuth 合成邮箱");
     }
 
-    private String resolveAvailableOAuthFallbackEmail(String provider, String externalId) {
-        String base = buildOAuthFallbackEmail(provider, externalId);
-        if (!userRepository.existsByEmail(base)) {
-            return base;
-        }
-
-        int seq = 1;
-        String candidate = buildOAuthFallbackEmail(provider, externalId + "_" + seq);
-        while (userRepository.existsByEmail(candidate)) {
-            seq++;
-            candidate = buildOAuthFallbackEmail(provider, externalId + "_" + seq);
-        }
-        return candidate;
+    private boolean isVerifiedEmail(Boolean verified, String email) {
+        return Boolean.TRUE.equals(verified) && !trimToEmpty(email).isBlank();
     }
 
-    private String buildOAuthFallbackEmail(String provider, String externalId) {
-        String normalizedProvider = trimToEmpty(provider).toLowerCase();
-        String normalizedExternalId = trimToEmpty(externalId).replaceAll("[^A-Za-z0-9_\\-]", "_");
-        if (normalizedExternalId.isBlank()) {
-            normalizedExternalId = UUID.randomUUID().toString().replace("-", "");
-        }
-        return normalizedProvider + "_" + normalizedExternalId + "@oauth.local";
+    private String normalizeProviderEmail(String email) {
+        return trimToEmpty(email).toLowerCase(Locale.ROOT);
     }
 
     private String resolveDisplayName(GithubUserProfile githubUser) {

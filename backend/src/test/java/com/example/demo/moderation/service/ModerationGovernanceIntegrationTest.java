@@ -193,6 +193,28 @@ class ModerationGovernanceIntegrationTest {
     }
 
     @Test
+    void softDeletedReportedPostRemainsInModeratorScopeForDismissal() throws Exception {
+        Thread thread = thread(section);
+        Post post = new Post();
+        post.setThreadId(thread.getId());
+        post.setAuthorId(owner);
+        post.setContentMd("reply");
+        post.setStatus("NORMAL");
+        post = postRows.save(post);
+        Long report = report(ReportTargetType.POST, post.getId());
+        adminPut("/users/" + moderator + "/moderator-sections",
+                "{\"sectionIds\":[" + section.getId() + "],\"reason\":\"负责本分区\"}");
+
+        posts.delete(owner, post.getId());
+
+        assertThat(reports.listForReviewer(moderator, ReportStatus.PENDING, 1, 20).getContent())
+                .extracting(value -> value.getId()).containsExactly(report);
+        reports.resolve(moderator, report, resolution(ReportAction.DISMISS));
+        assertThat(reports.listForReviewer(moderator, ReportStatus.DISMISSED, 1, 20).getContent())
+                .extracting(value -> value.getId()).containsExactly(report);
+    }
+
+    @Test
     void restrictionAndArchiveProtectWritesWhileKeepingReadsAndAuthorDeletion() throws Exception {
         Thread thread = thread(section);
         adminPut("/users/" + owner + "/posting-restriction", "{\"restricted\":true,\"until\":null,\"reason\":\"暂停发言\"}");
@@ -211,7 +233,7 @@ class ModerationGovernanceIntegrationTest {
         assertStatus(403, () -> posts.create(owner, thread.getId(), reply));
         assertThat(threads.getById(thread.getId()).getId()).isEqualTo(thread.getId());
         posts.delete(owner, postId);
-        assertThat(postRows.existsById(postId)).isFalse();
+        assertThat(postRows.findById(postId).orElseThrow().getStatus()).isEqualTo("DELETED");
     }
 
     private void adminPut(String path, String body) throws Exception {

@@ -27,6 +27,22 @@ import static org.mockito.Mockito.when;
 class AuthOAuthCodeExchangeTest {
 
     @Test
+    void wrongBrowserCannotExchangeOrConsumeTheInitiatingBrowsersCode() {
+        JwtTokenProvider tokens = mock(JwtTokenProvider.class);
+        when(tokens.generateToken(77L, "oauth-user")).thenReturn("owned-jwt");
+        AuthOAuthService service = service(tokens);
+        User user = new User(); user.setId(77L); user.setUsername("oauth-user");
+        String code = queryParameter(service.buildSuccessRedirect(OAuthProvider.github, user,
+                "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"), "code");
+        ResponseStatusException wrong = assertThrows(ResponseStatusException.class,
+                () -> service.exchangeAuthorizationCode(code, "a".repeat(43)));
+        assertEquals(400, wrong.getStatusCode().value());
+        org.mockito.Mockito.verifyNoInteractions(tokens);
+        assertEquals("owned-jwt", service.exchangeAuthorizationCode(code,
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk").getAccessToken());
+    }
+
+    @Test
     void shouldExchangeAuthorizationCodeOnceWithoutPuttingJwtInRedirect() {
         JwtTokenProvider jwtTokenProvider = mock(JwtTokenProvider.class);
         when(jwtTokenProvider.generateToken(77L, "oauth-user")).thenReturn("server-issued-jwt");
@@ -37,18 +53,18 @@ class AuthOAuthCodeExchangeTest {
         user.setUsername("oauth-user");
         user.setEmail("oauth@example.com");
 
-        String redirect = service.buildSuccessRedirect(OAuthProvider.github, user, "verified-state");
+        String redirect = service.buildSuccessRedirect(OAuthProvider.github, user, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
         assertFalse(redirect.contains("accessToken="));
         assertFalse(redirect.contains("server-issued-jwt"));
 
         String code = queryParameter(redirect, "code");
-        LoginResponse response = service.exchangeAuthorizationCode(code);
+        LoginResponse response = service.exchangeAuthorizationCode(code, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
         assertEquals("server-issued-jwt", response.getAccessToken());
         assertEquals(77L, response.getUser().getId());
 
         ResponseStatusException replay = assertThrows(
                 ResponseStatusException.class,
-                () -> service.exchangeAuthorizationCode(code)
+                () -> service.exchangeAuthorizationCode(code, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
         );
         assertEquals(400, replay.getStatusCode().value());
     }
@@ -59,7 +75,7 @@ class AuthOAuthCodeExchangeTest {
 
         ResponseStatusException error = assertThrows(
                 ResponseStatusException.class,
-                () -> service.exchangeAuthorizationCode(" ")
+                () -> service.exchangeAuthorizationCode(" ", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
         );
         assertEquals(400, error.getStatusCode().value());
     }

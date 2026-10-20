@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -21,7 +22,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -53,20 +53,14 @@ public class AuthOAuthService {
     private final long authorizationCodeTtlSeconds;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Map<String, AuthorizationCodeRecord> authorizationCodes = new ConcurrentHashMap<>();
-    private static final DefaultRedisScript<String> OAUTH_CODE_EXCHANGE_SCRIPT = new DefaultRedisScript<>(
-            """
-            local userId = redis.call('HGET', KEYS[1], 'userId')
-            if not userId then return '__MISSING__' end
-            local expiresAt = tonumber(redis.call('HGET', KEYS[1], 'expiresAt') or '0')
-            if expiresAt <= tonumber(ARGV[1]) then
-              redis.call('DEL', KEYS[1])
-              return '__EXPIRED__'
-            end
-            redis.call('DEL', KEYS[1])
-            return userId
-            """,
-            String.class
-    );
+    private static final DefaultRedisScript<String> OAUTH_CODE_EXCHANGE_SCRIPT = codeExchangeScript();
+
+    private static DefaultRedisScript<String> codeExchangeScript() {
+        DefaultRedisScript<String> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("redis/oauth-code-exchange.lua"));
+        script.setResultType(String.class);
+        return script;
+    }
 
     public AuthOAuthService(
             @Value("${app.auth.oauth.frontend-callback-url:http://localhost:5173/auth/oauth/callback}") String frontendCallbackUrl,
@@ -151,24 +145,25 @@ public class AuthOAuthService {
         );
     }
 
-    public String buildAuthorizeRedirect(OAuthProvider provider) {
+    public String buildAuthorizeRedirect(OAuthProvider provider, String codeChallenge) {
+        OAuthBrowserProof.requireChallenge(codeChallenge);
         if (provider == OAuthProvider.github) {
-            return buildGithubAuthorizeRedirect();
+            return buildGithubAuthorizeRedirect(codeChallenge);
         }
         if (provider == OAuthProvider.google) {
-            return buildGoogleAuthorizeRedirect();
+            return buildGoogleAuthorizeRedirect(codeChallenge);
         }
         if (provider == OAuthProvider.apple) {
-            return buildAppleAuthorizeRedirect();
+            return buildAppleAuthorizeRedirect(codeChallenge);
         }
         if (provider == OAuthProvider.wechat) {
-            return buildWechatAuthorizeRedirect();
+            return buildWechatAuthorizeRedirect(codeChallenge);
         }
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前 Provider 尚未接入 OAuth 骨架");
     }
 
-    String buildGithubAuthorizeRedirect() {
-        String state = oauthStateService.issue(OAuthProvider.github);
+    String buildGithubAuthorizeRedirect(String codeChallenge) {
+        String state = oauthStateService.issue(OAuthProvider.github, codeChallenge);
         if (githubClientId.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "GitHub OAuth clientId 未配置");
         }
@@ -179,8 +174,8 @@ public class AuthOAuthService {
                 + "&state=" + encode(state);
     }
 
-    String buildGoogleAuthorizeRedirect() {
-        String state = oauthStateService.issue(OAuthProvider.google);
+    String buildGoogleAuthorizeRedirect(String codeChallenge) {
+        String state = oauthStateService.issue(OAuthProvider.google, codeChallenge);
         if (googleClientId.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Google OAuth clientId 未配置");
         }
@@ -194,8 +189,8 @@ public class AuthOAuthService {
                 + "&state=" + encode(state);
     }
 
-    String buildAppleAuthorizeRedirect() {
-        String state = oauthStateService.issue(OAuthProvider.apple);
+    String buildAppleAuthorizeRedirect(String codeChallenge) {
+        String state = oauthStateService.issue(OAuthProvider.apple, codeChallenge);
         if (appleClientId.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Apple OAuth clientId 未配置");
         }
@@ -208,8 +203,8 @@ public class AuthOAuthService {
                 + "&state=" + encode(state);
     }
 
-    String buildWechatAuthorizeRedirect() {
-        String state = oauthStateService.issue(OAuthProvider.wechat);
+    String buildWechatAuthorizeRedirect(String codeChallenge) {
+        String state = oauthStateService.issue(OAuthProvider.wechat, codeChallenge);
         if (wechatAppId.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "微信登录 AppID 未配置");
         }
@@ -222,12 +217,16 @@ public class AuthOAuthService {
                 + "#wechat_redirect";
     }
 
-    public boolean consumeStateSafely(OAuthProvider provider, String state) {
-        return oauthStateService.consumeSafely(provider, state);
+    public String consumeStateProof(OAuthProvider provider, String state) {
+        try { return oauthStateService.consume(provider, state); }
+        catch (ResponseStatusException rejected) {
+            if (rejected.getStatusCode().value() >= 500) throw rejected;
+            return null;
+        }
     }
 
-    public String buildSuccessRedirect(OAuthProvider provider, User user, String state) {
-        String authorizationCode = issueAuthorizationCode(provider, user, state);
+    public String buildSuccessRedirect(OAuthProvider provider, User user, String codeChallenge) {
+        String authorizationCode = issueAuthorizationCode(provider, user, codeChallenge);
         String base = resolveFrontendCallbackBase();
         return new StringBuilder(base)
                 .append(base.contains("?") ? "&" : "?")
@@ -237,7 +236,8 @@ public class AuthOAuthService {
                 .toString();
     }
 
-    public LoginResponse exchangeAuthorizationCode(String code) {
+    public LoginResponse exchangeAuthorizationCode(String code, String codeVerifier) {
+        String codeChallenge = OAuthBrowserProof.challenge(codeVerifier);
         String normalizedCode = trimToEmpty(code);
         if (normalizedCode.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少 OAuth code");
@@ -249,10 +249,10 @@ public class AuthOAuthService {
                 String result = redisTemplate.execute(
                         OAUTH_CODE_EXCHANGE_SCRIPT,
                         java.util.List.of(RedisKeys.oauthCode(normalizedCode)),
-                        String.valueOf(OffsetDateTime.now(ZoneOffset.UTC).toEpochSecond())
+                        String.valueOf(OffsetDateTime.now(ZoneOffset.UTC).toEpochSecond()), codeChallenge
                 );
                 if (result != null) {
-                    if ("__MISSING__".equals(result) || "__EXPIRED__".equals(result)) {
+                    if ("__MISSING__".equals(result) || "__EXPIRED__".equals(result) || "__BINDING__".equals(result)) {
                         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OAuth code 无效或已过期");
                     }
                     return issueLogin(Long.valueOf(result));
@@ -265,7 +265,15 @@ public class AuthOAuthService {
             }
         }
 
-        AuthorizationCodeRecord record = authorizationCodes.remove(normalizedCode);
+        java.util.concurrent.atomic.AtomicReference<AuthorizationCodeRecord> accepted = new java.util.concurrent.atomic.AtomicReference<>();
+        authorizationCodes.compute(normalizedCode, (key, candidate) -> {
+            if (candidate == null || !candidate.expiresAt().isAfter(OffsetDateTime.now(ZoneOffset.UTC))) return null;
+            if (!MessageDigest.isEqual(candidate.codeChallenge().getBytes(StandardCharsets.US_ASCII),
+                    codeChallenge.getBytes(StandardCharsets.US_ASCII))) return candidate;
+            accepted.set(candidate);
+            return null;
+        });
+        AuthorizationCodeRecord record = accepted.get();
         if (record == null || record.expiresAt().isBefore(OffsetDateTime.now(ZoneOffset.UTC))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OAuth code 无效或已过期");
         }
@@ -284,7 +292,8 @@ public class AuthOAuthService {
         );
     }
 
-    private String issueAuthorizationCode(OAuthProvider provider, User user, String state) {
+    private String issueAuthorizationCode(OAuthProvider provider, User user, String codeChallenge) {
+        OAuthBrowserProof.requireChallenge(codeChallenge);
         if (provider == null || user == null || user.getId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "OAuth 登录用户信息不完整");
         }
@@ -297,7 +306,7 @@ public class AuthOAuthService {
                 trimToEmpty(user.getEmail()),
                 trimToEmpty(user.getPhone()),
                 user.getCreatedAt(),
-                hashValue(state),
+                codeChallenge,
                 OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(authorizationCodeTtlSeconds)
         );
         if (redisTemplate == null) {
@@ -317,7 +326,7 @@ public class AuthOAuthService {
             values.put("provider", record.provider().name());
             values.put("userId", String.valueOf(record.userId()));
             values.put("expiresAt", String.valueOf(record.expiresAt().toEpochSecond()));
-            values.put("stateHash", record.stateHash());
+            values.put("codeChallenge", record.codeChallenge());
             redisTemplate.opsForHash().putAll(RedisKeys.oauthCode(code), values);
             redisTemplate.expire(RedisKeys.oauthCode(code), Duration.ofSeconds(authorizationCodeTtlSeconds));
             return true;
@@ -335,16 +344,6 @@ public class AuthOAuthService {
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private String hashValue(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(trimToEmpty(value).getBytes(StandardCharsets.UTF_8));
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 不可用", ex);
-        }
     }
 
     private UserDto toUserDto(AuthorizationCodeRecord record) {
@@ -398,7 +397,7 @@ public class AuthOAuthService {
             String email,
             String phone,
             java.time.OffsetDateTime createdAt,
-            String stateHash,
+            String codeChallenge,
             OffsetDateTime expiresAt
     ) {
     }

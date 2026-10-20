@@ -29,6 +29,21 @@ afterEach(() => {
 })
 
 describe('API permission response', () => {
+  it.each(['/auth/code/finish', '/auth/oauth/exchange', '/auth/qr/exchange',
+    '/api/v1/auth/code/finish?next=/threads', '/users/register'])(
+  'preserves the current session when the independent auth challenge %s fails', async (path) => {
+    api.defaults.adapter = async (config) => { throw { config, response: { status: 401 } } }
+    await expect(api.post(path)).rejects.toMatchObject({ response: { status: 401 } })
+    expect(authState.handleUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it.each(['/auth/qr/scan', '/auth/qr/confirm', '/threads?next=/auth/login', '/auth/login/extra'])(
+  'still expires an invalid bearer on protected path %s', async (path) => {
+    window.__authExpiredAlertShown = true
+    api.defaults.adapter = async (config) => { throw { config, response: { status: 401 } } }
+    await expect(api.post(path)).rejects.toMatchObject({ response: { status: 401 } })
+    expect(authState.handleUnauthorized).toHaveBeenCalledOnce()
+  })
   it('preserves an existing session when a replacement login rejects its credentials', async () => {
     api.defaults.adapter = async (config) => { throw { config, response: { status: 401 } } }
     await expect(api.post('/auth/login', { email: 'other@example.test', password: 'invalid' }))

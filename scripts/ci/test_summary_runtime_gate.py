@@ -129,6 +129,20 @@ class SummaryRuntimeGuards(unittest.TestCase):
         self.assertNotIn("load_dotenv", source)
         self.assertNotIn("dotenv", source.lower())
 
+    def test_redis_acceptance_reuses_production_oauth_binding_lua_and_owned_keys(self):
+        source = Path(__file__).with_name("summary-runtime-smoke.py").read_text(encoding="utf-8")
+        self.assertIn('"oauth-code-exchange.lua"', source)
+        self.assertIn('"__MISSING__"', source)
+        self.assertIn('"__EXPIRED__"', source)
+        self.assertIn('"__BINDING__"', source)
+        self.assertIn('"oauthCodeBindingVerified": True', source)
+        self.assertIn('"oauth:code:acceptance-" + secrets.token_hex(16)', source)
+        self.assertIn('redis("DEL", key, oauth_key, expired_oauth_key, legacy_oauth_key)', source)
+
+    def test_ci_requires_oauth_binding_evidence_in_the_strict_summary_guard(self):
+        source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("quota.get('oauthCodeBindingVerified') is not True", source)
+
     def test_auth_scope_browser_and_audit_boundaries_are_explicit(self):
         source = Path(__file__).with_name("summary-runtime-smoke.py").read_text(encoding="utf-8")
         self.assertIn('summary_request("GET", f"/ai/summary/{self.thread_id}", None)', source)

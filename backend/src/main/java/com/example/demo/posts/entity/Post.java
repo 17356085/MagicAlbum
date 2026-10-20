@@ -31,7 +31,7 @@ public class Post {
     private Long replyToPostId;
 
     @Column(nullable = false, length = 32)
-    private String status = "NORMAL"; // NORMAL/HIDDEN/DELETED（MVP 仅使用 NORMAL）
+    private String status = "NORMAL"; // NORMAL/HIDDEN/DELETED
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

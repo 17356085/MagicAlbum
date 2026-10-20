@@ -1,5 +1,10 @@
 import { setPendingAuthRedirect } from '@/utils/authStorage'
 import type { OAuthProvider } from '@/types'
+import {
+  clearOAuthBrowserProof,
+  createOAuthBrowserProof,
+  storeOAuthBrowserProof,
+} from '@/utils/oauthBrowserProof'
 
 export interface OAuthProviderConfig {
   id: OAuthProvider
@@ -7,6 +12,12 @@ export interface OAuthProviderConfig {
   enabled: boolean
   authorizeUrl: string
   status: 'ready' | 'planned'
+}
+
+export interface OAuthAuthorizeResult {
+  ok: boolean
+  message: string
+  cancelled?: boolean
 }
 
 function isEnabled(value: string | undefined, fallback = false): boolean {
@@ -78,7 +89,22 @@ export function getOAuthProviderConfig(provider: OAuthProvider): OAuthProviderCo
   return getOAuthProviderConfigs().find((item) => item.id === provider)
 }
 
-export function startOAuthAuthorize(provider: OAuthProvider, redirectPath: string): { ok: boolean; message: string } {
+function appendBrowserProof(url: string, challenge: string): string {
+  const target = new URL(url, window.location.href)
+  target.searchParams.set('code_challenge', challenge)
+  target.searchParams.set('code_challenge_method', 'S256')
+  return target.toString()
+}
+
+function cancelledResult(): OAuthAuthorizeResult {
+  return { ok: false, cancelled: true, message: '第三方登录请求已取消' }
+}
+
+export async function startOAuthAuthorize(
+  provider: OAuthProvider,
+  redirectPath: string,
+  isCurrent: () => boolean = () => true,
+): Promise<OAuthAuthorizeResult> {
   const config = getOAuthProviderConfig(provider)
   if (!config) {
     return { ok: false, message: '未找到对应的第三方登录配置' }
@@ -92,7 +118,28 @@ export function startOAuthAuthorize(provider: OAuthProvider, redirectPath: strin
     return { ok: false, message: `${config.label} 登录未配置授权地址` }
   }
 
+  let proof
+  try {
+    proof = await createOAuthBrowserProof(provider)
+  } catch (_) {
+    return { ok: false, message: `${config.label} 登录校验准备失败，请重试` }
+  }
+
+  if (!isCurrent()) return cancelledResult()
+  if (!storeOAuthBrowserProof(proof)) {
+    return { ok: false, message: `${config.label} 登录校验无法保存，请重试` }
+  }
+  if (!isCurrent()) {
+    clearOAuthBrowserProof(proof)
+    return cancelledResult()
+  }
+
   setPendingAuthRedirect(redirectPath)
-  window.location.assign(config.authorizeUrl)
+  if (!isCurrent()) {
+    clearOAuthBrowserProof(proof)
+    return cancelledResult()
+  }
+
+  window.location.assign(appendBrowserProof(config.authorizeUrl, proof.challenge))
   return { ok: true, message: `正在跳转到 ${config.label} 授权页` }
 }

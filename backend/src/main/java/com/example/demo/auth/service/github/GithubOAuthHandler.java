@@ -35,13 +35,14 @@ public class GithubOAuthHandler implements OAuthProviderHandler {
     }
 
     @Override
-    public String buildAuthorizeRedirect() {
-        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.github);
+    public String buildAuthorizeRedirect(String codeChallenge) {
+        return authOAuthService.buildAuthorizeRedirect(OAuthProvider.github, codeChallenge);
     }
 
     @Override
     public String handleCallback(String code, String state, String error) {
-        if (!authOAuthService.consumeStateSafely(OAuthProvider.github, state)) {
+        String codeChallenge = authOAuthService.consumeStateProof(OAuthProvider.github, state);
+        if (codeChallenge == null) {
             return authOAuthService.buildProviderErrorRedirect(OAuthProvider.github, "OAuth state 无效或已过期");
         }
         if (error != null && !error.isBlank()) {
@@ -61,6 +62,6 @@ public class GithubOAuthHandler implements OAuthProviderHandler {
         }
 
         User user = oauthUserProvisioningService.resolveOrCreateGithubUser(githubUser);
-        return authOAuthService.buildSuccessRedirect(OAuthProvider.github, user, state);
+        return authOAuthService.buildSuccessRedirect(OAuthProvider.github, user, codeChallenge);
     }
 }

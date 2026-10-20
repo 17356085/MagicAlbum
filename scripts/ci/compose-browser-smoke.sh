@@ -236,6 +236,7 @@ RABBITMQ_PASSWORD=$rabbitmq_password
 JWT_ISSUER=MagicAlbum
 JWT_SECRET=$jwt_secret
 APP_ADMIN_EMAIL=
+APP_ADMIN_USER_ID=0
 INTERNAL_SERVICE_TOKEN=$internal_service_token
 COMPOSE_MYSQL_PORT=$mysql_port
 COMPOSE_REDIS_PORT=$redis_port

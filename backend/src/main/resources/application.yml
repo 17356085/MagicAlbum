@@ -84,6 +84,9 @@ springdoc:
     tags-sorter: alpha
 
 app:
+  admin:
+    user-id: ${APP_ADMIN_USER_ID:0}
+    email: ${APP_ADMIN_EMAIL:}
   media:
     registration-enabled: ${MEDIA_REGISTRATION_ENABLED:${MEDIA_PROCESSING_ENABLED:false}}
     processing-enabled: ${MEDIA_PROCESSING_ENABLED:false}

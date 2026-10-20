@@ -41,7 +41,9 @@ class OAuthProvisioningTransactionIT {
         var service = new OAuthUserProvisioningService(users, profiles, binding, passwords, manager);
         var profile = profile(81001L);
         assertThatThrownBy(() -> service.resolveOrCreateGithubUser(profile)).isInstanceOf(IllegalStateException.class);
-        assertThat(users.findByEmail(profile.getEmail())).isEmpty();
+        assertThat(users.findAll().stream()
+                .filter(user -> user.getUsername().startsWith("oauth_atomic_81001")))
+                .isEmpty();
     }
 
     @Test void concurrentFirstLoginReturnsOneCompleteIdentityWithoutAnOrphan() throws Exception {

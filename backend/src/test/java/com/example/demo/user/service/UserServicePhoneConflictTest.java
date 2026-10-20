@@ -70,6 +70,66 @@ class UserServicePhoneConflictTest {
         verify(userRepository, never()).save(org.mockito.ArgumentMatchers.any(User.class));
     }
 
+    @Test
+    void registration_explicitly_starts_with_both_contacts_unverified() {
+        RegisterRequest request = new RegisterRequest();
+        request.setUsername("new-contact-user");
+        request.setEmail("new-contact@example.test");
+        request.setPhone("13800138009");
+        request.setPassword("Password1");
+        when(passwordEncoder.encode("Password1")).thenReturn("encoded");
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.register(request);
+
+        var captured = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(captured.capture());
+        assertThat(captured.getValue().isEmailVerified()).isFalse();
+        assertThat(captured.getValue().isPhoneVerified()).isFalse();
+    }
+
+    @Test
+    void basic_info_update_preserves_unchanged_verification_and_resets_changed_contact_only() {
+        User current = user(7L, "current-user", "current@example.test", PHONE);
+        current.setEmailVerified(true);
+        current.setPhoneVerified(true);
+        BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
+        request.setPhone("13800138002");
+        when(userRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(userRepository.findByUsername(current.getUsername())).thenReturn(Optional.of(current));
+        when(userRepository.findByEmail(current.getEmail())).thenReturn(Optional.of(current));
+        when(userRepository.findByPhone("13800138002")).thenReturn(Optional.empty());
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.updateBasicInfo(7L, request);
+
+        assertThat(current.isEmailVerified()).isTrue();
+        assertThat(current.isPhoneVerified()).isFalse();
+    }
+
+    @Test
+    void basic_info_update_with_same_contacts_preserves_both_verification_flags() {
+        User current = user(7L, "current-user", "current@example.test", PHONE);
+        current.setEmailVerified(true);
+        current.setPhoneVerified(true);
+        BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
+        request.setEmail(current.getEmail());
+        request.setPhone(current.getPhone());
+        when(userRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(userRepository.findByUsername(current.getUsername())).thenReturn(Optional.of(current));
+        when(userRepository.findByEmail(current.getEmail())).thenReturn(Optional.of(current));
+        when(userRepository.findByPhone(current.getPhone())).thenReturn(Optional.of(current));
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.updateBasicInfo(7L, request);
+
+        assertThat(current.isEmailVerified()).isTrue();
+        assertThat(current.isPhoneVerified()).isTrue();
+    }
+
     private static User user(Long id, String username, String email, String phone) {
         User user = new User();
         user.setId(id);

@@ -36,6 +36,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { exchangeOAuthCode } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { clearPendingAuthRedirect, getPendingAuthRedirect } from '@/utils/authStorage'
+import { consumeOAuthBrowserProof, isOAuthProvider } from '@/utils/oauthBrowserProof'
 import { getSingleQueryValue } from '@/utils/router'
 
 const route = useRoute()
@@ -60,10 +61,26 @@ const nextPath = computed(() => {
 })
 
 async function finalizeSuccess(): Promise<void> {
+  const providerValue = getSingleQueryValue(route.query.provider).trim().toLowerCase()
   const code = getSingleQueryValue(route.query.code).trim()
+  if (!isOAuthProvider(providerValue)) {
+    success.value = false
+    message.value = '回调缺少有效的第三方登录 Provider，请重新发起登录。'
+    clearCallbackQuery()
+    return
+  }
   if (!code) {
     success.value = false
     message.value = '回调缺少一次性登录 code，请重新发起第三方登录。'
+    clearCallbackQuery()
+    return
+  }
+
+  const codeVerifier = consumeOAuthBrowserProof(providerValue)
+  if (!codeVerifier) {
+    success.value = false
+    message.value = '当前标签页的 OAuth 登录校验已失效，请重新发起登录。'
+    clearCallbackQuery()
     return
   }
 
@@ -71,7 +88,7 @@ async function finalizeSuccess(): Promise<void> {
   const generation = authStore.invalidateAuthOperations()
   operationGeneration = generation
   try {
-    const authResponse = await exchangeOAuthCode(code)
+    const authResponse = await exchangeOAuthCode(code, codeVerifier)
     if (!isCurrentOperation(generation)) return
     if (!authResponse.accessToken) {
       throw new Error('OAuth code exchange returned no access token')

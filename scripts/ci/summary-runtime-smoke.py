@@ -382,8 +382,8 @@ class SummaryAcceptance(BaseAcceptance):
         self.refresh_urls()
         self.owner = self.register_login("owner")
         self.other = self.register_login("other")
-        self.runtime.set_admin_email(self.owner.email)
-        self.runtime.restart_backend_with_admin_email()
+        self.runtime.set_admin_identity(self.owner.email, self.owner.user_id)
+        self.runtime.restart_backend_with_admin_identity()
         self.refresh_urls()
         access = self.governance(self.owner)
         if access.get("admin") is not True:
@@ -800,17 +800,24 @@ class SummaryAcceptance(BaseAcceptance):
         scripts = ROOT_DIR / "backend/src/main/resources/redis"
         acquire = (scripts / "ai-quota-acquire.lua").read_text(encoding="utf-8")
         release = (scripts / "ai-quota-release.lua").read_text(encoding="utf-8")
+        oauth_exchange = (scripts / "oauth-code-exchange.lua").read_text(encoding="utf-8")
         key = "ai:concurrent:leases:user:acceptance-" + secrets.token_hex(16)
         members = [secrets.token_hex(16) for _ in range(10)]
+        oauth_key = "oauth:code:acceptance-" + secrets.token_hex(16)
+        expired_oauth_key = "oauth:code:acceptance-" + secrets.token_hex(16)
+        legacy_oauth_key = "oauth:code:acceptance-" + secrets.token_hex(16)
 
-        def redis(*args: str) -> int:
+        def redis_raw(*args: str) -> str:
             output = self.runtime.compose(
                 "exec", "-T", "redis", "sh", "-c",
                 'export REDISCLI_AUTH="$REDIS_PASSWORD"; exec redis-cli --raw "$@"',
                 "redis-cli", *args, timeout=30,
             )
+            return output.strip()
+
+        def redis(*args: str) -> int:
             try:
-                return int(output.strip())
+                return int(redis_raw(*args))
             except ValueError as error:
                 raise GateFailure("Redis quota script did not return an integer") from error
 
@@ -836,13 +843,49 @@ class SummaryAcceptance(BaseAcceptance):
             ttl = redis("PTTL", key)
             if not 0 < ttl <= 180000 or take(owners[0]) != 0:
                 raise GateFailure("quota expiry or rejection bound was lost")
+
+            now = int(time.time())
+            redis(
+                "HSET", oauth_key,
+                "userId", "31415",
+                "expiresAt", str(now + 90),
+                "codeChallenge", "rightproof",
+            )
+            if redis_raw("EVAL", oauth_exchange, "1", oauth_key, str(now), "wrongproof") != "__BINDING__":
+                raise GateFailure("OAuth wrong proof was accepted")
+            if redis_raw("HGET", oauth_key, "userId") != "31415":
+                raise GateFailure("OAuth wrong proof did not preserve the code record")
+            if redis_raw("EVAL", oauth_exchange, "1", oauth_key, str(now), "rightproof") != "31415":
+                raise GateFailure("OAuth right proof did not return the stored user id")
+            if redis_raw("EXISTS", oauth_key) != "0":
+                raise GateFailure("OAuth right proof did not consume the code exactly once")
+            if redis_raw("EVAL", oauth_exchange, "1", oauth_key, str(now), "rightproof") != "__MISSING__":
+                raise GateFailure("OAuth replay was accepted")
+
+            redis(
+                "HSET", expired_oauth_key,
+                "userId", "27182",
+                "expiresAt", str(now - 1),
+                "codeChallenge", "rightproof",
+            )
+            if redis_raw("EVAL", oauth_exchange, "1", expired_oauth_key, str(now), "rightproof") != "__EXPIRED__":
+                raise GateFailure("expired OAuth code was accepted")
+            if redis_raw("EXISTS", expired_oauth_key) != "0":
+                raise GateFailure("expired OAuth code was not deleted")
+
+            redis("HSET", legacy_oauth_key, "userId", "16180", "expiresAt", str(now + 90))
+            if redis_raw("EVAL", oauth_exchange, "1", legacy_oauth_key, str(now), "rightproof") != "__BINDING__":
+                raise GateFailure("legacy OAuth code without a challenge was accepted")
+            if redis_raw("HGET", legacy_oauth_key, "userId") != "16180":
+                raise GateFailure("legacy OAuth code without a challenge was not preserved")
+
             (self.runtime.artifact_dir / "quota-lease-readback.json").write_text(json.dumps({
                 "passed": True, "concurrentAccepted": 2, "concurrentRejected": 6,
                 "lateReleasePreservedReplacement": True, "expiredReleasePreservedReplacement": True,
-                "remainingLiveLeases": 2, "ttlMillis": ttl,
+                "remainingLiveLeases": 2, "ttlMillis": ttl, "oauthCodeBindingVerified": True,
             }, indent=2) + "\n", encoding="utf-8")
         finally:
-            redis("DEL", key)
+            redis("DEL", key, oauth_key, expired_oauth_key, legacy_oauth_key)
 
     def provider_failure_and_retry(self) -> None:
         self._setup()
@@ -1011,7 +1054,7 @@ class SummaryAcceptance(BaseAcceptance):
         backend_port = self.runtime.ports.get("backend")
         frontend_port = self.runtime.ports.get("frontend")
         cors_origin = self.runtime.env_values.get("APP_CORS_ALLOWED_ORIGINS")
-        self.runtime.restart_backend_with_admin_email()
+        self.runtime.restart_backend_with_admin_identity()
         self.refresh_urls()
         if self.runtime.ports.get("backend") != backend_port or self.runtime.ports.get("frontend") != frontend_port:
             raise GateFailure("backend or frontend port changed during durable backend restart")

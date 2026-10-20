@@ -37,10 +37,15 @@ public class AuthOAuthController {
 
     @GetMapping("/authorize")
     public ResponseEntity<Void> authorize(@RequestParam("provider") OAuthProvider provider,
+                                          @RequestParam("code_challenge") String codeChallenge,
+                                          @RequestParam(value = "code_challenge_method", defaultValue = "S256") String method,
                                           HttpServletRequest httpRequest) {
+        if (!"S256".equals(method)) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.BAD_REQUEST, "仅支持 S256 登录校验");
+        }
         rateLimiter.enforce("oauth-start-ip", RequestIdentity.clientIp(httpRequest), 60, 20);
         rateLimiter.enforce("oauth-start-device", RequestIdentity.device(httpRequest), 300, 10);
-        String location = oauthLoginCoordinator.buildAuthorizeRedirect(provider);
+        String location = oauthLoginCoordinator.buildAuthorizeRedirect(provider, codeChallenge);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .header(HttpHeaders.LOCATION, location)
                 .build();
@@ -67,6 +72,6 @@ public class AuthOAuthController {
                                                   HttpServletRequest httpRequest) {
         rateLimiter.enforce("oauth-exchange-ip", RequestIdentity.clientIp(httpRequest), 60, 30);
         rateLimiter.enforce("oauth-exchange-device", RequestIdentity.device(httpRequest), 300, 20);
-        return ResponseEntity.ok(authOAuthService.exchangeAuthorizationCode(request.getCode()));
+        return ResponseEntity.ok(authOAuthService.exchangeAuthorizationCode(request.getCode(), request.getCodeVerifier()));
     }
 }

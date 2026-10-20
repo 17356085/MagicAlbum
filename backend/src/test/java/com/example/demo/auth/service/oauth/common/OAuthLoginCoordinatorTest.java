@@ -24,7 +24,7 @@ class OAuthLoginCoordinatorTest {
 
         OAuthLoginCoordinator coordinator = new OAuthLoginCoordinator(List.of(githubHandler, googleHandler));
 
-        assertEquals("github-authorize", coordinator.buildAuthorizeRedirect(OAuthProvider.github));
+        assertEquals("github-authorize", coordinator.buildAuthorizeRedirect(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"));
         assertEquals("google-callback", coordinator.handleCallback(OAuthProvider.google, "code", "state", null));
     }
 
@@ -35,7 +35,7 @@ class OAuthLoginCoordinatorTest {
     ) implements OAuthProviderHandler {
 
         @Override
-        public String buildAuthorizeRedirect() {
+        public String buildAuthorizeRedirect(String codeChallenge) {
             return authorizeResult;
         }
 

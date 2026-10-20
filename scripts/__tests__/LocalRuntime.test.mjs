@@ -140,7 +140,7 @@ test('isolates inherited binding and override environment variables', () => {
 $namesToSet = @(
     'NOTIFICATION_DATASOURCE_URL', 'SPRING_DATASOURCE_URL', 'SPRING_FLYWAY_ENABLED',
     'SPRING_CONFIG_ADDITIONAL_LOCATION', 'APP_SECURITY_JWT_SECRET', 'SPRING_PROFILES_ACTIVE',
-    'APP_NOTIFICATIONS_CLIENT_ENABLED', 'APP_ADMIN_EMAIL', 'GATEWAY_PORT', 'JAVA_TOOL_OPTIONS'
+    'APP_NOTIFICATIONS_CLIENT_ENABLED', 'APP_ADMIN_EMAIL', 'APP_ADMIN_USER_ID', 'GATEWAY_PORT', 'JAVA_TOOL_OPTIONS'
 )
 try {
     foreach ($name in $namesToSet) { [Environment]::SetEnvironmentVariable($name, 'sentinel', 'Process') }

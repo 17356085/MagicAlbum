@@ -17,6 +17,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Objects;
+
 @Service
 public class UserService {
     private final UserRepository userRepository;
@@ -62,6 +64,8 @@ public class UserService {
         u.setEmail(req.getEmail());
         u.setPhone(req.getPhone());
         u.setPasswordHash(hash);
+        u.setEmailVerified(false);
+        u.setPhoneVerified(false);
         User saved = userRepository.save(u);
 
         // 映射响应
@@ -123,6 +127,9 @@ public class UserService {
         if (nextEmail.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "邮箱不能为空");
         if (nextPhone.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "手机号不能为空");
 
+        boolean emailChanged = !Objects.equals(nextEmail, u.getEmail());
+        boolean phoneChanged = !Objects.equals(nextPhone, u.getPhone());
+
         // 唯一性校验（排除自身）
         userRepository.findByUsername(nextUsername).ifPresent(other -> {
             if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "用户名不可重复");
@@ -137,6 +144,8 @@ public class UserService {
         u.setUsername(nextUsername);
         u.setEmail(nextEmail);
         u.setPhone(nextPhone);
+        if (emailChanged) u.setEmailVerified(false);
+        if (phoneChanged) u.setPhoneVerified(false);
         User saved = userRepository.save(u);
         return toDto(saved);
     }

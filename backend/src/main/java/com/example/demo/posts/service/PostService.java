@@ -95,10 +95,12 @@ public class PostService {
         this(postRepository, null, threadRepository, userRepository, redisTemplate, objectMapper, null);
     }
 
+    @Transactional(readOnly = true)
     public Page<PostDto> listByThread(Long threadId, int page, int size) {
         return listByThread(threadId, null, "time", page, size);
     }
 
+    @Transactional(readOnly = true)
     public Page<PostDto> listByThread(Long threadId, Long currentUserId, String sort, int page, int size) {
         findNormalThread(threadId);
         int limit = Math.min(Math.max(size, 1), 50);
@@ -125,12 +127,14 @@ public class PostService {
         return result;
     }
 
+    @Transactional(readOnly = true)
     public Page<PostDto> listByAuthor(Long authorId, int page, int size) {
         PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 50));
         Page<PostQueryView> p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, null, null, pr);
         return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
     }
 
+    @Transactional(readOnly = true)
     public Page<PostDto> listByAuthor(Long authorId, String q, Long sectionId, String sort, int page, int size) {
         PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 50));
         String s = (sort == null || sort.isBlank()) ? "createdAt" : sort.trim();
@@ -172,8 +176,11 @@ public class PostService {
         Long parentId = req.getReplyToPostId();
         Post parent = null;
         if (parentId != null) {
-            parent = postRepository.findActiveById(parentId)
+            parent = postRepository.findByIdForInteraction(parentId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "父评论不存在或已删除"));
+            if (!"NORMAL".equals(parent.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "父评论不存在或已删除");
+            }
             if (!parent.getThreadId().equals(threadId)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "父评论不属于该帖子");
             }
@@ -246,13 +253,13 @@ public class PostService {
 
     @Transactional
     public PostDto update(Long userId, Long postId, UpdatePostRequest req) {
-        if (governance != null) {
-            Long parentThread = postRepository.findThreadIdByPostId(postId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
-            lockThreadForWriting(userId, parentThread);
-        }
+        Long parentThread = postRepository.findThreadIdByPostId(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        lockThreadForWriting(userId, parentThread);
         Post post = findPostForInteraction(postId);
-        findNormalThread(post.getThreadId());
+        if (!parentThread.equals(post.getThreadId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "评论所属帖子已变化，请刷新后重试");
+        }
         if (!post.getAuthorId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可编辑评论");
         }
@@ -271,20 +278,31 @@ public class PostService {
 
     @Transactional
     public void delete(Long userId, Long postId) {
+        Long parentThread = postRepository.findThreadIdByPostId(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        lockThreadForDeletion(parentThread);
         Post post = findPostForInteraction(postId);
-        findNormalThread(post.getThreadId());
+        if (!parentThread.equals(post.getThreadId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "评论所属帖子已变化，请刷新后重试");
+        }
         if (!post.getAuthorId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅作者可删除评论");
         }
-        postRepository.deleteById(postId);
+        post.setStatus("DELETED");
+        postRepository.save(post);
         evictThreadCachesAfterCommit(post.getThreadId());
     }
 
     @Transactional
     public void hideForModeration(Long postId) {
+        Long parentThread = postRepository.findThreadIdByPostId(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        lockThreadForInteraction(parentThread);
         Post post = postRepository.findByIdForInteraction(postId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
-        findNormalThread(post.getThreadId());
+        if (!parentThread.equals(post.getThreadId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "评论所属帖子已变化，请刷新后重试");
+        }
         if ("HIDDEN".equals(post.getStatus())) return;
         if (!"NORMAL".equals(post.getStatus())) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在");
         post.setStatus("HIDDEN");
@@ -294,9 +312,14 @@ public class PostService {
 
     @Transactional
     public void restoreForModeration(Long postId) {
+        Long parentThread = postRepository.findThreadIdByPostId(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        lockThreadForInteraction(parentThread);
         Post post = postRepository.findByIdForInteraction(postId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
-        findNormalThread(post.getThreadId());
+        if (!parentThread.equals(post.getThreadId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "评论所属帖子已变化，请刷新后重试");
+        }
         if ("NORMAL".equals(post.getStatus())) return;
         if (!"HIDDEN".equals(post.getStatus())) throw new ResponseStatusException(HttpStatus.CONFLICT, "只能恢复审核隐藏的内容");
         post.setStatus("NORMAL");
@@ -305,14 +328,27 @@ public class PostService {
     }
 
     private com.example.demo.threads.entity.Thread lockThreadForWriting(Long actor, Long threadId) {
-        if (governance == null) return findNormalThread(threadId);
-        Long section = threadRepository.findSectionIdByThreadId(threadId)
+        if (governance != null) {
+            Long section = threadRepository.findSectionIdByThreadId(threadId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
+            governance.assertCanWrite(actor, section);
+            var thread = lockThreadForInteraction(threadId);
+            if (!section.equals(thread.getSectionId())) throw new ResponseStatusException(HttpStatus.CONFLICT, "帖子分区已变化，请刷新后重试");
+            return thread;
+        }
+        return lockThreadForInteraction(threadId);
+    }
+
+    private com.example.demo.threads.entity.Thread lockThreadForDeletion(Long threadId) {
+        return lockThreadForInteraction(threadId);
+    }
+
+    private com.example.demo.threads.entity.Thread lockThreadForInteraction(Long threadId) {
+        com.example.demo.threads.entity.Thread thread = threadRepository.findByIdForInteraction(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
-        governance.assertCanWrite(actor, section);
-        var thread = threadRepository.findByIdForInteraction(threadId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
-        if (!section.equals(thread.getSectionId())) throw new ResponseStatusException(HttpStatus.CONFLICT, "帖子分区已变化，请刷新后重试");
-        if (!"NORMAL".equals(thread.getStatus())) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        if (!"NORMAL".equals(thread.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        }
         return thread;
     }
 
@@ -394,8 +430,13 @@ public class PostService {
     }
 
     private Post findActivePostForInteraction(Long postId) {
+        Long threadId = postRepository.findThreadIdByPostId(postId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
+        lockThreadForInteraction(threadId);
         Post post = findPostForInteraction(postId);
-        findNormalThread(post.getThreadId());
+        if (!threadId.equals(post.getThreadId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "评论所属帖子已变化，请刷新后重试");
+        }
         return post;
     }
 
@@ -445,7 +486,7 @@ public class PostService {
                 return false;
             }
         }
-        return items.stream().allMatch(dto -> {
+        boolean postsFresh = items.stream().allMatch(dto -> {
             Post post = dto == null ? null : byId.get(dto.getId());
             return post != null
                     && threadId.equals(post.getThreadId())
@@ -454,6 +495,33 @@ public class PostService {
                     && post.getUpdatedAt() != null
                     && dto.getUpdatedAt() != null
                     && Objects.equals(post.getUpdatedAt(), dto.getUpdatedAt());
+        });
+        if (!postsFresh) {
+            return false;
+        }
+        List<Long> parentIds = items.stream()
+                .map(PostDto::getReplyToPostId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (parentIds.isEmpty()) {
+            return true;
+        }
+        List<Post> parents = postRepository.findAllById(parentIds);
+        if (parents == null || parents.size() != parentIds.size()) {
+            return false;
+        }
+        Map<Long, Post> parentsById = new HashMap<>();
+        for (Post parent : parents) {
+            if (parent == null || parent.getId() == null || parentsById.put(parent.getId(), parent) != null) {
+                return false;
+            }
+        }
+        return parentIds.stream().allMatch(parentId -> {
+            Post parent = parentsById.get(parentId);
+            return parent != null
+                    && threadId.equals(parent.getThreadId())
+                    && "NORMAL".equals(parent.getStatus());
         });
     }
 

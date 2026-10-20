@@ -92,7 +92,10 @@ describe('auth protocol boundaries', () => {
       data: { accessToken: 'app-jwt', user: null },
     } as never)
 
-    await expect(exchangeOAuthCode('one-time-code')).resolves.toMatchObject({ accessToken: 'app-jwt' })
-    expect(apiMock.post).toHaveBeenCalledWith('/auth/oauth/exchange', { code: 'one-time-code' })
+    await expect(exchangeOAuthCode('one-time-code', 'code-verifier')).resolves.toMatchObject({ accessToken: 'app-jwt' })
+    expect(apiMock.post).toHaveBeenCalledWith('/auth/oauth/exchange', {
+      code: 'one-time-code',
+      codeVerifier: 'code-verifier',
+    })
   })
 })

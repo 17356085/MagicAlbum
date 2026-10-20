@@ -70,13 +70,15 @@ pwsh -File ./scripts/Test-NotificationRuntime.ps1 -JavaHome 'C:\path\to\jdk-21'
 
 ## 管理员与审核
 
-管理员入口默认关闭。先在论坛注册一个**已有且能登录**的账号，然后在 `test-artifacts/local-runtime/runtime.env` 增加 `APP_ADMIN_EMAIL=该账号邮箱`，停止并重新启动应用。配置邮箱不存在时后端会拒绝启动；普通注册用户不会自动获得管理权限。当前后台支持举报待处理列表、驳回举报和隐藏被举报的帖子／评论，不是完整的用户、分区和申诉管理系统。
+管理员初始化默认关闭。先登录可信账号，通过当前用户接口读回其持久化 ID，再在 `test-artifacts/local-runtime/runtime.env`（完整 Compose 使用私有 `.env`）设置 `APP_ADMIN_USER_ID=该用户ID`，重新启动后端。可同时配置 `APP_ADMIN_EMAIL` 核对邮箱一致性；只有邮箱而没有 ID 时，账号邮箱必须已验证，否则拒绝启动。不要仅凭未经核对的注册邮箱选择管理员。
 
-这只是本地的最小举报处理流程，不包含完整用户、分区、封禁和申诉管理。
+初始化只在社区治理尚未初始化时授予首个管理员；后续角色以数据库为准，重启不会恢复已撤销角色。后台支持成员角色、版主分区、发帖限制、分区管理、举报审核恢复与审计，实际完成情况见[阶段进度](docs/engineering/stage-progress.md)。
+
+初始化后可清空两个选择器，已有角色继续保留。升级旧库时联系方式验证标记默认为 false；如果仍使用旧的邮箱初始化配置，应先清空选择器或改为经过可信登录核对的用户 ID，再启动新版本。
 
 ## 另一种方式：完整 Compose
 
-根目录的 [`docker-compose.yml`](./docker-compose.yml) 会构建完整应用镜像，与上面的 PowerShell 原生应用模式**二选一**，不要同时占用相同端口。先复制 [`.env.example`](./.env.example) 为 `.env`，填写所有必填账号和高强度随机密钥，首次启动时保持 `APP_ADMIN_EMAIL` 为空：
+根目录的 [`docker-compose.yml`](./docker-compose.yml) 会构建完整应用镜像，与上面的 PowerShell 原生应用模式**二选一**，不要同时占用相同端口。先复制 [`.env.example`](./.env.example) 为 `.env`，填写所有必填账号和高强度随机密钥，首次启动时保持 `APP_ADMIN_EMAIL` 为空、`APP_ADMIN_USER_ID=0`：
 
 ```powershell
 Copy-Item .env.example .env

@@ -20,8 +20,9 @@ public class OAuthLoginCoordinator {
         }
     }
 
-    public String buildAuthorizeRedirect(OAuthProvider provider) {
-        return getHandler(provider).buildAuthorizeRedirect();
+    public String buildAuthorizeRedirect(OAuthProvider provider, String codeChallenge) {
+        OAuthBrowserProof.requireChallenge(codeChallenge);
+        return getHandler(provider).buildAuthorizeRedirect(codeChallenge);
     }
 
     public String handleCallback(OAuthProvider provider, String code, String state, String error) {

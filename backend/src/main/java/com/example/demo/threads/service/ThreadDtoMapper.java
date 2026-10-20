@@ -72,6 +72,7 @@ final class ThreadDtoMapper {
         dto.setStatus(view.getStatus());
         dto.setCreatedAt(view.getCreatedAt());
         dto.setUpdatedAt(view.getUpdatedAt());
+        dto.setReplyCount(view.getReplyCount() == null ? 0 : view.getReplyCount());
         return dto;
     }
 

@@ -8,7 +8,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -27,10 +26,12 @@ class OAuthStateServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
         OAuthStateService service = new OAuthStateService(300, redisTemplate);
-        String state = service.issue(OAuthProvider.github);
-        when(valueOperations.getAndDelete("oauth:state:" + state)).thenReturn(OAuthProvider.github.name());
+        String state = service.issue(OAuthProvider.github, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+        when(valueOperations.getAndDelete("oauth:state:" + state)).thenReturn(
+                "github:E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
 
-        assertDoesNotThrow(() -> service.consume(OAuthProvider.github, state));
+        assertEquals("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+                service.consume(OAuthProvider.github, state));
         verify(valueOperations).set(anyString(), anyString(), any(Duration.class));
         verify(valueOperations).getAndDelete("oauth:state:" + state);
     }
@@ -42,14 +43,14 @@ class OAuthStateServiceTest {
 
         OAuthStateService service = new OAuthStateService(300, redisTemplate);
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
-                () -> service.issue(OAuthProvider.google));
+                () -> service.issue(OAuthProvider.google, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"));
         assertEquals(503, ex.getStatusCode().value());
     }
 
     @Test
     void shouldRejectStateWhenProviderMismatch() {
         OAuthStateService service = OAuthStateService.forTest(300);
-        String state = service.issue(OAuthProvider.apple);
+        String state = service.issue(OAuthProvider.apple, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
                 () -> service.consume(OAuthProvider.github, state));
@@ -63,5 +64,16 @@ class OAuthStateServiceTest {
         OAuthStateService service = OAuthStateService.forTest(300);
 
         assertFalse(service.consumeSafely(OAuthProvider.wechat, "missing"));
+    }
+
+    @Test
+    void shouldRejectLegacyUnboundRedisState() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.getAndDelete("oauth:state:legacy")).thenReturn("github");
+        OAuthStateService service = new OAuthStateService(300, redis);
+        assertEquals(400, assertThrows(ResponseStatusException.class,
+                () -> service.consume(OAuthProvider.github, "legacy")).getStatusCode().value());
     }
 }

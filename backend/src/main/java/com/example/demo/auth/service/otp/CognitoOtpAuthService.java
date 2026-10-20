@@ -143,12 +143,9 @@ public class CognitoOtpAuthService {
         } catch (Exception ex) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "邮箱验证码无效或已过期", ex);
         }
-        if (response == null || response.getAuthenticationResult() == null
-                || trimToEmpty(response.getAuthenticationResult().getAccessToken()).isBlank()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "邮箱验证码登录未完成");
-        }
+        requireAuthenticationResult(response, "邮箱验证码登录未完成");
 
-        User user = provision(() -> resolveOrCreateLocalUserByEmail(email), () -> userRepository.findByEmail(email));
+        User user = provision(() -> resolveOrCreateLocalUserByEmail(email), () -> findVerifiedEmailWinner(email));
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
         return new LoginResponse(token, toUserDto(user));
     }
@@ -169,11 +166,9 @@ public class CognitoOtpAuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机验证码无效、已过期或 Cognito 校验失败");
         }
 
-        if (response.getAuthenticationResult() == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机验证码登录未完成");
-        }
+        requireAuthenticationResult(response, "手机验证码登录未完成");
 
-        User user = provision(() -> resolveOrCreateLocalUserByPhone(phone), () -> userRepository.findByPhone(phone));
+        User user = provision(() -> resolveOrCreateLocalUserByPhone(phone), () -> findVerifiedPhoneWinner(phone));
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
         return new LoginResponse(token, toUserDto(user));
     }
@@ -246,7 +241,7 @@ public class CognitoOtpAuthService {
     private User resolveOrCreateLocalUserByEmail(String email) {
         Optional<User> existing = userRepository.findByEmail(email);
         if (existing.isPresent()) {
-            return existing.get();
+            return requireVerified(existing.get(), true);
         }
 
         User user = new User();
@@ -254,6 +249,8 @@ public class CognitoOtpAuthService {
         user.setEmail(email);
         user.setPhone(generateSyntheticPhone(email));
         user.setPasswordHash(passwordEncoder.encode("cognito_email_otp_" + UUID.randomUUID()));
+        user.setEmailVerified(true);
+        user.setPhoneVerified(false);
         User saved = userRepository.save(user);
 
         UserProfile profile = userProfileRepository.findById(saved.getId()).orElseGet(UserProfile::new);
@@ -269,7 +266,7 @@ public class CognitoOtpAuthService {
     private User resolveOrCreateLocalUserByPhone(String phone) {
         Optional<User> existing = userRepository.findByPhone(phone);
         if (existing.isPresent()) {
-            return existing.get();
+            return requireVerified(existing.get(), false);
         }
 
         User user = new User();
@@ -277,6 +274,8 @@ public class CognitoOtpAuthService {
         user.setPhone(phone);
         user.setEmail(generateSyntheticEmail(phone));
         user.setPasswordHash(passwordEncoder.encode("cognito_phone_otp_" + UUID.randomUUID()));
+        user.setEmailVerified(false);
+        user.setPhoneVerified(true);
         User saved = userRepository.save(user);
 
         UserProfile profile = userProfileRepository.findById(saved.getId()).orElseGet(UserProfile::new);
@@ -286,6 +285,31 @@ public class CognitoOtpAuthService {
         }
         userProfileRepository.save(profile);
         return saved;
+    }
+
+    private Optional<User> findVerifiedEmailWinner(String email) {
+        return userRepository.findByEmail(email).map(user -> requireVerified(user, true));
+    }
+
+    private Optional<User> findVerifiedPhoneWinner(String phone) {
+        return userRepository.findByPhone(phone).map(user -> requireVerified(user, false));
+    }
+
+    private User requireVerified(User user, boolean email) {
+        boolean verified = email ? user.isEmailVerified() : user.isPhoneVerified();
+        if (!verified) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    email ? "该邮箱尚未验证，暂不能使用验证码登录" : "该手机号尚未验证，暂不能使用验证码登录");
+        }
+        return user;
+    }
+
+    private CognitoAuthFlowResponse requireAuthenticationResult(CognitoAuthFlowResponse response, String message) {
+        if (response == null || response.getAuthenticationResult() == null
+                || trimToEmpty(response.getAuthenticationResult().getAccessToken()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, message);
+        }
+        return response;
     }
 
     private String resolveUniqueUsername(String seed) {

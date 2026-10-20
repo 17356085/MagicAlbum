@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261020.3";
+    private static final String LATEST_MIGRATION_VERSION = "20261020.4";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
     private static final String UPGRADE_USERNAME = "CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME";
     private static final String UPGRADE_PASSWORD = "CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD";
@@ -72,6 +72,14 @@ class ContentEventMySqlUpgradeAcceptance {
             complete.migrate();
             complete.validate();
 
+            assertVerifiedContactColumn(connection, "email_verified");
+            assertVerifiedContactColumn(connection, "phone_verified");
+            assertThat(count(connection,
+                    "SELECT COUNT(*) FROM users WHERE username=? "
+                            + "AND email_verified=FALSE AND phone_verified=FALSE",
+                    "legacy-content-author"))
+                    .as("historical password user contacts remain unverified after upgrade")
+                    .isEqualTo(1);
             assertThat(longValue(connection,
                     "SELECT content_version FROM threads WHERE id=?", legacyThreadId))
                     .as("legacy thread content_version")
@@ -226,6 +234,18 @@ class ContentEventMySqlUpgradeAcceptance {
                 + "WHERE table_schema=DATABASE() AND table_name='content_event_outbox' "
                 + "AND LOWER(index_name)=LOWER(?)", indexName))
                 .as("content_event_outbox index " + indexName)
+                .isEqualTo(1);
+    }
+
+    private static void assertVerifiedContactColumn(Connection connection, String columnName)
+            throws SQLException {
+        assertThat(count(connection,
+                "SELECT COUNT(*) FROM information_schema.columns "
+                        + "WHERE table_schema=DATABASE() AND table_name='users' "
+                        + "AND column_name=? AND is_nullable='NO' "
+                        + "AND LOWER(CAST(column_default AS CHAR)) IN ('0','false')",
+                columnName))
+                .as("users." + columnName + " must be NOT NULL with a false default")
                 .isEqualTo(1);
     }
 

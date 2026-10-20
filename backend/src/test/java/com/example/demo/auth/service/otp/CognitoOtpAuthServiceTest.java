@@ -13,16 +13,24 @@ import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserProfileRepository;
 import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CognitoOtpAuthServiceTest {
@@ -148,6 +156,78 @@ class CognitoOtpAuthServiceTest {
         assertEquals("demo", loginResponse.getUser().getUsername());
         assertEquals("demo@example.com", loginResponse.getUser().getEmail());
         assertEquals(501L, loginResponse.getUser().getId());
+
+        var created = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(created.capture());
+        assertTrue(created.getValue().isEmailVerified());
+        assertFalse(created.getValue().isPhoneVerified());
+    }
+
+    @Test
+    void emailFinishRejectsAnUnverifiedExistingAssociationWithoutChangingIt() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        PasswordEncoder passwords = mock(PasswordEncoder.class);
+        JwtTokenProvider tokens = mock(JwtTokenProvider.class);
+        User existing = user(701L, "reserved@example.com", "13800138001", false, true);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq("reserved@example.com"), any(), eq("session")))
+                .thenReturn(authenticated("cognito-access"));
+        when(users.findByEmail("reserved@example.com")).thenReturn(Optional.of(existing));
+
+        var request = finishRequest(AuthCodeChannel.email, "reserved@example.com", "session");
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class), passwords, tokens,
+                        AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)), 300, 300, 60)
+                        .finish(request));
+
+        assertEquals(HttpStatus.CONFLICT, thrown.getStatusCode());
+        assertFalse(existing.isEmailVerified());
+        verify(users, never()).save(any(User.class));
+        verify(passwords, never()).encode(anyString());
+        verify(tokens, never()).generateToken(anyLong(), anyString());
+    }
+
+    @Test
+    void verifiedEmailAssociationCanLoginWithoutProvisioningOrMutation() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        JwtTokenProvider tokens = mock(JwtTokenProvider.class);
+        User existing = user(703L, "verified@example.com", "13800138003", true, false);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq("verified@example.com"), any(), eq("session")))
+                .thenReturn(authenticated("cognito-access"));
+        when(users.findByEmail("verified@example.com")).thenReturn(Optional.of(existing));
+        when(tokens.generateToken(703L, "verified")).thenReturn("project-jwt");
+
+        var service = new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class), mock(PasswordEncoder.class),
+                tokens, AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)), 300, 300, 60);
+        LoginResponse response = service.finish(finishRequest(AuthCodeChannel.email, "verified@example.com", "session"));
+
+        assertEquals("project-jwt", response.getAccessToken());
+        assertTrue(existing.isEmailVerified());
+        verify(users, never()).save(any(User.class));
+    }
+
+    @Test
+    void phoneFinishRejectsAnUnverifiedExistingAssociationWithoutChangingIt() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        PasswordEncoder passwords = mock(PasswordEncoder.class);
+        JwtTokenProvider tokens = mock(JwtTokenProvider.class);
+        User existing = user(704L, "reserved-phone@example.com", "13800138004", true, false);
+        when(client.respondToChallenge(eq("SMS_OTP"), eq("13800138004"), any(), eq("session")))
+                .thenReturn(authenticated("cognito-access"));
+        when(users.findByPhone("13800138004")).thenReturn(Optional.of(existing));
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class), passwords, tokens,
+                        AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)), 300, 300, 60)
+                        .finish(finishRequest(AuthCodeChannel.phone, "13800138004", "session")));
+
+        assertEquals(HttpStatus.CONFLICT, thrown.getStatusCode());
+        assertFalse(existing.isPhoneVerified());
+        verify(users, never()).save(any(User.class));
+        verify(passwords, never()).encode(anyString());
+        verify(tokens, never()).generateToken(anyLong(), anyString());
     }
 
     @Test
@@ -236,5 +316,91 @@ class CognitoOtpAuthServiceTest {
         assertEquals("13800138000_ph", loginResponse.getUser().getUsername());
         assertEquals("13800138000", loginResponse.getUser().getPhone());
         assertEquals(601L, loginResponse.getUser().getId());
+
+        var created = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(created.capture());
+        assertFalse(created.getValue().isEmailVerified());
+        assertTrue(created.getValue().isPhoneVerified());
+    }
+
+    @Test
+    void phoneFinishRejectsNullCognitoResponseBeforeLocalLookup() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        when(client.respondToChallenge(eq("SMS_OTP"), eq("13800138000"), any(), eq("session")))
+                .thenReturn(null);
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class), mock(PasswordEncoder.class),
+                        mock(JwtTokenProvider.class), AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)),
+                        300, 300, 60).finish(finishRequest(AuthCodeChannel.phone, "13800138000", "session")));
+
+        assertEquals(HttpStatus.UNAUTHORIZED, thrown.getStatusCode());
+        verify(users, never()).findByPhone(anyString());
+    }
+
+    @Test
+    void emailFinishRejectsBlankAccessTokenBeforeLocalLookup() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq("blank@example.com"), any(), eq("session")))
+                .thenReturn(authenticated("   "));
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class), mock(PasswordEncoder.class),
+                        mock(JwtTokenProvider.class), AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)),
+                        300, 300, 60).finish(finishRequest(AuthCodeChannel.email, "blank@example.com", "session")));
+
+        assertEquals(HttpStatus.UNAUTHORIZED, thrown.getStatusCode());
+        verify(users, never()).findByEmail(anyString());
+    }
+
+    @Test
+    void verifiedPhoneAssociationCanLoginWithoutProvisioningOrMutation() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        JwtTokenProvider tokens = mock(JwtTokenProvider.class);
+        User existing = user(702L, "verified@example.com", "13800138002", false, true);
+        when(client.respondToChallenge(eq("SMS_OTP"), eq("13800138002"), any(), eq("session")))
+                .thenReturn(authenticated("cognito-access"));
+        when(users.findByPhone("13800138002")).thenReturn(Optional.of(existing));
+        when(tokens.generateToken(702L, "verified")).thenReturn("project-jwt");
+
+        var service = new CognitoOtpAuthService(client, users, mock(UserProfileRepository.class), mock(PasswordEncoder.class),
+                tokens, AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)), 300, 300, 60);
+        LoginResponse response = service.finish(finishRequest(AuthCodeChannel.phone, "13800138002", "session"));
+
+        assertEquals("project-jwt", response.getAccessToken());
+        assertTrue(existing.isPhoneVerified());
+        verify(users, never()).save(any(User.class));
+    }
+
+    private static CognitoAuthFlowResponse authenticated(String accessToken) {
+        CognitoAuthFlowResponse response = new CognitoAuthFlowResponse();
+        CognitoAuthenticationResult result = new CognitoAuthenticationResult();
+        result.setAccessToken(accessToken);
+        response.setAuthenticationResult(result);
+        return response;
+    }
+
+    private static AuthCodeFinishRequest finishRequest(AuthCodeChannel channel, String address, String session) {
+        AuthCodeFinishRequest request = new AuthCodeFinishRequest();
+        request.setChannel(channel);
+        request.setAddress(address);
+        request.setCode("123456");
+        request.setSession(session);
+        return request;
+    }
+
+    private static User user(Long id, String email, String phone, boolean emailVerified, boolean phoneVerified) {
+        User user = new User();
+        user.setId(id);
+        user.setUsername("verified");
+        user.setEmail(email);
+        user.setPhone(phone);
+        user.setPasswordHash("existing-password");
+        user.setEmailVerified(emailVerified);
+        user.setPhoneVerified(phoneVerified);
+        return user;
     }
 }

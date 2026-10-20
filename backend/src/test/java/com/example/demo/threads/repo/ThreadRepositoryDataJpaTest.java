@@ -123,6 +123,9 @@ class ThreadRepositoryDataJpaTest {
 
         Thread normalNew = thread(section.getId(), user.getId(), "New", "world", "NORMAL", "2025-01-02T00:00:00Z");
         threadRepository.save(normalNew);
+        entityManager.persist(post(normalNew.getId(), user.getId(), "reply 1"));
+        entityManager.persist(post(normalNew.getId(), user.getId(), "reply 2"));
+        entityManager.flush();
 
         Page<ThreadQueryView> page = threadRepository.searchNewestView(null, null, PageRequest.of(0, 10));
 
@@ -132,6 +135,7 @@ class ThreadRepositoryDataJpaTest {
         assertThat(page.getContent().get(0).getAuthorUsername()).isEqualTo("alice");
         assertThat(page.getContent().get(0).getAuthorNickname()).isEqualTo("Alice");
         assertThat(page.getContent().get(0).getAuthorAvatar()).isEqualTo("/uploads/avatar.png");
+        assertThat(page.getContent().get(0).getReplyCount()).isEqualTo(2L);
         assertThat(page.getContent().get(1).getTitle()).isEqualTo("Old");
     }
 

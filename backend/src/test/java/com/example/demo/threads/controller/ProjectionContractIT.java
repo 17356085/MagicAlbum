@@ -49,6 +49,8 @@ class ProjectionContractIT {
     @Autowired UserProfileRepository userProfileRepository;
 
     private Long threadId;
+    private Long authorId;
+    private Long parentId;
 
     @BeforeEach
     void setUp() {
@@ -69,6 +71,7 @@ class ProjectionContractIT {
         author.setPhone("13000000010");
         author.setPasswordHash("hash");
         author = userRepository.save(author);
+        authorId = author.getId();
 
         UserProfile authorProfile = new UserProfile();
         authorProfile.setUserId(author.getId());
@@ -108,6 +111,7 @@ class ProjectionContractIT {
         parent.setCreatedAt(Instant.parse("2025-01-01T00:11:00Z"));
         parent.setUpdatedAt(Instant.parse("2025-01-01T00:11:00Z"));
         parent = postRepository.save(parent);
+        parentId = parent.getId();
 
         Post child = new Post();
         child.setThreadId(thread.getId());
@@ -134,6 +138,31 @@ class ProjectionContractIT {
         assertThat(item.get("authorNickname").asText()).isEqualTo("Alice");
         assertThat(item.get("authorAvatar").asText()).isEqualTo("/uploads/threads/alice.png");
         assertThat(item.get("title").asText()).isEqualTo("Projection 查询优化");
+        assertThat(item.get("replyCount").asLong()).isEqualTo(2L);
+    }
+
+    @Test
+    void thread_detail_author_and_search_should_expose_reply_count() throws Exception {
+        JsonNode detail = objectMapper.readTree(mockMvc.perform(get("/api/v1/threads/{threadId}", threadId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+        assertThat(detail.get("replyCount").asLong()).isEqualTo(2L);
+
+        JsonNode authorList = objectMapper.readTree(mockMvc.perform(get("/api/v1/users/{authorId}/threads", authorId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+        assertThat(authorList.get("items").get(0).get("replyCount").asLong()).isEqualTo(2L);
+
+        JsonNode search = objectMapper.readTree(mockMvc.perform(get("/api/v1/threads").param("q", "Projection"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+        assertThat(search.get("items").get(0).get("replyCount").asLong()).isEqualTo(2L);
     }
 
     @Test
@@ -152,5 +181,23 @@ class ProjectionContractIT {
         assertThat(child.get("authorAvatarUrl").asText()).isEqualTo("/uploads/threads/alice.png");
         assertThat(child.get("parentAuthorUsername").asText()).isEqualTo("bob");
         assertThat(child.get("parentAuthorNickname").asText()).isEqualTo("Bob");
+    }
+
+    @Test
+    void deleted_parent_is_excluded_from_public_posts_and_reference_metadata() throws Exception {
+        Post parent = postRepository.findById(parentId).orElseThrow();
+        parent.setStatus("DELETED");
+        postRepository.saveAndFlush(parent);
+
+        JsonNode items = objectMapper.readTree(mockMvc.perform(get("/api/v1/threads/{threadId}/posts", threadId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString()).get("items");
+
+        assertThat(items.size()).isEqualTo(1);
+        assertThat(items.get(0).get("replyToPostId").asLong()).isEqualTo(parentId);
+        assertThat(items.get(0).get("parentAuthorUsername").isNull()).isTrue();
+        assertThat(items.get(0).get("parentAuthorNickname").isNull()).isTrue();
     }
 }

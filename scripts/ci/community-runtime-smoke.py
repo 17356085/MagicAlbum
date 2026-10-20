@@ -151,6 +151,7 @@ class ComposeRuntime(BaseComposeRuntime):
             "RABBITMQ_USER": "bluealbum_m4",
             "JWT_ISSUER": "MagicAlbum",
             "APP_ADMIN_EMAIL": self.env_values.get("APP_ADMIN_EMAIL", ""),
+            "APP_ADMIN_USER_ID": self.env_values.get("APP_ADMIN_USER_ID", "0"),
             "APP_AUTH_VERIFY_MODE": "off",
             "APP_RABBIT_ENABLED": "true",
             "APP_CORS_ALLOWED_ORIGINS": self.env_values.get("APP_CORS_ALLOWED_ORIGINS", "http://127.0.0.1:5173"),
@@ -184,16 +185,19 @@ class ComposeRuntime(BaseComposeRuntime):
         text = self.override_file.read_text(encoding="utf-8")
         self.override_file.write_text(text.replace("m3s3mockdata", "m4s3mockdata"), encoding="utf-8", newline="\n")
 
-    def set_admin_email(self, email: str) -> None:
+    def set_admin_identity(self, email: str, user_id: int) -> None:
         email = email.strip()
         if not email or "\n" in email or "\r" in email:
             raise GateFailure("APP_ADMIN_EMAIL must be a non-empty single-line email")
+        if type(user_id) is not int or user_id <= 0:
+            raise GateFailure("APP_ADMIN_USER_ID must select an existing positive user id")
         self.env_values["APP_ADMIN_EMAIL"] = email
+        self.env_values["APP_ADMIN_USER_ID"] = str(user_id)
         self._write_env(self.env_values["S3_PUBLIC_BASE_URL"])
 
-    def restart_backend_with_admin_email(self) -> None:
+    def restart_backend_with_admin_identity(self) -> None:
         before = dict(self.ports)
-        # APP_ADMIN_EMAIL is the only changed private env value.  The public
+        # Only the trusted fixture admin selectors change. The public
         # S3 URL, CORS origin and frontend port are checked after recreation.
         self.compose("up", "--no-deps", "-d", "--wait", "--wait-timeout", "180", "backend", timeout=300)
         self.refresh_ports()
@@ -614,12 +618,14 @@ class CommunityAcceptance(BaseAcceptance):
         self.identities["ordinary"] = self.register_login("ordinary")
         self.identities["other"] = self.register_login("other")
         self.primary_admin = self.identities["admin"]
-        self.runtime.set_admin_email(self.primary_admin.email)
+        self.runtime.set_admin_identity(self.primary_admin.email, self.primary_admin.user_id)
         previous_ports = dict(self.runtime.ports)
-        self.runtime.restart_backend_with_admin_email()
+        self.runtime.restart_backend_with_admin_identity()
         self.refresh_urls()
         if self.runtime.env_values.get("APP_ADMIN_EMAIL") != self.primary_admin.email:
             raise GateFailure("private APP_ADMIN_EMAIL did not retain the selected admin")
+        if self.runtime.env_values.get("APP_ADMIN_USER_ID") != str(self.primary_admin.user_id):
+            raise GateFailure("private APP_ADMIN_USER_ID did not retain the authenticated admin identity")
         for key in ("admin", "secondadmin", "moderator", "ordinary", "other"):
             self.identities[key] = self.login_identity(self.identities[key], key)
         self.admin = self.identities["admin"]

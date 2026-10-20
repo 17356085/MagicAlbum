@@ -77,7 +77,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
@@ -171,7 +172,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
@@ -195,7 +197,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
@@ -219,7 +222,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
@@ -253,7 +257,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
@@ -287,7 +292,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
@@ -309,7 +315,8 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
                 t.contentMd AS content,
                 t.status AS status,
                 t.createdAt AS createdAt,
-                t.updatedAt AS updatedAt
+                t.updatedAt AS updatedAt,
+                (SELECT COUNT(p.id) FROM Post p WHERE p.threadId = t.id AND p.status = 'NORMAL') AS replyCount
             FROM Thread t
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
