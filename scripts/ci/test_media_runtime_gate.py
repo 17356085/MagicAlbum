@@ -15,6 +15,35 @@ SPEC.loader.exec_module(gate)
 
 
 class RuntimeGuardTests(unittest.TestCase):
+    def test_auth_recreation_refreshes_dynamic_ports_before_health_and_recovery(self):
+        acceptance = gate.Acceptance.__new__(gate.Acceptance)
+        runtime = MagicMock()
+        acceptance.runtime = runtime
+        runtime.artifact_dir = self.root
+        runtime.ports = {"media-worker": 10001}
+        current_port = [10001]
+        def compose(*args, **kwargs):
+            if args[0] == "up": current_port[0] += 1
+        runtime.compose.side_effect = compose
+        runtime.refresh_ports.side_effect = lambda: runtime.ports.update({"media-worker": current_port[0]})
+        runtime.wait_http.side_effect = lambda url, *a, **k: self.assertIn(f":{current_port[0]}/", url)
+        acceptance.refresh_urls = MagicMock()
+        acceptance.owner = MagicMock()
+        acceptance.fixture = b"original"
+        acceptance.fixture_sha = "original-hash"
+        acceptance.upload = MagicMock(return_value={"assetId": "asset"})
+        pending = {"job_id": "job", "status": "PENDING", "attempts": 0, "output_key": None}
+        complete = {**pending, "status": "SUCCEEDED", "attempts": 1, "output_sha256": "preview-hash"}
+        acceptance.sql_job = MagicMock(side_effect=[pending, pending, pending, complete])
+        acceptance.worker_auth_pause_events = MagicMock(return_value=1)
+        acceptance.rabbit_request = MagicMock(return_value=MagicMock(status_code=200, json=lambda: {"consumers": 0, "messages_ready": 1}))
+        acceptance.poll_succeeded = MagicMock(return_value={"url": "original", "previewUrl": "preview"})
+        acceptance.fetch_object = MagicMock(side_effect=[b"original", b"preview"])
+        with patch.object(gate.time, "sleep"):
+            acceptance.worker_auth_pause_recovery()
+        self.assertEqual(runtime.refresh_ports.call_count, 2)
+        self.assertTrue((self.root / "worker-auth-pause.json").exists())
+
     def test_auth_pause_log_evidence_uses_only_the_fixed_parsed_event(self):
         acceptance = gate.Acceptance.__new__(gate.Acceptance)
         acceptance.runtime = MagicMock()

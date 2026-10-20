@@ -30,6 +30,11 @@ function getErrorMessage(cause: unknown): string {
   if (status === 401) return '请先登录后再举报'
 
   const responseMessage = failure?.response?.data?.message
+  if (status === 403) {
+    return typeof responseMessage === 'string' && responseMessage.trim()
+      ? responseMessage.trim()
+      : '当前账号暂无举报权限，请刷新后重试'
+  }
   return typeof responseMessage === 'string' && responseMessage.trim()
     ? responseMessage.trim()
     : '提交举报失败，请稍后重试'

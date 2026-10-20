@@ -1,6 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import AdminReports from '../AdminReports.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const mocks = vi.hoisted(() => ({
   getGovernanceMe: vi.fn(),
@@ -41,6 +43,8 @@ function createWrapper() {
 describe('AdminReports', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
+    setActivePinia(createPinia())
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
@@ -154,6 +158,74 @@ describe('AdminReports', () => {
     expect(mocks.listAdminReports).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('驳回举报成功')
     expect(wrapper.text()).toContain('当前没有待处理举报')
+  })
+
+  it('clears review controls and enters denied when permission is revoked during resolution', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'admin-token', user: { id: 7, username: 'admin' } })
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
+    mocks.listAdminReports.mockResolvedValue({
+      items: [{
+        id: 18,
+        targetType: 'THREAD',
+        targetId: 701,
+        reason: 'OTHER',
+        detail: '请审核',
+        status: 'PENDING',
+        createdAt: '2026-10-08T00:00:00Z',
+        reporterId: 9,
+      }],
+      page: 1,
+      size: 20,
+      total: 1,
+    })
+    mocks.resolveAdminReport.mockRejectedValueOnce({ response: { status: 403 } })
+    const wrapper = createWrapper()
+
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '驳回举报')!.trigger('click')
+    await wrapper.get('#resolution-reason-18').setValue('权限变化前的处理理由')
+    await wrapper.findAll('form').find((form) => form.find('#resolution-reason-18').exists())!.trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('审核权限已变化')
+    expect(wrapper.text()).toContain('登录状态不会因此被退出')
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('驳回举报')
+    expect(auth.token).toBe('admin-token')
+    wrapper.unmount()
+  })
+
+  it('keeps the resolution form and retry path after an ordinary resolution error', async () => {
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
+    mocks.listAdminReports.mockResolvedValue({
+      items: [{
+        id: 19,
+        targetType: 'THREAD',
+        targetId: 702,
+        reason: 'OTHER',
+        detail: '请审核',
+        status: 'PENDING',
+        createdAt: '2026-10-08T00:00:00Z',
+        reporterId: 9,
+      }],
+      page: 1,
+      size: 20,
+      total: 1,
+    })
+    mocks.resolveAdminReport.mockRejectedValueOnce(new Error('network failure'))
+    const wrapper = createWrapper()
+
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '驳回举报')!.trigger('click')
+    await wrapper.get('#resolution-reason-19').setValue('暂时失败后保留理由')
+    await wrapper.findAll('form').find((form) => form.find('#resolution-reason-19').exists())!.trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('驳回举报失败，请重试')
+    expect(wrapper.find('#resolution-reason-19').exists()).toBe(true)
+    expect(wrapper.text()).toContain('确认驳回举报')
+    wrapper.unmount()
   })
 
   it('offers a retryable list error after admin access succeeds', async () => {

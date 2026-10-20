@@ -23,6 +23,11 @@ function label(item: MediaAssetState): string {
   if (item.processingStatus === 'NOT_REQUESTED') return '原图已上传，未请求生成预览'
   return '原图已上传，正在生成预览'
 }
+function errorStatus(cause: unknown): number {
+  const raw = (cause as { response?: { status?: unknown } } | null)?.response?.status
+  const status = Number(raw)
+  return Number.isFinite(status) ? status : 0
+}
 async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<void> {
   if (pendingAction.value) return
   const token = auth.token
@@ -32,7 +37,13 @@ async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<
   try {
     const updated = await changeMediaJob(item.assetId, kind, token)
     if (auth.token === token && auth.isAuthGenerationCurrent(generation)) updateMediaAsset(updated, token)
-  } catch { if (auth.token === token && auth.isAuthGenerationCurrent(generation)) error.value = '操作未完成，请稍后重试。原图不受影响。' }
+  } catch (cause: unknown) {
+    if (auth.token === token && auth.isAuthGenerationCurrent(generation)) {
+      error.value = errorStatus(cause) === 403
+        ? '当前账号没有管理此图片处理任务的权限，请刷新后重试。原图不受影响。'
+        : '操作未完成，请稍后重试。原图不受影响。'
+    }
+  }
   finally { if (auth.token === token && auth.isAuthGenerationCurrent(generation)) pendingAction.value = '' }
 }
 </script>

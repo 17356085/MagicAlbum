@@ -1007,6 +1007,7 @@ class Acceptance:
                 "up", "-d", "--no-deps", "--force-recreate", "media-worker", timeout=180,
                 extra_env={"MEDIA_INTERNAL_SERVICE_TOKEN": secrets.token_hex(32)},
             )
+            self.runtime.refresh_ports()
             self.refresh_urls()
             worker = f"http://127.0.0.1:{self.runtime.ports['media-worker']}"
             self.runtime.wait_http(worker + "/live", {200}, timeout=60)
@@ -1038,6 +1039,7 @@ class Acceptance:
             self.runtime.wait_http(worker + "/live", {200}, timeout=5)
         finally:
             self.runtime.compose("up", "-d", "--no-deps", "--force-recreate", "media-worker", timeout=180)
+            self.runtime.refresh_ports()
             self.refresh_urls()
         self.runtime.wait_http(f"http://127.0.0.1:{self.runtime.ports['media-worker']}/ready", {200}, timeout=90)
         final = self.poll_succeeded(self.owner, asset_id)

@@ -2,6 +2,14 @@ Set-StrictMode -Version 3.0
 
 $script:RuntimePngFixtureBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
+function Get-RuntimeBrowserTempEnvironment {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Directory, [bool]$WindowsHost = $IsWindows)
+    # Linux Chromium's temporary singleton socket must retain a short native path.
+    if (-not $WindowsHost) { return @{} }
+    return @{ TEMP = $Directory; TMP = $Directory; TMPDIR = $Directory }
+}
+
 function Get-RuntimeDefaultPythonExecutable {
     [CmdletBinding()]
     param(
@@ -144,6 +152,7 @@ function Get-RuntimePngFixtureBytes {
 }
 
 Export-ModuleMember -Function @(
+    'Get-RuntimeBrowserTempEnvironment',
     'Get-RuntimeDefaultPythonExecutable',
     'Test-RuntimeTcpPortAvailable',
     'Assert-RuntimePortsAvailable',

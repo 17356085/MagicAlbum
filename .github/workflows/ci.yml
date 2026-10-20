@@ -449,6 +449,13 @@ jobs:
               raise SystemExit('M4B status, cleanup or external-model boundary is incomplete')
           if len(checks.get('screenshots', [])) != 4:
               raise SystemExit('M4B requires four actual browser screenshots')
+          quota = json.loads(reports[0].with_name('quota-lease-readback.json').read_text())
+          if (quota.get('passed') is not True or quota.get('concurrentAccepted') != 2
+              or quota.get('concurrentRejected') != 6 or quota.get('remainingLiveLeases') != 2
+              or quota.get('lateReleasePreservedReplacement') is not True
+              or quota.get('expiredReleasePreservedReplacement') is not True
+              or not 0 < quota.get('ttlMillis', 0) <= 180000):
+              raise SystemExit('Real Redis concurrency lease evidence is incomplete')
           print(f"M4B summary: {len(cases)} executed cases, four screenshots, controlled fixture only, cleanup passed")
           PY
       - name: Upload summary task and browser evidence

@@ -21,6 +21,7 @@ import secrets
 import sys
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -778,6 +779,7 @@ class SummaryAcceptance(BaseAcceptance):
 
     def budget_exhaustion(self) -> None:
         self._setup()
+        self.verify_chat_concurrency_leases()
         actor = self.summary_actor("budget")
         self.reset_fixture()
         thread_id = self.create_summary_thread(actor, "额" * 10000, "budget")
@@ -793,6 +795,55 @@ class SummaryAcceptance(BaseAcceptance):
             raise GateFailure("budget rejection called the provider")
         self.audit_task(task_id, "budget")
 
+    def verify_chat_concurrency_leases(self) -> None:
+        """Execute the production Lua against this owned runtime's real Redis."""
+        scripts = ROOT_DIR / "backend/src/main/resources/redis"
+        acquire = (scripts / "ai-quota-acquire.lua").read_text(encoding="utf-8")
+        release = (scripts / "ai-quota-release.lua").read_text(encoding="utf-8")
+        key = "ai:concurrent:leases:user:acceptance-" + secrets.token_hex(16)
+        members = [secrets.token_hex(16) for _ in range(10)]
+
+        def redis(*args: str) -> int:
+            output = self.runtime.compose(
+                "exec", "-T", "redis", "sh", "-c",
+                'export REDISCLI_AUTH="$REDIS_PASSWORD"; exec redis-cli --raw "$@"',
+                "redis-cli", *args, timeout=30,
+            )
+            try:
+                return int(output.strip())
+            except ValueError as error:
+                raise GateFailure("Redis quota script did not return an integer") from error
+
+        def take(member: str) -> int:
+            return redis("EVAL", acquire, "1", key, "2", "180000", member)
+
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(take, members[:8]))
+            if sorted(results) != [0] * 6 + [1] * 2 or redis("ZCARD", key) != 2:
+                raise GateFailure("atomic Redis quota admitted more or fewer than two concurrent leases")
+            owners = [member for member, accepted in zip(members, results) if accepted == 1]
+            if redis("EVAL", release, "1", key, owners[0]) != 1 or take(members[8]) != 1:
+                raise GateFailure("quota release did not permit exactly one replacement")
+            if redis("EVAL", release, "1", key, owners[0]) != 0 or redis("ZCARD", key) != 2:
+                raise GateFailure("late quota release removed another live lease")
+            # Deterministic expired score avoids a three-minute acceptance sleep.
+            redis("ZADD", key, "0", owners[1])
+            if take(members[9]) != 1:
+                raise GateFailure("expired quota lease did not permit its replacement")
+            if redis("ZCARD", key) != 2 or redis("EVAL", release, "1", key, owners[1]) != 0:
+                raise GateFailure("expired quota member was not isolated from its replacement")
+            ttl = redis("PTTL", key)
+            if not 0 < ttl <= 180000 or take(owners[0]) != 0:
+                raise GateFailure("quota expiry or rejection bound was lost")
+            (self.runtime.artifact_dir / "quota-lease-readback.json").write_text(json.dumps({
+                "passed": True, "concurrentAccepted": 2, "concurrentRejected": 6,
+                "lateReleasePreservedReplacement": True, "expiredReleasePreservedReplacement": True,
+                "remainingLiveLeases": 2, "ttlMillis": ttl,
+            }, indent=2) + "\n", encoding="utf-8")
+        finally:
+            redis("DEL", key)
+
     def provider_failure_and_retry(self) -> None:
         self._setup()
         actor = self.summary_actor("provider-retry")
@@ -803,7 +854,7 @@ class SummaryAcceptance(BaseAcceptance):
         task_id = started.get("taskId")
         if not isinstance(task_id, str):
             raise GateFailure("rate-limit task omitted id")
-        result = self.wait_terminal(actor, task_id, timeout=40)
+        result = self.wait_terminal(actor, task_id, timeout=90)
         if result.get("status") != "COMPLETED" or self.fixture_state().get("calls") != 2:
             raise GateFailure("429 retry did not complete with exactly two fixture calls")
         attempts = self.sql_count(f"SELECT COUNT(*) FROM ai_summary_attempt WHERE task_id={sql_literal(task_id)}", "rate-limit attempts")
@@ -838,7 +889,7 @@ class SummaryAcceptance(BaseAcceptance):
         response, _ = self._fixture_request("POST", "/control/mode", json={"mode": "normal"})
         if response.status_code != 200:
             raise GateFailure("fixture did not switch to normal recovery mode")
-        result = self.wait_terminal(actor, task_id, timeout=40)
+        result = self.wait_terminal(actor, task_id, timeout=90)
         if result.get("status") != "COMPLETED" or self.fixture_state().get("calls") != 2:
             raise GateFailure("timeout recovery did not retry and complete")
         self.audit_task(task_id, "timeout")

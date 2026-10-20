@@ -41,6 +41,22 @@ function runPowerShell(source) {
   }
 }
 
+test('browser temp override preserves Linux native socket paths and Windows workspace isolation', () => {
+  const result = runPowerShell(`
+$ErrorActionPreference = 'Stop'
+Import-Module ${quotePowerShell(modulePath)} -Force
+$path = '/a/long/workspace/browser/tmp'
+$linuxEnvironment = Get-RuntimeBrowserTempEnvironment -Directory $path -WindowsHost $false
+if ($linuxEnvironment.Count -ne 0) { throw 'Linux native temp was overridden' }
+$windowsEnvironment = Get-RuntimeBrowserTempEnvironment -Directory $path -WindowsHost $true
+if ($windowsEnvironment.Count -ne 3) { throw 'Windows temp isolation was lost' }
+foreach ($key in @('TEMP', 'TMP', 'TMPDIR')) {
+    if ($windowsEnvironment[$key] -ne $path) { throw 'Windows temp path changed' }
+}
+`);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
 test('RuntimeHost probes an occupied port, releases its own probe, and accepts the released port', () => {
   const result = runPowerShell(`
 $ErrorActionPreference = 'Stop'

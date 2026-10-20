@@ -176,6 +176,25 @@ describe('report UX', () => {
     wrapper.unmount()
   })
 
+  it('shows a permission message for a message-less 403 without logging out', async () => {
+    mocks.createReport.mockRejectedValueOnce({ response: { status: 403, data: {} } })
+    const auth = useAuthStore()
+    const wrapper = mount(ReportDialog, {
+      props: { modelValue: true, targetType: 'POST', targetId: 22, isLoggedIn: true },
+    })
+    await flushPromises()
+
+    const submit = findReportDialog().querySelector('button[type="submit"]') as HTMLButtonElement
+    submit.click()
+    await flushPromises()
+
+    expect(findReportDialog().textContent).toContain('举报权限')
+    expect(submit.disabled).toBe(false)
+    expect(auth.isLoggedIn).toBe(true)
+    expect(auth.token).toBe('real-token')
+    wrapper.unmount()
+  })
+
   it('sends POST reports for real comments, hides optimistic controls, and cues anonymous users', async () => {
     const wrapper = mount(CommentsList, {
       props: createCommentsListProps(true),

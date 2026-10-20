@@ -278,8 +278,12 @@ services:
         TEST_BASE_URL = $sourceUrl; TEST_API_BASE_URL = 'http://127.0.0.1:39090/api/v1'
         TEST_PLAYWRIGHT_CHANNEL = $BrowserChannel; TEST_ARTIFACT_DIR = $browserArtifacts
         TEST_EMAIL = ''; TEST_PHONE = ''; TEST_PASSWORD = ''
-        TEMP = $browserTemporary; TMP = $browserTemporary; TMPDIR = $browserTemporary
         PYTHONIOENCODING = 'utf-8'; PYTHONUTF8 = '1'
+    }
+    # Chromium's Linux singleton socket path must stay short. Keep the native
+    # temp directory that already passed browser preflight on that platform.
+    foreach ($entry in (Get-RuntimeBrowserTempEnvironment -Directory $browserTemporary).GetEnumerator()) {
+        $environmentValues[$entry.Key] = $entry.Value
     }
     foreach ($entry in $environmentValues.GetEnumerator()) {
         $snapshot[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')

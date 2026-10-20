@@ -17,7 +17,7 @@
 
     <section v-else-if="adminState === 'denied'" class="ui-error" role="alert" aria-live="assertive">
       <h2>无权访问举报审核</h2>
-      <p class="mt-2">当前账号没有可用的审核范围。服务器已拒绝访问，登录状态不会因此被退出。</p>
+      <p class="mt-2">{{ accessError || '当前账号没有可用的审核范围。' }}登录状态不会因此被退出。</p>
       <button type="button" class="ui-button mt-4 border-red-200 text-red-700 dark:border-red-800 dark:text-red-200" @click="verifyAccess">重新验证</button>
     </section>
 
@@ -197,6 +197,19 @@ function errorStatus(error: unknown): number | undefined {
 }
 
 function clearReportList(): void { reports.value = []; total.value = 0 }
+function enterDenied(message: string): void {
+  clearReportList()
+  adminState.value = 'denied'
+  accessError.value = message
+  reportsError.value = ''
+  role.value = null
+  governance.value = null
+  activeResolution.value = null
+  resolutionReason.value = ''
+  reasonError.value = ''
+  feedback.value = ''
+  actionError.value = ''
+}
 function targetTypeLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return targetTypeLabels[key] || String(value || '未知目标') }
 function reasonLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return reasonLabels[key] || String(value || '未说明') }
 function statusLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return statusLabels[key] || String(value || '未知状态') }
@@ -235,11 +248,10 @@ async function loadReports(run = lifecycle, snapshot = activeSession): Promise<b
     return true
   } catch (error) {
     if (sessionCurrent(snapshot, run, requestSeq)) {
-      clearReportList()
       if (errorStatus(error) === 403) {
-        adminState.value = 'denied'
-        accessError.value = '当前账号的审核范围已变化，请重新验证。'
+        enterDenied('当前账号的审核权限已变化，请重新验证。')
       } else {
+        clearReportList()
         reportsError.value = '举报列表加载失败，请重试。'
       }
     }
@@ -274,7 +286,7 @@ async function verifyAccess(): Promise<void> {
     if (!sessionCurrent(snapshot, run)) return
     governance.value = me
     if (!me.admin && me.moderatedSectionIds.length === 0) {
-      adminState.value = 'denied'
+      enterDenied('当前账号没有可用的审核范围。')
       return
     }
     role.value = me.admin ? 'admin' : 'moderator'
@@ -284,7 +296,7 @@ async function verifyAccess(): Promise<void> {
     if (!sessionCurrent(snapshot, run)) return
     clearReportList()
     if (errorStatus(error) === 403) {
-      adminState.value = 'denied'
+      enterDenied('当前账号的审核权限已变化，请重新验证。')
       return
     }
     adminState.value = 'error'
@@ -350,11 +362,18 @@ async function submitResolution(report: AdminReport): Promise<void> {
     await resolveAdminReport(report.id, active.action, reason)
     const refreshed = await loadReports(run, snapshot)
     if (!sessionCurrent(snapshot, run)) return
+    if (adminState.value === 'denied') return
     activeResolution.value = null
     resolutionReason.value = ''
     feedback.value = refreshed ? `${actionLabel(active.action)}成功，列表已刷新。` : `${actionLabel(active.action)}成功，但列表刷新失败，请重试。`
-  } catch (_) {
-    if (sessionCurrent(snapshot, run)) actionError.value = `${actionLabel(active.action)}失败，请重试。`
+  } catch (error) {
+    if (sessionCurrent(snapshot, run)) {
+      if (errorStatus(error) === 403) {
+        enterDenied('当前账号的审核权限已变化，请重新验证。')
+      } else {
+        actionError.value = `${actionLabel(active.action)}失败，请重试。`
+      }
+    }
   } finally {
     if (sessionCurrent(snapshot, run) && String(pendingReportId.value) === String(report.id)) pendingReportId.value = null
   }

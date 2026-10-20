@@ -42,6 +42,26 @@ describe('media status actions', () => {
     expect(wrapper.get('a').attributes('href')).toBe(original.url)
   })
 
+  it('shows a permission message for a message-less 403 and keeps the action retryable', async () => {
+    change.mockRejectedValueOnce({ response: { status: 403, data: {} } }).mockResolvedValueOnce({ ...original, processingStatus: 'CANCELLED' })
+    const auth = useAuthStore()
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('管理此图片处理任务的权限')
+    expect(wrapper.findAll('button').some(button => button.text() === '停止处理')).toBe(true)
+    expect(auth.isLoggedIn).toBe(true)
+    expect(auth.token).toBe('owner')
+
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    expect(change).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('已停止处理')
+  })
+
   it('does not apply an old action or error to the next account', async () => {
     let reject!: (reason: unknown) => void
     change.mockReturnValue(new Promise((_resolve, nextReject) => { reject = nextReject }))
