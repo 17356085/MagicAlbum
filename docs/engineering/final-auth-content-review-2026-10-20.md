@@ -42,3 +42,5 @@
 这是应用回调的可用性和并发保护，不是外部提供商登录验收。用户已明确尚未更新真实 AI 私有配置，本轮继续其余验收，不重复调用已关闭的接入点。
 
 补齐组件并发回调、仅替换证明而不切换账号、清理URL先于交换三个回归后，主代理当前完整回归为 Java490、前端316、工程脚本42和Python门禁33项，失败、错误、跳过均为0；类型、lint、构建、仓库及Java边界、PowerShell语法检查通过。Java日志为 `outputs/final-cancel-handoff-java-complete.log`，前端为 `outputs/final-oauth-retry-*-final.log`，脚本为 `outputs/final-cancel-oauth-*`。真实运行结果仍待新提交的CI。
+
+后续 `9276bbe` 的[CI 39523818085](https://github.com/17356085/MagicAlbum/actions/runs/39523818085)十二项全部通过：Java490、前端316、工程43实际执行；MySQL7+1验证新旧库迁移到20261020.4，生产Redis OAuth绑定验证通过；社区23确认管理员撤权在重启后仍生效，普通浏览器16及独立恢复的另一套16均通过。完整恢复读回角色范围、禁言拒绝、审计、摘要账本、幂等和通知隔离，清理通过。新增工程脚本的一项为重启GET就绪边界测试，未改变前述身份断言。当前自动回归不替代外部身份提供商、真实AI或实体设备验收；详见[本批证据](final-review-and-restore-2026-10-20.md)。
