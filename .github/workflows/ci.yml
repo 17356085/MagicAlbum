@@ -138,6 +138,18 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Verify nginx gateway DNS recovery
+        run: python3 ../scripts/ci/nginx-upstream-smoke.py
+
+      - name: Upload nginx gateway recovery evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-proxy-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: outputs/nginx-proxy-ci/
+
   backend:
     runs-on: ubuntu-latest
     steps:
