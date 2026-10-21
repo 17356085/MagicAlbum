@@ -111,6 +111,100 @@ function Send-VerificationRequest([string]$Base, [string]$Method, [string]$Path,
     if ($response.Content) { return $response.Content | ConvertFrom-Json }
 }
 
+function Wait-ForVerificationGet(
+    [string]$Base,
+    [string]$Path,
+    [string]$Token = '',
+    [int]$MaxWaitSeconds = 60,
+    [int]$PollMilliseconds = 500,
+    [int]$RequestTimeoutSeconds = 5,
+    [scriptblock]$Now = { [DateTime]::UtcNow },
+    [scriptblock]$Sleep = { param([int]$Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
+) {
+    if ($MaxWaitSeconds -lt 1) { throw 'Readiness wait duration must be positive' }
+    if ($PollMilliseconds -lt 1) { throw 'Readiness poll interval must be positive' }
+    if ($RequestTimeoutSeconds -lt 1 -or $RequestTimeoutSeconds -gt 5) {
+        throw 'Readiness request timeout must be between 1 and 5 seconds'
+    }
+
+    $deadline = ([DateTime](& $Now)).AddSeconds($MaxWaitSeconds)
+    $lastFailure = 'no response'
+    while ($true) {
+        $currentTime = [DateTime](& $Now)
+        if ($currentTime -ge $deadline) {
+            throw "GET $Path readiness timed out after $MaxWaitSeconds seconds (last failure: $lastFailure)"
+        }
+
+        $remainingSeconds = ($deadline - $currentTime).TotalSeconds
+        $timeoutSeconds = [Math]::Min($RequestTimeoutSeconds, [Math]::Max(1, [int][Math]::Ceiling($remainingSeconds)))
+        $options = @{
+            Uri = "$Base/api/v1$Path"; Method = 'GET'; TimeoutSec = $timeoutSeconds; SkipHttpErrorCheck = $true
+            Headers = @{'X-Device-Id' = "m0-$RunId"}
+        }
+        if ($Token) { $options.Headers.Authorization = "Bearer $Token" }
+
+        $response = $null
+        $retryAfterException = $false
+        try {
+            $response = Invoke-WebRequest @options
+        } catch {
+            $exception = $_.Exception
+            $retryable = $false
+            while ($null -ne $exception) {
+                if (($exception -is [System.Net.Http.HttpRequestException] -and $null -eq $exception.StatusCode) -or
+                    $exception -is [System.TimeoutException] -or
+                    $exception -is [System.Threading.Tasks.TaskCanceledException] -or
+                    ($exception -is [System.Net.WebException] -and
+                        $exception.Status -in @(
+                            [System.Net.WebExceptionStatus]::ConnectFailure,
+                            [System.Net.WebExceptionStatus]::NameResolutionFailure,
+                            [System.Net.WebExceptionStatus]::Timeout,
+                            [System.Net.WebExceptionStatus]::ConnectionClosed,
+                            [System.Net.WebExceptionStatus]::ReceiveFailure,
+                            [System.Net.WebExceptionStatus]::SendFailure,
+                            [System.Net.WebExceptionStatus]::ProxyNameResolutionFailure
+                        ))) {
+                    $retryable = $true
+                    break
+                }
+                $exception = $exception.InnerException
+            }
+            if (-not $retryable) { throw "GET $Path failed before response with a non-retryable error" }
+            $lastFailure = 'network or timeout failure'
+            $retryAfterException = $true
+        }
+
+        if ($null -eq $response -and -not $retryAfterException) {
+            throw "GET $Path returned no response while waiting for application readiness"
+        }
+        if ($null -ne $response) {
+            $status = [int]$response.StatusCode
+            if ($status -eq 200) {
+                if ([string]::IsNullOrWhiteSpace([string]$response.Content)) {
+                    throw "GET $Path returned invalid JSON with HTTP 200"
+                }
+                try {
+                    return (ConvertFrom-Json -InputObject ([string]$response.Content))
+                } catch {
+                    throw "GET $Path returned invalid JSON with HTTP 200"
+                }
+            }
+            if ($status -notin @(502, 503, 504)) {
+                throw "GET $Path returned HTTP $status while waiting for application readiness"
+            }
+            $lastFailure = "HTTP $status"
+        }
+
+        $currentTime = [DateTime](& $Now)
+        if ($currentTime -ge $deadline) {
+            throw "GET $Path readiness timed out after $MaxWaitSeconds seconds (last failure: $lastFailure)"
+        }
+        $remainingMilliseconds = [int][Math]::Ceiling(($deadline - $currentTime).TotalMilliseconds)
+        $delayMilliseconds = [Math]::Min($PollMilliseconds, [Math]::Max(1, $remainingMilliseconds))
+        $null = & $Sleep $delayMilliseconds
+    }
+}
+
 function Get-ComposeProjectResources([string]$Project) {
     $containers = @(& docker ps -aq --filter "label=com.docker.compose.project=$Project")
     if ($LASTEXITCODE -ne 0) { throw "Docker container inventory failed for $Project" }
@@ -395,7 +489,7 @@ services:
 
     Invoke-VerificationCompose $sourceProject $sourceEnvironment @('restart', 'notification-service', 'backend', 'gateway', 'frontend')
     Invoke-VerificationCompose $sourceProject $sourceEnvironment @('up', '-d', '--wait', '--wait-timeout', '240', '--no-build')
-    $restartedThread = Send-VerificationRequest $sourceUrl GET "/threads/$($thread.id)" $null
+    $restartedThread = Wait-ForVerificationGet -Base $sourceUrl -Path "/threads/$($thread.id)"
     Confirm-Check ($restartedThread.title -eq $thread.title -and $restartedThread.content.Contains($image.url)) 'Application restart preserves persisted thread and image reference'
     Start-Sleep -Seconds 3
     if ($ResourceMode -eq 'Constrained') {

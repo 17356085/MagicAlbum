@@ -90,6 +90,10 @@ const powershellResourceFunctions = powershellSource.slice(
   powershellSource.indexOf('function Get-ComposeProjectResources'),
   powershellSource.indexOf('New-Item -ItemType Directory'),
 );
+const powershellReadinessFunction = powershellSource.slice(
+  powershellSource.indexOf('function Wait-ForVerificationGet'),
+  powershellSource.indexOf('function Get-ComposeProjectResources'),
+);
 const bashFunctionPrefix = 'set -Eeuo pipefail\nCOMPOSE_ARGS=()\n' +
   ['die', 'compose', 'assert_project_unused', 'validate_junit', 'cleanup'].map((name) => {
     const match = bashSource.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'));
@@ -111,6 +115,105 @@ try {
 }
 `);
 }
+
+function runReadinessHarness(mode) {
+  return runPowerShell(`
+$ErrorActionPreference = 'Stop'
+$RunId = 'a1b2c3d4e5'
+${powershellReadinessFunction}
+$script:Clock = [DateTime]::Parse('2026-10-21T00:00:00Z')
+$script:Requests = [System.Collections.Generic.List[object]]::new()
+function Invoke-WebRequest {
+  param(
+    [string]$Uri,
+    [string]$Method,
+    [int]$TimeoutSec,
+    [switch]$SkipHttpErrorCheck,
+    [hashtable]$Headers,
+    [object]$Body
+  )
+  $index = $script:Requests.Count + 1
+  $script:Requests.Add([pscustomobject]@{
+    Uri = $Uri
+    Method = $Method
+    TimeoutSec = $TimeoutSec
+    HasSkipHttpErrorCheck = $SkipHttpErrorCheck.IsPresent
+    DeviceId = [string]$Headers['X-Device-Id']
+    Authorization = [string]$Headers.Authorization
+    HasBody = $PSBoundParameters.ContainsKey('Body')
+  })
+  if ($env:READINESS_MODE -eq 'network-then-200' -and $index -eq 1) {
+    throw [System.Net.Http.HttpRequestException]::new('connection refused')
+  }
+  if ($env:READINESS_MODE -eq '502-then-200' -and $index -eq 1) {
+    return [pscustomobject]@{ StatusCode = 502; Content = '{"status":"starting"}' }
+  }
+  if ($env:READINESS_MODE -eq '400') {
+    return [pscustomobject]@{ StatusCode = 400; Content = '{"error":"bad request"}' }
+  }
+  if ($env:READINESS_MODE -eq '500') {
+    return [pscustomobject]@{ StatusCode = 500; Content = '{"error":"server error"}' }
+  }
+  if ($env:READINESS_MODE -eq 'invalid-json') {
+    return [pscustomobject]@{ StatusCode = 200; Content = 'not-json' }
+  }
+  if ($env:READINESS_MODE -eq 'timeout') {
+    return [pscustomobject]@{ StatusCode = 502; Content = '{"status":"starting"}' }
+  }
+  return [pscustomobject]@{ StatusCode = 200; Content = '{"title":"ready","content":"ok"}' }
+}
+try {
+  $arguments = @{
+    Base = 'http://127.0.0.1:35173'
+    Path = '/threads/76'
+    Token = 'secret-token'
+    Now = { $script:Clock }
+    Sleep = { param([int]$Milliseconds) $script:Clock = $script:Clock.AddMilliseconds($Milliseconds) }
+  }
+  if ($env:READINESS_MODE -eq 'timeout') { $arguments.MaxWaitSeconds = 2 }
+  $result = Wait-ForVerificationGet @arguments
+  $outcome = [pscustomobject]@{ Success = $true; Result = $result; Error = $null }
+} catch {
+  $outcome = [pscustomobject]@{ Success = $false; Result = $null; Error = $_.Exception.Message }
+}
+[pscustomobject]@{
+  Outcome = $outcome
+  Requests = @($script:Requests | ForEach-Object { $_ })
+  Clock = $script:Clock.ToString('o')
+} | ConvertTo-Json -Depth 8 -Compress
+`, { READINESS_MODE: mode });
+}
+
+test('PowerShell restart readiness GET retries only transient gateway failures and preserves request semantics', () => {
+  const cases = [
+    ['502-then-200', { success: true, requestCount: 2, title: 'ready' }],
+    ['network-then-200', { success: true, requestCount: 2, title: 'ready' }],
+    ['400', { success: false, requestCount: 1, error: /HTTP 400/ }],
+    ['500', { success: false, requestCount: 1, error: /HTTP 500/ }],
+    ['invalid-json', { success: false, requestCount: 1, error: /invalid JSON/ }],
+    ['timeout', { success: false, requestCount: 4, error: /timed out.*HTTP 502/ }],
+  ];
+  for (const [mode, expected] of cases) {
+    const result = runReadinessHarness(mode);
+    assert.equal(result.status, 0, `${mode}: ${result.stdout}\n${result.stderr}`);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.Outcome.Success, expected.success, `${mode}: ${payload.Outcome.Error}`);
+    assert.equal(payload.Requests.length, expected.requestCount, mode);
+    if (expected.title) assert.equal(payload.Outcome.Result.title, expected.title, mode);
+    if (expected.error) assert.match(payload.Outcome.Error, expected.error, mode);
+    assert.doesNotMatch(payload.Outcome.Error || '', /secret-token|Bearer/i, `${mode} must not expose credentials`);
+    for (const request of payload.Requests) {
+      assert.equal(request.Uri, 'http://127.0.0.1:35173/api/v1/threads/76', mode);
+      assert.equal(request.Method, 'GET', mode);
+      assert.equal(request.HasSkipHttpErrorCheck, true, mode);
+      assert.equal(request.DeviceId, 'm0-a1b2c3d4e5', mode);
+      assert.equal(request.Authorization, 'Bearer secret-token', mode);
+      assert.equal(request.HasBody, false, `${mode} must not write a request body`);
+      assert.ok(request.TimeoutSec >= 1 && request.TimeoutSec <= 5, `${mode} request timeout must be <= 5s`);
+    }
+  }
+  assert.match(powershellSource, /\$restartedThread\s*=\s*Wait-ForVerificationGet\s+-Base \$sourceUrl\s+-Path/);
+});
 
 test('PowerShell JUnit gate accepts exactly 14/1 and rejects count, status, XML, failure, error, and skip violations', () => {
   const directory = makeTempDirectory();
