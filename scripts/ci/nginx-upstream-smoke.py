@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Prove that the frontend proxy follows a Docker gateway address change.
+"""Prove that the frontend Dockerfile proxy follows a gateway address change.
 
-The gate deliberately uses Docker's embedded DNS and the nginx image selected
-by ``frontend/Dockerfile``.  It starts a disposable gateway fixture, checks
-the real frontend configuration through a loopback-only published proxy, then
-replaces the gateway while holding its old IP so a static upstream cannot
-silently pass.
+The gate builds and runs the final image produced by ``frontend/Dockerfile``
+for the proxy, reads its bundled nginx configuration back, and uses Docker's
+embedded DNS through a loopback-only published proxy.  Disposable base nginx
+containers provide the gateway fixtures, which are replaced while their old IP
+is held so a static upstream cannot silently pass.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import re
 import secrets
@@ -75,7 +76,10 @@ def inspect_reports_missing(result: CommandResult) -> bool:
     if result.returncode == 0:
         return False
     output = f"{result.stdout}\n{result.stderr}".lower()
-    return any(marker in output for marker in ("no such object", "no such container", "no such network", "not found"))
+    return any(
+        marker in output
+        for marker in ("no such object", "no such container", "no such network", "no such image", "not found")
+    )
 
 
 @dataclass
@@ -224,10 +228,12 @@ def write_fixture(path: Path, phase: str) -> None:
 @dataclass
 class NginxFlow:
     runner: CommandRunner
-    image: str
+    proxy_image: str
+    fixture_image: str
     run_id: str
     kind: str
-    proxy_config: Path
+    proxy_config: Path | None
+    expected_proxy_config_sha256: str | None
     fixture_dir: Path
     artifact: dict[str, Any]
     network: str = field(init=False)
@@ -275,16 +281,81 @@ class NginxFlow:
         value = parse_json(result.stdout.strip(), f"labels for network {self.network}")
         return value if isinstance(value, dict) else {}
 
+    def network_ipv4_subnet(self) -> str:
+        result = self.runner.docker("network", "inspect", "--format", "{{json .IPAM.Config}}", self.network, timeout=15)
+        value = parse_json(result.stdout.strip(), f"IPAM configuration for network {self.network}")
+        if not isinstance(value, list):
+            raise GateFailure(f"network {self.network} returned no IPAM configuration list")
+        subnets: list[str] = []
+        for item in value:
+            if not isinstance(item, dict) or not isinstance(item.get("Subnet"), str):
+                continue
+            try:
+                network = ipaddress.ip_network(item["Subnet"], strict=False)
+            except ValueError as exc:
+                raise GateFailure(f"network {self.network} returned an invalid IPAM subnet") from exc
+            if network.version == 4:
+                subnets.append(str(network))
+        if len(subnets) != 1:
+            raise GateFailure(f"network {self.network} did not return exactly one IPv4 IPAM subnet")
+        return subnets[0]
+
+    def network_containers(self) -> dict[str, Any]:
+        result = self.runner.docker("network", "inspect", "--format", "{{json .Containers}}", self.network, timeout=15)
+        value = parse_json(result.stdout.strip(), f"containers attached to network {self.network}")
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise GateFailure(f"network {self.network} returned an invalid container inventory")
+        return value
+
     def require_container_owned(self, name: str) -> None:
         labels = self.container_labels(name)
         if labels.get(LABEL_KEY) != self.run_id:
             raise GateFailure(f"refusing to mutate unowned container: {name}")
 
     def create_network(self) -> None:
+        # Let Docker choose a free pool first.  Docker only accepts --ip for a
+        # user-configured subnet, so read that allocation back and recreate the
+        # same owned network with the exact validated IPv4 subnet.
         self.runner.docker("network", "create", "--driver", "bridge", "--label", self.label, self.network, timeout=30)
         self.network_created = True
         if self.network_labels().get(LABEL_KEY) != self.run_id:
             raise GateFailure(f"created network did not carry the ownership label: {self.network}")
+        learned_subnet = self.network_ipv4_subnet()
+        self.artifact["autoAssignedSubnet"] = learned_subnet
+        if self.network_labels().get(LABEL_KEY) != self.run_id:
+            raise GateFailure(f"temporary network ownership changed before removal: {self.network}")
+        attached = self.network_containers()
+        if attached:
+            raise GateFailure(f"temporary network unexpectedly had attached containers: {self.network}")
+        self.artifact["temporaryNetworkContainers"] = attached
+        self.runner.docker("network", "rm", self.network, timeout=30)
+        self.network_created = False
+        remaining = self.inspect("network", self.network)
+        if remaining.returncode == 0:
+            raise GateFailure(f"temporary network remained after owned removal: {self.network}")
+        if not inspect_reports_missing(remaining):
+            raise GateFailure(f"could not verify temporary network removal: {self.network}")
+        self.runner.docker(
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--subnet",
+            learned_subnet,
+            "--label",
+            self.label,
+            self.network,
+            timeout=30,
+        )
+        self.network_created = True
+        if self.network_labels().get(LABEL_KEY) != self.run_id:
+            raise GateFailure(f"recreated network did not carry the ownership label: {self.network}")
+        recreated_subnet = self.network_ipv4_subnet()
+        if recreated_subnet != learned_subnet:
+            raise GateFailure(f"recreated network subnet changed from {learned_subnet} to {recreated_subnet}")
+        self.artifact.update({"subnet": recreated_subnet, "networkRecreatedWithExplicitSubnet": True})
 
     def _register_container(self, name: str) -> None:
         self.created_containers.append(name)
@@ -336,7 +407,7 @@ class NginxFlow:
             command.extend(["--network-alias", "gateway"])
         if ip is not None:
             command.extend(["--ip", ip])
-        command.extend(["-v", f"{fixture}:/etc/nginx/conf.d/default.conf:ro", self.image])
+        command.extend(["-v", f"{fixture}:/etc/nginx/conf.d/default.conf:ro", self.fixture_image])
         self.runner.docker(*command, timeout=45)
         self.assert_no_published_ports(name)
         self.require_running(name)
@@ -354,7 +425,7 @@ class NginxFlow:
             self.label,
             "--ip",
             old_ip,
-            self.image,
+            self.fixture_image,
             "sleep",
             "90",
             timeout=45,
@@ -366,8 +437,7 @@ class NginxFlow:
 
     def start_proxy(self) -> None:
         self._register_container(self.proxy)
-        config_mount = f"{self.proxy_config}:/etc/nginx/conf.d/default.conf:ro"
-        self.runner.docker(
+        command = [
             "run",
             "-d",
             "--name",
@@ -378,12 +448,13 @@ class NginxFlow:
             self.label,
             "-p",
             "127.0.0.1::80",
-            "-v",
-            config_mount,
-            self.image,
-            timeout=45,
-        )
+        ]
+        if self.proxy_config is not None:
+            command.extend(["-v", f"{self.proxy_config}:/etc/nginx/conf.d/default.conf:ro"])
+        command.append(self.proxy_image)
+        self.runner.docker(*command, timeout=45)
         self.require_running(self.proxy)
+        self.assert_proxy_config_mount()
         bindings = self.port_bindings(self.proxy)
         values = [item for entries in bindings.values() if entries for item in entries]
         if len(values) != 1 or values[0].get("HostIp") not in {"127.0.0.1", "127.0.0.1/32"} or not values[0].get("HostPort"):
@@ -400,6 +471,43 @@ class NginxFlow:
         self.proxy_url = f"http://127.0.0.1:{port}"
         self.proxy_id = self.container_id(self.proxy)
         self.artifact.update({"proxyId": self.proxy_id, "proxyPort": port})
+        if self.expected_proxy_config_sha256 is not None:
+            result = self.runner.docker(
+                "exec",
+                self.proxy,
+                "sha256sum",
+                "/etc/nginx/conf.d/default.conf",
+                timeout=15,
+            )
+            match = re.match(r"^([0-9a-f]{64})\s+", result.stdout.strip())
+            if match is None:
+                raise GateFailure("built proxy configuration SHA-256 readback was invalid")
+            actual_sha256 = match.group(1)
+            if actual_sha256 != self.expected_proxy_config_sha256:
+                raise GateFailure(
+                    f"built proxy configuration SHA-256 changed from {self.expected_proxy_config_sha256} to {actual_sha256}"
+                )
+            self.artifact["proxyConfigSha256"] = actual_sha256
+
+    def assert_proxy_config_mount(self) -> None:
+        result = self.runner.docker("container", "inspect", "--format", "{{json .Mounts}}", self.proxy, timeout=15)
+        mounts = parse_json(result.stdout.strip(), f"mounts for {self.proxy}")
+        if not isinstance(mounts, list):
+            mounts = []
+        config_mounts = [item for item in mounts if isinstance(item, dict) and item.get("Destination") == "/etc/nginx/conf.d/default.conf"]
+        if self.proxy_config is None:
+            if config_mounts:
+                raise GateFailure("dynamic proxy unexpectedly mounted default.conf over the Dockerfile artifact")
+            self.artifact["proxyConfigMount"] = False
+            return
+        if len(config_mounts) != 1:
+            raise GateFailure("static control proxy did not mount exactly one derived default.conf")
+        mount = config_mounts[0]
+        source = mount.get("Source")
+        read_only = mount.get("RW") is False or mount.get("ReadOnly") is True
+        if not isinstance(source, str) or Path(source).resolve() != self.proxy_config.resolve() or not read_only:
+            raise GateFailure("static control default.conf mount was not the expected read-only derived file")
+        self.artifact["proxyConfigMount"] = True
 
     def require_running(self, name: str) -> None:
         if not self.container_running(name):
@@ -633,6 +741,108 @@ def ensure_image(runner: CommandRunner, image: str) -> None:
     raise GateFailure(f"could not pull runtime image after three preparation attempts: {' | '.join(failures)}")
 
 
+def image_labels(runner: CommandRunner, reference: str) -> dict[str, str]:
+    result = runner.docker("image", "inspect", "--format", "{{json .Config.Labels}}", reference, timeout=15)
+    value = parse_json(result.stdout.strip(), f"labels for image {reference}")
+    return value if isinstance(value, dict) else {}
+
+
+def image_id(runner: CommandRunner, reference: str) -> str:
+    result = runner.docker("image", "inspect", "--format", "{{.Id}}", reference, timeout=15)
+    value = result.stdout.strip()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        raise GateFailure(f"image {reference} returned an invalid image id")
+    return value
+
+
+def build_frontend_image(
+    runner: CommandRunner,
+    image_tag: str,
+    run_id: str,
+    config_sha256: str,
+    artifact: dict[str, Any],
+) -> str:
+    existing = runner.docker("image", "inspect", image_tag, timeout=15, check=False)
+    if existing.returncode == 0:
+        raise GateFailure(f"randomly selected build image tag already exists: {image_tag}")
+    if not inspect_reports_missing(existing):
+        raise GateFailure(f"could not verify build image tag is absent: {image_tag}")
+    runner.docker(
+        "build",
+        "--file",
+        str(DOCKERFILE),
+        "--tag",
+        image_tag,
+        "--label",
+        f"{LABEL_KEY}={run_id}",
+        str(FRONTEND_DIR),
+        timeout=300,
+    )
+    labels = image_labels(runner, image_tag)
+    if labels.get(LABEL_KEY) != run_id:
+        raise GateFailure(f"built image did not carry the ownership label: {image_tag}")
+    built_id = image_id(runner, image_tag)
+    artifact.update({"tag": image_tag, "id": built_id, "configSha256": config_sha256, "status": "passed"})
+    return built_id
+
+
+def cleanup_owned_image(runner: CommandRunner, image_tag: str, run_id: str, built_id: str | None, artifact: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    inspected = runner.docker("image", "inspect", image_tag, timeout=15, check=False)
+    if inspected.returncode == 0:
+        try:
+            labels = image_labels(runner, image_tag)
+            current_id = image_id(runner, image_tag)
+        except GateFailure as exc:
+            errors.append(str(exc))
+        else:
+            if labels.get(LABEL_KEY) != run_id:
+                errors.append(f"refusing to remove unowned build image: {image_tag}")
+            elif built_id is not None and current_id != built_id:
+                errors.append(f"build image tag changed from {built_id} to {current_id}: {image_tag}")
+            else:
+                removed = runner.docker("image", "rm", image_tag, timeout=45, check=False)
+                if removed.returncode != 0:
+                    errors.append(f"could not remove owned build image {image_tag}: {safe_text(removed.stderr or removed.stdout)}")
+    elif not inspect_reports_missing(inspected):
+        errors.append(f"could not inspect build image during cleanup: {image_tag}: {safe_text(inspected.stderr or inspected.stdout)}")
+    remaining = runner.docker("image", "inspect", image_tag, timeout=15, check=False)
+    if remaining.returncode == 0:
+        errors.append(f"owned build image tag remained after cleanup: {image_tag}")
+    elif not inspect_reports_missing(remaining):
+        errors.append(f"could not verify build image cleanup: {image_tag}: {safe_text(remaining.stderr or remaining.stdout)}")
+    inventory = runner.docker("image", "ls", "-aq", "--filter", f"label={LABEL_KEY}={run_id}", timeout=15, check=False)
+    if inventory.returncode != 0:
+        errors.append(f"could not inspect owned build image inventory: {safe_text(inventory.stderr or inventory.stdout)}")
+    else:
+        residual_ids = list(dict.fromkeys(line.strip() for line in inventory.stdout.splitlines() if line.strip()))
+        artifact["remainingOwnedImageIds"] = residual_ids
+        for residual_id in residual_ids:
+            try:
+                labels = image_labels(runner, residual_id)
+                inspected_id = image_id(runner, residual_id)
+            except GateFailure as exc:
+                errors.append(str(exc))
+                continue
+            if labels.get(LABEL_KEY) != run_id:
+                errors.append(f"refusing to remove unowned residual build image: {residual_id}")
+                continue
+            if built_id is not None and inspected_id != built_id:
+                errors.append(f"owned build image id changed from {built_id} to {inspected_id}")
+                continue
+            removed = runner.docker("image", "rm", inspected_id, timeout=45, check=False)
+            if removed.returncode != 0:
+                errors.append(f"could not remove residual owned build image {inspected_id}: {safe_text(removed.stderr or removed.stdout)}")
+                continue
+            after = runner.docker("image", "inspect", inspected_id, timeout=15, check=False)
+            if after.returncode == 0:
+                errors.append(f"residual owned build image remained after cleanup: {inspected_id}")
+            elif not inspect_reports_missing(after):
+                errors.append(f"could not verify residual build image cleanup: {inspected_id}: {safe_text(after.stderr or after.stdout)}")
+    artifact["cleanup"] = {"status": "passed" if not errors else "failed", "errors": errors}
+    return errors
+
+
 def verify_owned_inventory(runner: CommandRunner, run_id: str) -> list[str]:
     """Use Docker's label inventory as the final leak check for this run."""
 
@@ -641,6 +851,7 @@ def verify_owned_inventory(runner: CommandRunner, run_id: str) -> list[str]:
     for resource_type, command in (
         ("container", ("container", "ls", "-aq", "--filter", filter_value)),
         ("network", ("network", "ls", "-q", "--filter", filter_value)),
+        ("image", ("image", "ls", "-aq", "--filter", filter_value)),
     ):
         result = runner.docker(*command, timeout=15, check=False)
         if result.returncode != 0:
@@ -671,6 +882,8 @@ def main(argv: list[str] | None = None) -> int:
     static: NginxFlow | None = None
     temporary_dir: tempfile.TemporaryDirectory[str] | None = None
     run_id: str | None = None
+    built_image_tag: str | None = None
+    built_image_id: str | None = None
     image = ""
     failure: str | None = None
     static_control_rejected = False
@@ -682,6 +895,7 @@ def main(argv: list[str] | None = None) -> int:
         "image": None,
         "config": "frontend/nginx.conf",
         "dockerfile": "frontend/Dockerfile",
+        "build": {},
         "dynamic": {},
         "staticControl": {},
         "staticControlRejected": False,
@@ -695,20 +909,42 @@ def main(argv: list[str] | None = None) -> int:
         source, static_source = validate_proxy_config(NGINX_CONFIG)
         image = read_runtime_image(DOCKERFILE)
         report["image"] = image
-        report["configSha256"] = hashlib.sha256(source.encode()).hexdigest()
+        report["configSha256"] = hashlib.sha256(NGINX_CONFIG.read_bytes()).hexdigest()
+        run_id = secrets.token_hex(8)
+        report["runId"] = run_id
         runner.docker("info", timeout=30)
         ensure_image(runner, image)
+        built_image_tag = f"bluealbum/nginx-proxy-ci:{run_id}"
+        built_image_id = build_frontend_image(runner, built_image_tag, run_id, report["configSha256"], report["build"])
         temporary_dir = tempfile.TemporaryDirectory(prefix="bluealbum-nginx-", dir=str(artifact_dir))
         fixture_dir = Path(temporary_dir.name)
         write_fixture(fixture_dir / "phase1.conf", "phase1")
         write_fixture(fixture_dir / "phase2.conf", "phase2")
         static_config = fixture_dir / "static-nginx.conf"
         static_config.write_text(static_source, encoding="utf-8")
-        run_id = secrets.token_hex(8)
-        report["runId"] = run_id
-        dynamic = NginxFlow(runner, image, run_id, "dynamic", NGINX_CONFIG, fixture_dir, report["dynamic"])
+        dynamic = NginxFlow(
+            runner,
+            built_image_tag,
+            image,
+            run_id,
+            "dynamic",
+            None,
+            report["configSha256"],
+            fixture_dir,
+            report["dynamic"],
+        )
         dynamic.run(static_control=False)
-        static = NginxFlow(runner, image, run_id, "static", static_config, fixture_dir, report["staticControl"])
+        static = NginxFlow(
+            runner,
+            built_image_tag,
+            image,
+            run_id,
+            "static",
+            static_config,
+            None,
+            fixture_dir,
+            report["staticControl"],
+        )
         static.run(static_control=True)
         static_control_rejected = bool(report["staticControl"].get("staticControlRejected"))
         if not static_control_rejected:
@@ -722,6 +958,11 @@ def main(argv: list[str] | None = None) -> int:
                     cleanup_errors.extend(flow.cleanup())
                 except Exception as exc:  # preserve the failure report if the daemon disappears during cleanup
                     cleanup_errors.append(f"cleanup exception for {flow.kind}: {safe_text(exc)}")
+        if runner is not None and built_image_tag is not None and run_id is not None:
+            try:
+                cleanup_errors.extend(cleanup_owned_image(runner, built_image_tag, run_id, built_image_id, report["build"]))
+            except Exception as exc:  # preserve the failure report if image cleanup itself raises
+                cleanup_errors.append(f"build image cleanup exception: {safe_text(exc)}")
         if temporary_dir is not None:
             try:
                 temporary_dir.cleanup()
