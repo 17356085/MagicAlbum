@@ -308,6 +308,9 @@ export TEST_BASE_URL="http://127.0.0.1:$frontend_port"
 export TEST_API_BASE_URL="http://127.0.0.1:$gateway_port/api/v1"
 export TEST_PLAYWRIGHT_CHANNEL=""
 export TEST_ARTIFACT_DIR="$SCREENSHOT_DIR"
+if [[ "$FULL_MODE" == "1" ]]; then
+  export TEST_LAYOUT_ARTIFACTS="$SCREENSHOT_DIR"
+fi
 export TEST_EMAIL=''
 export TEST_PHONE=''
 export TEST_PASSWORD=''

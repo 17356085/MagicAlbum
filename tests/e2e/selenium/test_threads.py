@@ -194,15 +194,21 @@ class TestThreadCreate:
     @pytest.mark.p0
     @pytest.mark.ui
     @pytest.mark.auth
-    def test_create_thread_successfully(self, auth_page: WebDriver) -> None:
+    def test_create_thread_successfully(
+        self,
+        auth_page: WebDriver,
+        auth_api_client: ApiClient,
+        auth_session: dict,
+    ) -> None:
         """
         登录后成功创建帖子
 
         Selenium 学习要点 — 完整表单提交流程：
           1. 导航到创建页
           2. 填写表单（select + input + textarea）
-          3. 提交
-          4. 验证成功反馈
+          3. 等待可用按钮并提交
+          4. 验证成功反馈中的真实帖子链接
+          5. 通过同一认证 API 客户端读回持久化结果
         """
         create = ThreadCreatePage(auth_page)
         create.go()
@@ -215,14 +221,53 @@ class TestThreadCreate:
         title = unique_thread_title()
         content = unique_thread_content()
         create.fill_form(title=title, content=content, tags="测试, 自动化")
-        create.submit()
+        thread_id = None
+        try:
+            submit_button = create.wait_for_submit_enabled()
+            assert submit_button.is_enabled(), "填写有效内容后发布按钮必须处于 enabled 状态"
+            submit_button.click()
 
-        # 验证成功
-        import time
-        time.sleep(1.5)  # 等待后端处理 + 前端更新
-        assert create.is_success_shown() or not create.is_error_shown(), (
-            "帖子应该创建成功，不应显示错误"
-        )
+            success = create.wait_for_success()
+            assert success.text.strip() == "发布成功", "必须显示服务端创建成功状态"
+
+            thread_link = create.wait_for_created_thread_link()
+            href = thread_link.get_attribute("href") or ""
+            path_parts = [part for part in urlparse(href).path.split("/") if part]
+            assert len(path_parts) == 2 and path_parts[0] == "threads" and path_parts[1].isdigit(), (
+                f"成功反馈必须包含真实帖子 href，实际: {href}"
+            )
+            thread_id = int(path_parts[1])
+            assert thread_id > 0, f"帖子 ID 必须为正整数，实际: {thread_id}"
+
+            user = auth_session["user"]
+            expected_author_id = int(user.get("id") or user.get("userId") or 0)
+            assert expected_author_id > 0, "认证 fixture 必须提供有效用户 ID"
+
+            readback = auth_api_client.get_thread(thread_id)
+            assert readback.status_code == 200, (
+                f"创建后的帖子必须可由同认证 API 客户端读回，实际 HTTP {readback.status_code}"
+            )
+            body = readback.json()
+            thread_body = (
+                body.get("data")
+                if isinstance(body, dict) and isinstance(body.get("data"), dict)
+                else body
+            )
+            assert isinstance(thread_body, dict), "帖子读回响应必须为对象"
+            assert int(thread_body.get("id") or 0) == thread_id, (
+                f"读回帖子 ID 不匹配，期望 {thread_id}，实际 {thread_body.get('id')}"
+            )
+            assert int(thread_body.get("authorId") or 0) == expected_author_id, (
+                "读回帖子作者必须是当前认证用户"
+            )
+            assert thread_body.get("title") == title, "读回帖子标题必须与提交内容一致"
+            assert thread_body.get("content") == content, "读回帖子正文必须与提交内容一致"
+        finally:
+            if thread_id is not None:
+                cleanup = auth_api_client.delete_thread(thread_id)
+                assert cleanup.status_code == 204, (
+                    f"只允许清理本测试创建的帖子，且删除必须成功，实际 HTTP {cleanup.status_code}"
+                )
 
     @pytest.mark.p1
     @pytest.mark.ui

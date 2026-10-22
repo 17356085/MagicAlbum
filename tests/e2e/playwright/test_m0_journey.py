@@ -24,7 +24,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright, expect
 
 from tests.api.api_client import ApiClient
 
@@ -385,7 +385,7 @@ def _write_fixture(
 @pytest.mark.ui
 @pytest.mark.auth
 @pytest.mark.slow
-def test_m0_r01_r04_browser_journey() -> None:
+def test_m0_r01_r04_browser_journey(playwright_instance: Playwright) -> None:
     """Exercise registration, content interaction, notification, report, and isolation paths."""
 
     identity_a = _new_identity("a")
@@ -401,11 +401,11 @@ def test_m0_r01_r04_browser_journey() -> None:
     post_id: int | None = None
 
     try:
-        with sync_playwright() as playwright, _CaptureOnFailure(
+        with _CaptureOnFailure(
             lambda: [page for page in (page_a, page_b) if page is not None]
         ):
             channel = os.getenv("TEST_PLAYWRIGHT_CHANNEL", "chrome").strip() or None
-            browser = playwright.chromium.launch(
+            browser = playwright_instance.chromium.launch(
                 channel=channel,
                 headless=True,
                 args=["--no-sandbox", "--disable-setuid-sandbox"],
@@ -627,7 +627,10 @@ def test_m0_r01_r04_browser_journey() -> None:
                     )
                     _assert_status(denied_reports, (403,), "non-admin report boundary")
             else:
-                assert admin_status.status_code in (401, 403)
+                # Account B has already completed a successful authenticated
+                # API call, so an admin-status denial must be forbidden rather
+                # than an authentication failure.
+                _assert_status(admin_status, (403,), "non-admin admin status")
 
             # Reverse ownership checks are API-only readbacks around browser
             # flows: B cannot mutate A's thread, and A cannot mutate B's post.

@@ -13,14 +13,31 @@ Selenium 学习要点 — 嵌套组件测试：
     - 不能立即断言最终状态
 """
 
+from urllib.parse import urlparse
+
 import pytest
 import time
+from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.support.ui import WebDriverWait
 
+from tests.api.api_client import ApiClient
 from tests.e2e.selenium.pages.discover_page import DiscoverPage
 from tests.e2e.selenium.pages.thread_detail_page import ThreadDetailPage
 from tests.e2e.selenium.config.settings import settings
 from tests.utils.data_generator import unique_comment
+
+
+def _post_page(response) -> tuple[list[dict], int]:
+    body = response.json()
+    payload = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else body
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        pytest.fail("评论列表读回响应必须包含 items 数组")
+    try:
+        total = int(payload["total"])
+    except (KeyError, TypeError, ValueError):
+        pytest.fail("评论列表读回响应必须包含有效 total")
+    return [item for item in payload["items"] if isinstance(item, dict)], total
 
 
 class TestCommentUI:
@@ -69,7 +86,11 @@ class TestCommentUI:
     @pytest.mark.p1
     @pytest.mark.ui
     @pytest.mark.auth
-    def test_empty_comment_should_not_submit(self, auth_page: WebDriver) -> None:
+    def test_empty_comment_should_not_submit(
+        self,
+        auth_page: WebDriver,
+        auth_api_client: ApiClient,
+    ) -> None:
         """
         空评论不应提交成功
 
@@ -89,16 +110,65 @@ class TestCommentUI:
 
         assert detail.is_loaded(), "帖子详情必须加载成功后才能验证空评论"
 
+        path_parts = [part for part in urlparse(auth_page.current_url).path.split("/") if part]
+        assert len(path_parts) == 2 and path_parts[0] == "threads" and path_parts[1].isdigit(), (
+            f"详情页 URL 必须包含真实帖子 ID，实际: {auth_page.current_url}"
+        )
+        thread_id = int(path_parts[1])
+
+        before = auth_api_client.list_posts(thread_id, page=1, size=50)
+        assert before.status_code == 200, (
+            f"空评论测试必须先读回评论列表，实际 HTTP {before.status_code}"
+        )
+        before_items, before_total = _post_page(before)
+        before_ids = {str(item.get("id")) for item in before_items}
+        before_dom_count = detail.get_comment_count()
+
         submit_btn = detail.comment_submit_btn
         # 检查按钮是否 disabled
         if not submit_btn.is_enabled():
-            # 空输入时按钮 disabled → 符合预期
+            # 空输入时按钮 disabled → 明确验证该分支，而不是仅提前返回。
+            assert not submit_btn.is_enabled(), "空评论按钮 disabled 分支必须保持 disabled"
             return
 
         # 如果按钮 enabled，尝试提交空内容
-        detail.submit_comment()
-        time.sleep(0.5)
-        # 应该显示错误或评论不出现
+        submit_btn.click()
+        error_text = WebDriverWait(auth_page, 5).until(
+            lambda driver: next(
+                (
+                    element.text.strip()
+                    for element in driver.find_elements(
+                        By.CSS_SELECTOR, "#thread-comments [role='alert']"
+                    )
+                    if element.is_displayed() and element.text.strip()
+                ),
+                False,
+            )
+        )
+        assert error_text, "enabled 的空评论提交必须显示可见的非空错误反馈"
+
+        # 空内容被拒绝后必须有错误反馈，且页面和服务端都不能出现新评论。
+        assert detail.get_comment_count() == before_dom_count, (
+            "提交空评论后页面不应新增评论"
+        )
+        after_items: list[dict] | None = None
+        after_total: int | None = None
+
+        def read_posts_once(_driver: WebDriver) -> bool:
+            nonlocal after_items, after_total
+            response = auth_api_client.list_posts(thread_id, page=1, size=50)
+            if response.status_code != 200:
+                return False
+            after_items, after_total = _post_page(response)
+            return True
+
+        WebDriverWait(auth_page, 5).until(read_posts_once)
+        assert after_items is not None, "空评论提交后必须完成评论列表读回"
+        assert after_total is not None, "空评论提交后必须完成评论总数读回"
+        after_ids = {str(item.get("id")) for item in after_items}
+        assert after_total == before_total, "提交空评论后服务端评论总数不得增加"
+        assert len(after_items) == len(before_items), "提交空评论后评论数量不得增加"
+        assert after_ids == before_ids, "提交空评论后评论 ID 集合不得变化"
 
     @pytest.mark.ui
     def test_comment_list_displayed(self, clean_page: WebDriver) -> None:

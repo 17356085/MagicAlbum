@@ -45,6 +45,7 @@ class ThreadCreatePage(BasePage):
     SECTION_SELECT_CSS = "#thread-create-section"
     TITLE_INPUT_CSS = "input[placeholder*='请输入标题']"
     TAG_INPUT_CSS = "input[placeholder*='用空格或逗号分隔']"
+    TAGS_SUMMARY_XPATH = "//summary[contains(normalize-space(.),'标签（可选）')]"
     # MarkdownTextareaEditor 组件中包含 textarea
     CONTENT_EDITOR_CSS = "textarea[placeholder*='请输入帖子正文']"
 
@@ -56,6 +57,7 @@ class ThreadCreatePage(BasePage):
     CLEAR_DRAFT_BTN_XPATH = "//button[contains(.,'清除草稿')]"
     # 源码: <button @click="onLoginClick">立即登录</button>
     LOGIN_BTN_XPATH = "//button[contains(.,'立即登录')]"
+    THREAD_LINK_XPATH = "//a[normalize-space(.)='查看帖子' and contains(@href,'/threads/')]"
 
     # 提示
     # 源码: <span>请先登录后再发帖</span>
@@ -117,6 +119,12 @@ class ThreadCreatePage(BasePage):
                 return element
         raise NoSuchElementException(f"未找到可见元素: {selector}")
 
+    def _visible_element_by_xpath(self, xpath: str) -> WebElement:
+        for element in self.driver.find_elements(By.XPATH, xpath):
+            if element.is_displayed():
+                return element
+        raise NoSuchElementException(f"未找到可见元素: {xpath}")
+
     @property
     def login_prompt(self) -> WebElement:
         return self.driver.find_element(
@@ -130,6 +138,10 @@ class ThreadCreatePage(BasePage):
     @property
     def error_msg(self) -> WebElement:
         return self._visible_element_by_css(self.ERROR_CSS)
+
+    @property
+    def created_thread_link(self) -> WebElement:
+        return self._visible_element_by_xpath(self.THREAD_LINK_XPATH)
 
     # ═══════════════════════════════════════════════════════════
     # 操作
@@ -192,8 +204,39 @@ class ThreadCreatePage(BasePage):
 
         标签用空格或逗号分隔，输入后自动解析为标签徽章
         """
-        self.tag_input.clear()
-        self.tag_input.send_keys(tags)
+        summary = WebDriverWait(self.driver, 10).until(
+            lambda d: next(
+                (
+                    element
+                    for element in d.find_elements(By.XPATH, self.TAGS_SUMMARY_XPATH)
+                    if element.is_displayed()
+                ),
+                False,
+            )
+        )
+        visible_input = next(
+            (
+                element
+                for element in self.driver.find_elements(By.CSS_SELECTOR, self.TAG_INPUT_CSS)
+                if element.is_displayed()
+            ),
+            None,
+        )
+        if visible_input is None:
+            summary.click()
+
+        tag_input = WebDriverWait(self.driver, 10).until(
+            lambda d: next(
+                (
+                    element
+                    for element in d.find_elements(By.CSS_SELECTOR, self.TAG_INPUT_CSS)
+                    if element.is_displayed()
+                ),
+                False,
+            )
+        )
+        tag_input.clear()
+        tag_input.send_keys(tags)
 
     def fill_content(self, content: str) -> None:
         """
@@ -236,6 +279,45 @@ class ThreadCreatePage(BasePage):
         )
         if button.is_enabled():
             button.click()
+
+    def wait_for_submit_enabled(self, timeout: float = 15) -> WebElement:
+        """等待当前可见的发布按钮真正可用，避免 disabled 时静默跳过点击。"""
+        return WebDriverWait(self.driver, timeout).until(
+            lambda d: next(
+                (
+                    element
+                    for element in d.find_elements(By.XPATH, self.SUBMIT_BTN_XPATH)
+                    if element.is_displayed() and element.is_enabled()
+                ),
+                False,
+            )
+        )
+
+    def wait_for_success(self, timeout: float = 20) -> WebElement:
+        """等待服务端创建成功后显示的成功状态。"""
+        return WebDriverWait(self.driver, timeout).until(
+            lambda d: next(
+                (
+                    element
+                    for element in d.find_elements(By.CSS_SELECTOR, self.SUCCESS_CSS)
+                    if element.is_displayed() and element.text.strip() == "发布成功"
+                ),
+                False,
+            )
+        )
+
+    def wait_for_created_thread_link(self, timeout: float = 20) -> WebElement:
+        """等待成功反馈中的真实帖子链接。"""
+        return WebDriverWait(self.driver, timeout).until(
+            lambda d: next(
+                (
+                    element
+                    for element in d.find_elements(By.XPATH, self.THREAD_LINK_XPATH)
+                    if element.is_displayed()
+                ),
+                False,
+            )
+        )
 
     def save_draft(self) -> None:
         """保存草稿"""

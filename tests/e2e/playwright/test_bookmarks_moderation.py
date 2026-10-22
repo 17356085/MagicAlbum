@@ -83,8 +83,29 @@ def test_bookmark_button_and_account_list(
         )
         expect(bookmarks_section.get_by_role("link").filter(has_text=title)).to_be_visible()
     finally:
-        auth_api_client.unbookmark_thread(thread_id)
-        auth_api_client.delete_thread(thread_id)
+        cleanup_errors: list[str] = []
+        try:
+            removed = auth_api_client.unbookmark_thread(thread_id)
+            if removed.status_code != 200:
+                cleanup_errors.append(
+                    f"bookmark cleanup returned HTTP {removed.status_code}"
+                )
+            else:
+                removed_body = removed.json()
+                if not isinstance(removed_body, dict) or removed_body.get("bookmarked") is not False:
+                    cleanup_errors.append("bookmark cleanup did not return bookmarked=false")
+        except Exception as exc:
+            cleanup_errors.append(f"bookmark cleanup raised {type(exc).__name__}")
+
+        try:
+            deleted = auth_api_client.delete_thread(thread_id)
+            if deleted.status_code != 204:
+                cleanup_errors.append(f"thread cleanup returned HTTP {deleted.status_code}")
+        except Exception as exc:
+            cleanup_errors.append(f"thread cleanup raised {type(exc).__name__}")
+
+        if cleanup_errors:
+            pytest.fail("bookmark test cleanup failed: " + "; ".join(cleanup_errors))
 
 
 @pytest.mark.ui

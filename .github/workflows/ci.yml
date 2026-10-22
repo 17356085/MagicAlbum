@@ -309,7 +309,7 @@ jobs:
       - name: Install bundled Playwright Chromium
         run: python -m playwright install --with-deps chromium
 
-      - name: Prepare isolated account, admin and real API fixtures
+      - name: Execute complete Python suite in an isolated stack
         run: bash scripts/ci/compose-browser-smoke.sh
 
       - name: Upload full Python regression evidence
