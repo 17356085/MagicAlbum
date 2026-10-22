@@ -32,7 +32,11 @@ function Wait-LocalHealth([string]$Name, [string]$Url, [int]$ProcessId, [switch]
             if ($response.StatusCode -eq 200) {
                 if (-not $Actuator) { return }
                 try {
-                    $health = ConvertFrom-Json -InputObject $response.Content
+                    # Windows PowerShell 7 returns Content as byte[] when the response
+                    # has no charset, so decode before parsing instead of failing silently.
+                    $raw = $response.Content
+                    if ($raw -is [byte[]]) { $raw = [System.Text.Encoding]::UTF8.GetString($raw) }
+                    $health = ConvertFrom-Json -InputObject ([string]$raw)
                     if ($health.status -eq 'UP') { return }
                 } catch { }
             }
