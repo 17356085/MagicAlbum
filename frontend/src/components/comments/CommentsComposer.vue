@@ -30,6 +30,7 @@ const commentSubmissionKey = Symbol.for('bluealbum.comments.submitting') as Inje
 const inheritedSubmitting = inject(commentSubmissionKey, ref(false))
 const isSubmitting = computed(() => props.isSubmitting || inheritedSubmitting.value)
 const isBusy = computed(() => isSubmitting.value || props.isUploading)
+const isSubmitDisabled = computed(() => isBusy.value || !props.modelValue.trim())
 const inputClass = computed(() =>
   `${props.widthClass} ui-field h-[120px] min-h-[120px] resize-none overflow-y-auto text-base leading-6 lg:h-[140px] lg:min-h-[140px]`,
 )
@@ -74,7 +75,7 @@ function requestLogin(): void {
         </button>
         <button
           type="button"
-          :disabled="isBusy"
+          :disabled="isSubmitDisabled"
           class="ui-button-primary min-h-12 px-3 py-2 text-sm disabled:opacity-60"
           @click="emit('submit')"
         >

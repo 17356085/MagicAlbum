@@ -204,6 +204,7 @@ async function submit(): Promise<void> {
   }
   const text = String(content.value || '').trim()
   if (!text) {
+    error.value = '请输入评论内容'
     isSubmitting.value = false
     return
   }

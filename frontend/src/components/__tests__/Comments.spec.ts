@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Comments from '../Comments.vue'
+import CommentsComposer from '../comments/CommentsComposer.vue'
 import { createPost, likePost, listPosts } from '@/api/posts'
 import { uploadImage } from '@/api/uploads'
 import { useAuthStore } from '@/stores/auth'
@@ -238,6 +239,27 @@ describe('Comments image upload feedback', () => {
     await selectFile(wrapper, file)
     expect(uploadImageMock).toHaveBeenCalledTimes(2)
     expect((textarea.element as HTMLTextAreaElement).value).toContain('![](https://cdn.example/photo.png)')
+  })
+})
+
+describe('Comments empty submission feedback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    useAuthStore().applyAuthState({ accessToken: 'real-token' })
+    listPostsMock.mockResolvedValue({ items: [], page: 1, size: 20, total: 0 })
+  })
+
+  it('shows a visible error and never calls the API when submit is emitted with empty content', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    wrapper.findComponent(CommentsComposer).vm.$emit('submit')
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').text()).toContain('请输入评论内容')
+    expect(createPostMock).not.toHaveBeenCalled()
   })
 })
 

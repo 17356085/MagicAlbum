@@ -87,6 +87,10 @@ class ThreadCreatePage(BasePage):
     def content_editor(self) -> WebElement:
         return self.driver.find_element(By.CSS_SELECTOR, self.CONTENT_EDITOR_CSS)
 
+    def get_content_editor_value(self) -> str:
+        """读取当前可见正文 textarea 的实际 value。"""
+        return self._visible_element_by_css(self.CONTENT_EDITOR_CSS).get_attribute("value") or ""
+
     @property
     def submit_btn(self) -> WebElement:
         return self._visible_button(self.SUBMIT_BTN_XPATH)

@@ -221,6 +221,12 @@ class TestThreadCreate:
         title = unique_thread_title()
         content = unique_thread_content()
         create.fill_form(title=title, content=content, tags="测试, 自动化")
+        # Markdown 编辑器会根据键盘输入自动续写列表前缀；这属于正常的
+        # 编辑行为。捕获可见 textarea 的实际 value，后续严格按该值读回。
+        captured_editor_content = create.get_content_editor_value()
+        assert captured_editor_content.strip(), "可见正文 textarea 的实际 value 不得为空"
+        assert "## 自动化测试内容" in captured_editor_content, "正文首段必须保留"
+        assert "验证 Markdown 渲染" in captured_editor_content, "正文核心文本必须保留"
         thread_id = None
         try:
             submit_button = create.wait_for_submit_enabled()
@@ -261,7 +267,9 @@ class TestThreadCreate:
                 "读回帖子作者必须是当前认证用户"
             )
             assert thread_body.get("title") == title, "读回帖子标题必须与提交内容一致"
-            assert thread_body.get("content") == content, "读回帖子正文必须与提交内容一致"
+            assert thread_body.get("content") == captured_editor_content, (
+                "读回帖子正文必须与可见编辑器实际提交值一致"
+            )
         finally:
             if thread_id is not None:
                 cleanup = auth_api_client.delete_thread(thread_id)
