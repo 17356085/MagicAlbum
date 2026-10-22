@@ -2,7 +2,7 @@
 
 ## 通用约定
 
-使用 UTF-8、空格缩进和文件末尾换行，具体编辑器设置见根 `.editorconfig`。Vue、TypeScript、JSON、YAML 默认两空格；Java、XML、Python、PowerShell 默认四空格；Windows 批处理保留 CRLF。已有文件不因小改动而整篇重新格式化。
+使用 UTF-8 和文件末尾换行，具体编辑器设置见根 `.editorconfig`。Vue、TypeScript、JSON、YAML 默认两空格；Java、XML、Python、PowerShell 默认四空格；Go 使用制表符并以 gofmt 为准；Windows 批处理保留 CRLF。已有文件不因小改动而整篇重新格式化。
 
 根 `.gitattributes` 为文本签出统一指定 LF，`.cmd`/`.bat` 使用 CRLF，图片、字体和文档等二进制文件禁止文本转换。新增规则不要求重新格式化或重新暂存全库；修改文件时保留现有业务差异，Shell 脚本必须保持 LF。
 

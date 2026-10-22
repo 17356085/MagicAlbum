@@ -44,16 +44,14 @@ class TestCommentUI:
         discover.go()
         discover.wait_for_content()
 
-        if not discover.has_threads():
-            pytest.skip("没有帖子可评论")
+        assert discover.has_threads(), "全量回归 fixture 必须提供帖子可评论"
 
         discover.click_thread(0)
 
         detail = ThreadDetailPage(auth_page)
         detail.wait_for_content()
 
-        if not detail.is_loaded():
-            pytest.skip("帖子详情加载失败")
+        assert detail.is_loaded(), "帖子详情必须加载成功后才能发表评论"
 
         # 发表评论
         comment_text = unique_comment()
@@ -83,15 +81,13 @@ class TestCommentUI:
         discover.go()
         discover.wait_for_content()
 
-        if not discover.has_threads():
-            pytest.skip("没有帖子")
+        assert discover.has_threads(), "全量回归 fixture 必须提供帖子"
 
         discover.click_thread(0)
         detail = ThreadDetailPage(auth_page)
         detail.wait_for_content()
 
-        if not detail.is_loaded():
-            pytest.skip("帖子详情加载失败")
+        assert detail.is_loaded(), "帖子详情必须加载成功后才能验证空评论"
 
         submit_btn = detail.comment_submit_btn
         # 检查按钮是否 disabled
@@ -113,16 +109,14 @@ class TestCommentUI:
         discover.go()
         discover.wait_for_content()
 
-        if not discover.has_threads():
-            pytest.skip("没有帖子")
+        assert discover.has_threads(), "全量回归 fixture 必须提供帖子"
 
         discover.click_thread(0)
 
         detail = ThreadDetailPage(clean_page)
         detail.wait_for_content()
 
-        if not detail.is_loaded():
-            pytest.skip("帖子详情加载失败")
+        assert detail.is_loaded(), "帖子详情必须加载成功后才能验证评论区"
 
         # 评论区应该存在（输入框可见或评论列表可见）
         time.sleep(0.5)

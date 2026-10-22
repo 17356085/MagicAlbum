@@ -37,18 +37,19 @@ class DiscoverPage(BasePage):
     # ═══════════════════════════════════════════════════════════
 
     # 帖子列表容器
-    THREAD_LIST_CSS = ".rounded-xl.border.border-gray-100 ul"
-    # 帖子卡片（Tailwind group 用于 hover 效果）
-    THREAD_CARDS_CSS = "ul.space-y-4 > li.group"
+    THREAD_LIST_CSS = ".discover-page > .ui-panel > ul"
+    # 帖子卡片（当前 li 使用 ui-list-row，group 在内部 router-link 上）
+    THREAD_CARDS_CSS = ".discover-page > .ui-panel > ul > li.ui-list-row"
+    ERROR_CSS = ".discover-page [role='alert']"
 
     # 状态指示器
     LOADING_TEXT = "正在加载..."
     EMPTY_TEXT = "暂无帖子"
 
     # 分页
-    PREV_BTN_XPATH = "//button[contains(text(),'上一页')]"
-    NEXT_BTN_XPATH = "//button[contains(text(),'下一页')]"
-    PAGE_INPUT_CSS = "input[inputmode='numeric']"
+    PREV_BTN_XPATH = "//nav[@aria-label='帖子分页']//button[contains(normalize-space(.),'上一页')]"
+    NEXT_BTN_XPATH = "//nav[@aria-label='帖子分页']//button[contains(normalize-space(.),'下一页')]"
+    PAGE_INPUT_CSS = "nav[aria-label='帖子分页'] input[aria-label='页码'][inputmode='numeric']"
 
     # ── 定位器属性 ─────────────────────────────────────────
 
@@ -77,15 +78,11 @@ class DiscoverPage(BasePage):
 
     @property
     def empty_state(self) -> WebElement:
-        return self.driver.find_element(
-            By.XPATH, f"//*[contains(text(),'{self.EMPTY_TEXT}')]"
-        )
+        return self.driver.find_element(By.CSS_SELECTOR, ".discover-page > .ui-empty")
 
     @property
     def loading_indicator(self) -> WebElement:
-        return self.driver.find_element(
-            By.XPATH, f"//*[contains(text(),'{self.LOADING_TEXT}')]"
-        )
+        return self.driver.find_element(By.CSS_SELECTOR, ".discover-page [role='status']")
 
     # ═══════════════════════════════════════════════════════════
     # 操作
@@ -100,8 +97,8 @@ class DiscoverPage(BasePage):
         带查询参数导航
 
         用法:
-            discover.go_with_query(sectionId=1, page=2)
-            discover.go_with_query(tag="编程")
+            discover.go_with_query(sectionId=section_id, page=2)
+            discover.go_with_query(tag=tag)
         """
         from urllib.parse import urlencode
         query_str = urlencode(params)
@@ -120,13 +117,14 @@ class DiscoverPage(BasePage):
         wait = WebDriverWait(self.driver, 15)
         wait.until(
             lambda d: (
-                len(d.find_elements(By.CSS_SELECTOR, self.THREAD_CARDS_CSS)) > 0
-                or self.EMPTY_TEXT in d.find_element(By.TAG_NAME, "body").text
-                or self.LOADING_TEXT in d.find_element(By.TAG_NAME, "body").text
+                not d.find_elements(By.CSS_SELECTOR, ".discover-page [role='status']")
+                and (
+                    bool(d.find_elements(By.CSS_SELECTOR, self.THREAD_CARDS_CSS))
+                    or bool(d.find_elements(By.CSS_SELECTOR, ".discover-page > .ui-empty"))
+                    or bool(d.find_elements(By.CSS_SELECTOR, self.ERROR_CSS))
+                )
             )
         )
-        # loading 出现后，再等它消失
-        self.wait_for_page_ready()
 
     def get_thread_count(self) -> int:
         """获取当前显示的帖子数量"""
@@ -150,7 +148,6 @@ class DiscoverPage(BasePage):
         link.click()
 
         # 等待 URL 变化表明导航完成
-        import re
         WebDriverWait(self.driver, 10).until(
             lambda d: "/threads/" in d.current_url and not d.current_url.endswith("#")
         )
@@ -169,16 +166,21 @@ class DiscoverPage(BasePage):
         self.page_input.clear()
         self.page_input.send_keys(str(page_num))
         self.page_input.send_keys(Keys.ENTER)
+        WebDriverWait(self.driver, 10).until(lambda d: self.get_current_page() == page_num)
         self.wait_for_content()
 
     def go_next_page(self) -> None:
         """翻到下一页"""
+        previous_page = self.get_current_page()
         self.next_page_btn.click()
+        WebDriverWait(self.driver, 10).until(lambda d: self.get_current_page() != previous_page)
         self.wait_for_content()
 
     def go_prev_page(self) -> None:
         """翻到上一页"""
+        previous_page = self.get_current_page()
         self.prev_page_btn.click()
+        WebDriverWait(self.driver, 10).until(lambda d: self.get_current_page() != previous_page)
         self.wait_for_content()
 
     def get_current_page(self) -> int:
@@ -211,7 +213,7 @@ class DiscoverPage(BasePage):
     def has_pagination(self) -> bool:
         """是否有分页（多页时显示）"""
         try:
-            self.driver.find_element(By.XPATH, self.PREV_BTN_XPATH)
-            return True
+            # 分页控件在单页结果也会渲染；只有下一页可用时才代表确有多页。
+            return self.next_page_btn.is_enabled()
         except NoSuchElementException:
             return False

@@ -39,9 +39,10 @@ class ThreadDetailPage(BasePage):
     LIKE_BTN_XPATH = "//section[@aria-label='帖子互动']//button[.//span[normalize-space(.)='点赞' or normalize-space(.)='已点赞']]"
 
     # 评论区
-    COMMENT_INPUT_CSS = "textarea[placeholder*='支持基础 Markdown']"
-    COMMENT_SUBMIT_XPATH = "//button[contains(text(),'评论') or contains(text(),'发布')]"
-    COMMENT_CARDS_CSS = "ul > li.ui-list-row"
+    COMMENT_INPUT_CSS = "#thread-comments textarea[placeholder*='支持基础 Markdown']"
+    COMMENT_SUBMIT_XPATH = "//section[@id='thread-comments']//button[normalize-space(.)='发送评论']"
+    COMMENT_CARDS_CSS = "#thread-comments ul > li.ui-list-row"
+    ERROR_CSS = "[role='alert']"
 
     # ── 定位器属性 ─────────────────────────────────────────
 
@@ -91,11 +92,11 @@ class ThreadDetailPage(BasePage):
         """
         WebDriverWait(self.driver, 10).until(
             lambda d: (
-                len(d.find_elements(By.XPATH, self.TITLE_XPATH)) > 0
+                bool(d.find_elements(By.XPATH, self.TITLE_XPATH))
                 or self.NOT_FOUND_TEXT in d.find_element(By.TAG_NAME, "body").text
+                or bool(d.find_elements(By.CSS_SELECTOR, self.ERROR_CSS))
             )
         )
-        time.sleep(0.3)
 
     def click_like(self) -> None:
         """点赞帖子"""
@@ -137,10 +138,7 @@ class ThreadDetailPage(BasePage):
     def is_not_found(self) -> bool:
         """帖子是否不存在（或加载出错）"""
         body_text = self.driver.find_element(By.TAG_NAME, "body").text
-        return (
-            self.NOT_FOUND_TEXT in body_text
-            or "正在加载" not in body_text  # 至少不是一直loading
-        )
+        return self.NOT_FOUND_TEXT in body_text
 
     def has_comments(self) -> bool:
         """是否有评论"""

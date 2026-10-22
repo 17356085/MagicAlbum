@@ -46,15 +46,19 @@ class BasePage:
     def get_error_text(self) -> str | None:
         """获取页面上可见的错误文本"""
         error_selectors = [
+            "[role='alert']",
+            ".ui-error",
             ".text-red-600",
             ".text-red-500",
             ".text-red-400",
             "[class*='text-red']",
         ]
         for sel in error_selectors:
-            el = self.page.locator(sel).first
-            if el.is_visible():
-                return el.text_content()
+            locator = self.page.locator(sel)
+            for index in range(locator.count()):
+                el = locator.nth(index)
+                if el.is_visible():
+                    return el.text_content()
         return None
 
     def get_success_text(self) -> str | None:
@@ -63,12 +67,15 @@ class BasePage:
             ".text-green-600",
             ".text-green-500",
             ".text-green-400",
+            "[class*='text-emerald']",
             "[class*='text-green']",
         ]
         for sel in success_selectors:
-            el = self.page.locator(sel).first
-            if el.is_visible():
-                return el.text_content()
+            locator = self.page.locator(sel)
+            for index in range(locator.count()):
+                el = locator.nth(index)
+                if el.is_visible():
+                    return el.text_content()
         return None
 
     def wait_for_toast(self, text: str, timeout: float = 5000) -> bool:

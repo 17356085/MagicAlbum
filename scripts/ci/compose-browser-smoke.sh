@@ -17,7 +17,16 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
     exit 1
   fi
 fi
-ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/m0-ci}"
+FULL_MODE="${BLUEALBUM_FULL_PYTHON_REGRESSION:-0}"
+[[ "$FULL_MODE" == "0" || "$FULL_MODE" == "1" ]] || {
+  printf 'ERROR: BLUEALBUM_FULL_PYTHON_REGRESSION must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$FULL_MODE" == "1" ]]; then
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/python-full-ci}"
+else
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/m0-ci}"
+fi
 ARTIFACT_DIR="$("$PYTHON_BIN" - "$ROOT_DIR" "$ARTIFACT_DIR" <<'PY'
 from pathlib import Path
 import sys
@@ -36,10 +45,15 @@ JUNIT_FILE="$ARTIFACT_DIR/junit.xml"
 API_JUNIT_FILE="$ARTIFACT_DIR/api-junit.xml"
 SELENIUM_JUNIT_FILE="$ARTIFACT_DIR/selenium-junit.xml"
 UI_JUNIT_FILE="$ARTIFACT_DIR/ui-junit.xml"
+FULL_CREDENTIALS_FILE="$ARTIFACT_DIR/full-regression.env"
+FULL_EVIDENCE_FILE="$ARTIFACT_DIR/full-regression-bootstrap.json"
+FULL_COLLECT_FILE="$ARTIFACT_DIR/full-collect.txt"
+FULL_JUNIT_FILE="$ARTIFACT_DIR/full-python-junit.xml"
 
 PROJECT=""
 COMPOSE_TOUCHED=0
 CREDENTIALS_CREATED=0
+FULL_CREDENTIALS_CREATED=0
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -52,6 +66,9 @@ if [[ -n "${GITHUB_RUN_ID:-}" || -n "${GITHUB_RUN_ATTEMPT:-}" ]]; then
   PROJECT="bluealbum-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 else
   PROJECT="bluealbum-ci-$(date -u +%Y%m%d%H%M%S)-$$"
+fi
+if [[ "$FULL_MODE" == "1" ]]; then
+  PROJECT="${PROJECT}-full"
 fi
 
 if [[ ! "$PROJECT" =~ ^bluealbum-ci-[a-z0-9-]+$ ]]; then
@@ -178,6 +195,9 @@ cleanup() {
   if (( CREDENTIALS_CREATED == 1 )) && [[ -f "$ENV_FILE" ]]; then
     rm -f -- "$ENV_FILE" || cleanup_status=1
   fi
+  if (( FULL_CREDENTIALS_CREATED == 1 )) && [[ -f "$FULL_CREDENTIALS_FILE" ]]; then
+    rm -f -- "$FULL_CREDENTIALS_FILE" || cleanup_status=1
+  fi
 
   if (( cleanup_status != 0 )); then
     printf 'ERROR: Compose cleanup failed for %s; inspect %s\n' "$PROJECT" "$LOG_DIR" >&2
@@ -258,6 +278,17 @@ services:
   backend:
     environment:
       JAVA_OPTS: "-Xmx384m -XX:ActiveProcessorCount=2"
+EOF
+if [[ "$FULL_MODE" == "1" ]]; then
+  cat >>"$OVERRIDE_FILE" <<'EOF'
+      AI_PROVIDER: "mock"
+      AI_API_KEY: ""
+      AI_BASE_URL: "http://127.0.0.1:9/disabled"
+      AI_MODEL: "mock-summary"
+      APP_AUTH_VERIFY_MODE: "off"
+EOF
+fi
+cat >>"$OVERRIDE_FILE" <<'EOF'
   notification-service:
     environment:
       JAVA_OPTS: "-Xmx256m -XX:ActiveProcessorCount=2"
@@ -280,6 +311,124 @@ export TEST_ARTIFACT_DIR="$SCREENSHOT_DIR"
 export TEST_EMAIL=''
 export TEST_PHONE=''
 export TEST_PASSWORD=''
+
+write_env_value() {
+  local key="$1"
+  local value="$2"
+  "$PYTHON_BIN" - "$ENV_FILE" "$key" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+lines = path.read_text(encoding="utf-8").splitlines()
+updated = False
+result = []
+for line in lines:
+    if line.startswith(key + "="):
+        result.append(f"{key}={value}")
+        updated = True
+    else:
+        result.append(line)
+if not updated:
+    result.append(f"{key}={value}")
+path.write_text("\n".join(result) + "\n", encoding="utf-8", newline="\n")
+PY
+}
+
+wait_for_gateway_api() {
+  local deadline=$((SECONDS + 120))
+  local status
+  while (( SECONDS < deadline )); do
+    status="$("$PYTHON_BIN" - "$TEST_API_BASE_URL" <<'PY'
+import sys
+from urllib.request import Request, urlopen
+
+base_url = sys.argv[1].rstrip("/")
+try:
+    with urlopen(
+        Request(
+            f"{base_url}/sections?page=1&size=1",
+            headers={"Accept": "application/json"},
+            method="GET",
+        ),
+        timeout=5,
+    ) as response:
+        print(response.status)
+except Exception:
+    # Readiness output is deliberately limited to an HTTP status.  Gateway
+    # response bodies may contain request data and must never enter CI logs.
+    print(0)
+PY
+    )"
+    if [[ "$status" == "200" ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  die 'gateway did not expose the sections API after backend recreation'
+}
+
+if [[ "$FULL_MODE" == "1" ]]; then
+  [[ ! -e "$FULL_CREDENTIALS_FILE" ]] || die "temporary full-regression credentials file already exists: $FULL_CREDENTIALS_FILE"
+  FULL_CREDENTIALS_CREATED=1
+  "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
+    --base-url "$TEST_API_BASE_URL" \
+    --credentials-file "$FULL_CREDENTIALS_FILE" \
+    --bootstrap
+
+  # The generated file contains only CI-local values and is removed by the
+  # cleanup trap.  It is sourced after generation so no repository .env file
+  # can influence the full run.
+  set -a
+  . "$FULL_CREDENTIALS_FILE"
+  set +a
+  write_env_value APP_ADMIN_EMAIL "$APP_ADMIN_EMAIL"
+  write_env_value APP_ADMIN_USER_ID "$APP_ADMIN_USER_ID"
+  compose up -d --no-deps --force-recreate --wait --wait-timeout 180 backend
+  # Backend recreation can leave the gateway briefly holding an old upstream
+  # connection.  Probe only a read-only public API through the gateway before
+  # performing the one login and the seed writes below.
+  wait_for_gateway_api
+
+  "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
+    --base-url "$TEST_API_BASE_URL" \
+    --credentials-file "$FULL_CREDENTIALS_FILE" \
+    --verify-admin-and-seed \
+    --evidence-file "$FULL_EVIDENCE_FILE" \
+    --seed-count 11
+
+  "$PYTHON_BIN" -m pytest -c pytest.ini \
+    --collect-only -q -p no:cacheprovider tests >"$FULL_COLLECT_FILE"
+  "$PYTHON_BIN" - "$FULL_COLLECT_FILE" 143 <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+expected = int(sys.argv[2])
+matches = re.findall(r"collected\s+(\d+)\s+(?:items?|tests?)", text, flags=re.IGNORECASE)
+if not matches:
+    matches = re.findall(r"(\d+)\s+(?:items?|tests?)\s+collected", text, flags=re.IGNORECASE)
+if not matches or int(matches[-1]) != expected:
+    raise SystemExit(f"full Python collection must be exactly {expected}; output did not prove that count")
+print(f"Full Python collection passed: {expected} tests")
+PY
+
+  set +e
+  "$PYTHON_BIN" -m pytest -c pytest.ini tests -q -p no:cacheprovider \
+    --maxfail=0 -n0 --junitxml "$FULL_JUNIT_FILE"
+  full_status=$?
+  set -e
+
+  [[ -f "$FULL_JUNIT_FILE" ]] || die "full Python pytest did not produce a JUnit report: $FULL_JUNIT_FILE"
+  validate_junit "$FULL_JUNIT_FILE" 143
+  (( full_status == 0 )) || die "full Python regression exited with status $full_status"
+  cp -- "$FULL_JUNIT_FILE" "$JUNIT_FILE"
+  printf 'Full Python regression passed for %s: 143 tests, zero skips\n' "$PROJECT"
+  exit 0
+fi
 
 set +e
 "$PYTHON_BIN" -m pytest -c pytest.ini \

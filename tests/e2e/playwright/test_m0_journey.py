@@ -607,10 +607,25 @@ def test_m0_r01_r04_browser_journey() -> None:
             # verify the management boundary through the API.
             admin_status = client_b.get_admin_status()
             if admin_status.status_code == 200:
-                admin_reports = _request(client_b, "GET", "/admin/reports", params={"status": "PENDING", "page": 1, "size": 50})
-                _assert_status(admin_reports, (200,), "admin report readback")
-                report_items = _extract_items(_json_body(admin_reports, "admin report readback"))
-                assert any(int(item.get("id") or 0) == report_id for item in report_items)
+                admin_body = _json_body(admin_status, "admin status")
+                admin_payload = _unwrap(admin_body)
+                if admin_payload.get("admin") is True:
+                    admin_reports = _request(client_b, "GET", "/admin/reports", params={"status": "PENDING", "page": 1, "size": 50})
+                    _assert_status(admin_reports, (200,), "admin report readback")
+                    report_items = _extract_items(_json_body(admin_reports, "admin report readback"))
+                    assert any(int(item.get("id") or 0) == report_id for item in report_items)
+                else:
+                    # A normal authenticated user may receive HTTP 200 with
+                    # ``admin=false``.  Verify the actual management boundary
+                    # instead of treating that valid response as a test error.
+                    assert admin_payload.get("admin") is False
+                    denied_reports = _request(
+                        client_b,
+                        "GET",
+                        "/admin/reports",
+                        params={"status": "PENDING", "page": 1, "size": 50},
+                    )
+                    _assert_status(denied_reports, (403,), "non-admin report boundary")
             else:
                 assert admin_status.status_code in (401, 403)
 

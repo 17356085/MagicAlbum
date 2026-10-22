@@ -6,6 +6,7 @@
 | `backend/` | 论坛核心 API；按业务域划分 controller、service、dto、entity、repo |
 | `gateway/` | 路由与请求关联，避免承载论坛业务 |
 | `notification-service/` | 通知鉴权、查询和持久化 |
+| `services/media-service/` | 独立 Go 媒体 worker；入口在 `cmd/`，实现和包测试在 `internal/`，Java 持有业务数据 |
 | `scripts/` | 本地运维与仓库检查；数据库辅助命令放在 `database/`。`Start-Local.ps1`、`Stop-Local.ps1` 管理本地栈；`Test-NotificationRuntime.ps1` 是独立的通知投递运行时验证入口 |
 | `config/` | 多个服务共用的静态检查规则 |
 | `tests/` | 跨服务 API 与浏览器测试；模块单元测试仍与模块源码放在一起 |
@@ -17,6 +18,10 @@
 | `test-artifacts/local-runtime/` | 本地运行状态、日志与随机凭证；不要归档或移动正在使用的状态文件 |
 
 根目录保留 README、CONTRIBUTING、PRODUCT、根 POM、Compose 配置及通用工具配置。根 `pytest.ini` 指定唯一 Python 测试树，避免收集运行产物里的历史 conftest。日志、DOCX、崩溃记录和接口响应快照应归到对应位置。
+
+查找入口分别为[工程文档索引](README.md)、[脚本索引](../../scripts/README.md)和[独立服务索引](../../services/README.md)。这些索引按用途组织导航，保留现有源码包和历史文档路径；新文件不要复制一套平行的测试树或模块。
+
+JVM 崩溃记录归档到 `outputs/diagnostics/`，移动时记录原路径、大小和 SHA-256 并校验一致。运行中的 PID、上传目录、数据库卷、私有环境文件、依赖缓存及工具默认的 `target`/`dist` 不参与人工迁移。归档不是删除，`outputs/` 中的诊断文件仍需按可能含有本机信息的资料处理。
 
 本地栈的 Java 应用按 `notification-service` → `backend` → `gateway` 顺序启动，最后启动 `frontend` 的 Vite 开发服务器；Java 服务通过 `/actuator/health`、前端通过 `/` 健康检查后才进入下一步。`runtime.env` 和 `processes.json` 属于 `test-artifacts/local-runtime/`，前者包含本地凭证，后者记录 PID 和启动时间；停机时另行核对进程命令行是否属于本仓库工作区，均不应提交、归档或移动。旧 `runtime.env` 的兼容默认值只在启动进程内补齐，已有密钥不会被脚本重写。
 

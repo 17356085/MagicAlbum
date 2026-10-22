@@ -118,16 +118,15 @@ class BasePage:
           .text-red-600, .text-red-500, .text-red-400
         """
         error_selectors = [
+            "[role='alert']",
+            ".ui-error",
             ".text-red-600", ".text-red-500", ".text-red-400",
             "[class*='text-red']",
         ]
         for sel in error_selectors:
-            try:
-                el = self.driver.find_element(By.CSS_SELECTOR, sel)
+            for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
                 if el.is_displayed():
                     return el.text
-            except NoSuchElementException:
-                continue
         return None
 
     def get_success_text(self) -> Optional[str]:
@@ -139,15 +138,13 @@ class BasePage:
         """
         success_selectors = [
             ".text-green-600", ".text-green-500", ".text-green-400",
+            "[class*='text-emerald']",
             "[class*='text-green']",
         ]
         for sel in success_selectors:
-            try:
-                el = self.driver.find_element(By.CSS_SELECTOR, sel)
+            for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
                 if el.is_displayed():
                     return el.text
-            except NoSuchElementException:
-                continue
         return None
 
     def wait_for_toast(self, text: str, timeout: float = 5) -> bool:

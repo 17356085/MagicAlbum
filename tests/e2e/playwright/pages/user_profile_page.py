@@ -21,7 +21,22 @@ class UserProfilePage(BasePage):
 
     @property
     def username_display(self) -> Locator:
-        return self.page.locator("h1, h2, .text-xl").first
+        """The username line rendered below the profile display name."""
+        return self.page.locator(
+            "section.ui-page > section.ui-panel header p.ui-description"
+        )
+
+    @property
+    def nickname_display(self) -> Locator:
+        """The profile display name rendered in the page heading."""
+        return self.page.locator(
+            "section.ui-page > section.ui-panel header h1.ui-title"
+        )
+
+    @property
+    def error_alert(self) -> Locator:
+        """The profile-level API error region."""
+        return self.page.locator("section.ui-page > div[role='alert']")
 
     @property
     def avatar(self) -> Locator:

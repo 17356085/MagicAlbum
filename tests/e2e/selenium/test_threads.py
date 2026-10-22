@@ -9,15 +9,52 @@ Selenium 学习要点 — 列表页测试：
   3. 空状态/边界条件需要特殊场景
 """
 
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 from selenium.webdriver.remote.webdriver import WebDriver
 
+from tests.api.api_client import ApiClient
 from tests.e2e.selenium.pages.discover_page import DiscoverPage
 from tests.e2e.selenium.pages.thread_create_page import ThreadCreatePage
 from tests.e2e.selenium.pages.thread_detail_page import ThreadDetailPage
 from tests.e2e.selenium.pages.auth_modal_page import AuthModalPage
 from tests.e2e.selenium.config.settings import settings
 from tests.utils.data_generator import unique_thread_title, unique_thread_content
+
+
+def _items(response) -> list[dict]:
+    body = response.json()
+    nested = body.get("data") if isinstance(body, dict) else None
+    payload = nested if isinstance(nested, dict) else body
+    values = payload.get("items", []) if isinstance(payload, dict) else []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def _live_section_id() -> int:
+    client = ApiClient(settings.API_BASE_URL)
+    try:
+        response = client.list_sections(page=1, size=100)
+        assert response.status_code == 200
+        sections = _items(response)
+        assert sections, "隔离测试栈必须返回至少一个真实分区"
+        return int(sections[0]["id"])
+    finally:
+        client.close()
+
+
+def _live_tag() -> str:
+    client = ApiClient(settings.API_BASE_URL)
+    try:
+        response = client.list_popular_tags(size=20)
+        assert response.status_code == 200
+        tags = _items(response)
+        assert tags, "隔离测试栈必须返回至少一个真实标签"
+        name = tags[0].get("name")
+        assert isinstance(name, str) and name.strip()
+        return name.strip()
+    finally:
+        client.close()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -66,17 +103,15 @@ class TestDiscoverPage:
         discover.go()
         discover.wait_for_content()
 
-        if not discover.has_threads():
-            pytest.skip("没有帖子，跳过分页测试")
+        assert discover.has_threads(), "全量回归 fixture 必须提供帖子以验证分页"
+        assert discover.has_pagination(), "全量回归 fixture 必须提供超过一页的帖子"
+        initial_page = discover.get_current_page()
+        discover.go_next_page()
+        new_page = discover.get_current_page()
 
-        if discover.has_pagination():
-            initial_page = discover.get_current_page()
-            discover.go_next_page()
-            new_page = discover.get_current_page()
-
-            assert new_page == initial_page + 1, (
-                f"翻页后应为第 {initial_page + 1} 页，实际第 {new_page} 页"
-            )
+        assert new_page == initial_page + 1, (
+            f"翻页后应为第 {initial_page + 1} 页，实际第 {new_page} 页"
+        )
 
     @pytest.mark.p0
     @pytest.mark.ui
@@ -85,12 +120,13 @@ class TestDiscoverPage:
         分区筛选测试
         验证：URL 包含 sectionId 参数
         """
+        section_id = _live_section_id()
         discover = DiscoverPage(clean_page)
-        discover.go_with_query(sectionId=1, page=1)
+        discover.go_with_query(sectionId=section_id, page=1)
         discover.wait_for_content()
 
-        assert "sectionId=1" in clean_page.current_url, (
-            f"URL 应包含 sectionId=1，实际: {clean_page.current_url}"
+        assert f"sectionId={section_id}" in clean_page.current_url, (
+            f"URL 应包含真实 sectionId={section_id}，实际: {clean_page.current_url}"
         )
 
     @pytest.mark.p1
@@ -100,12 +136,14 @@ class TestDiscoverPage:
         标签筛选测试
         验证：URL 包含 tag 参数
         """
+        tag = _live_tag()
         discover = DiscoverPage(clean_page)
-        discover.go_with_query(tag="编程", page=1)
+        discover.go_with_query(tag=tag, page=1)
         discover.wait_for_content()
 
-        assert "tag=" in clean_page.current_url, (
-            f"URL 应包含 tag 参数，实际: {clean_page.current_url}"
+        query = parse_qs(urlparse(clean_page.current_url).query)
+        assert query.get("tag") == [tag], (
+            f"URL 应包含真实 tag={tag}，实际: {clean_page.current_url}"
         )
 
     @pytest.mark.p0
@@ -123,8 +161,7 @@ class TestDiscoverPage:
         discover.go()
         discover.wait_for_content()
 
-        if not discover.has_threads():
-            pytest.skip("没有帖子，跳过点击测试")
+        assert discover.has_threads(), "全量回归 fixture 必须提供帖子以验证详情跳转"
 
         discover.click_thread(0)
         assert "/threads/" in clean_page.current_url, (
@@ -172,8 +209,7 @@ class TestThreadCreate:
         create.wait_for_form()
 
         # 如果显示登录提示，说明认证失败
-        if create.is_login_prompt_shown():
-            pytest.skip("认证状态不可用，跳过创建帖子测试")
+        assert not create.is_login_prompt_shown(), "全量回归认证账号必须能打开创建帖子表单"
 
         # 填写并提交
         title = unique_thread_title()
@@ -206,8 +242,7 @@ class TestThreadCreate:
         create.go()
         create.wait_for_form()
 
-        if create.is_login_prompt_shown():
-            pytest.skip("认证状态不可用")
+        assert not create.is_login_prompt_shown(), "全量回归认证账号必须能打开创建帖子表单"
 
         # 不填内容直接提交
         create.submit()
@@ -256,8 +291,7 @@ class TestThreadDetail:
         discover.go()
         discover.wait_for_content()
 
-        if not discover.has_threads():
-            pytest.skip("没有帖子可点击")
+        assert discover.has_threads(), "全量回归 fixture 必须提供帖子可点击"
 
         discover.click_thread(0)
 

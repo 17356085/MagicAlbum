@@ -70,7 +70,7 @@ Node prerequisites.
 
 `tests/e2e/playwright/test_layout_fixtures.py` is an exception: it needs only
 the frontend and a browser. All API responses are intercepted with fixed
-fixtures, and no backend account is used. These 36 layout/keyboard checks
+fixtures, and no backend account is used. These 39 layout/keyboard checks
 are not backend acceptance and are not part of mandatory16. Run against an
 isolated frontend preview, for example in PowerShell:
 
@@ -84,7 +84,7 @@ python -m pytest tests/e2e/playwright/test_layout_fixtures.py
 `test_mobile_tasks.py` adds 21 touch-emulated tasks at 320, 390, and 430px:
 bottom navigation, focused composition and feedback, long-thread reply,
 guest login, account actions, phone landscape, and filtered-list return. It shares the same
-intercepted fixtures. Run both files for 57 frontend-only checks. They do
+intercepted fixtures. Run both files for 60 frontend-only checks. They do
 not prove physical-device soft-keyboard, Safari, or backend behavior.
 
 Useful overrides are `TEST_BASE_URL`, `TEST_API_BASE_URL`,
@@ -127,13 +127,26 @@ The dedicated Selenium smoke at
 `tests/e2e/selenium/test_ci_smoke.py` uses a separate generated account, seeded
 thread, and seeded comment. It reads the thread in Selenium, submits a comment
 through the UI, and reads that comment back through the API before cleanup.
-The other Selenium modules remain a regression inventory for local environments
-because they use an externally supplied account or historical data. The other
-API and Playwright modules likewise include cases that depend on an admin
-account, pre-existing content, or the optional AI provider; those capabilities
-are documented as local regression coverage rather than silently counted as CI
-coverage. The fresh-stack CI gate uses the deterministic API contract group,
-the dedicated Selenium smoke, and the independent M0 Playwright journey.
+The default fresh-stack gate keeps the deterministic API contract group,
+the dedicated Selenium smoke, and the independent M0 Playwright journey
+(mandatory16). A separate `python-full-regression` CI job runs the entire
+canonical tree: currently 143 tests, including the 60 intercepted frontend
+layout/mobile checks. The fixture checks do not become backend acceptance
+merely because they share that job.
+
+The full job explicitly sets `BLUEALBUM_FULL_PYTHON_REGRESSION=1` when invoking
+`scripts/ci/compose-browser-smoke.sh`. It owns a disposable Compose project,
+databases, account and seeded content; initializes that account's administrator
+role through the supported bootstrap configuration; and verifies permissions
+through the API. It forces the server-side Mock AI provider, uses no real model
+credentials, and requires collection and executed JUnit counts to match with
+zero failures, errors or skips. The original mandatory16 job remains separate.
+Cleanup removes only that job's containers, volumes, networks and temporary
+credential files. A cleanup failure fails the job.
+
+Do not invoke the full suite against shared local data: it creates and mutates
+accounts, posts, bookmarks, settings and moderation state. Ordinary local
+commands still require the documented dedicated account and provider setup.
 
 Reports, screenshots, caches, `.env`, and Python bytecode are local run
 products, not source artifacts.

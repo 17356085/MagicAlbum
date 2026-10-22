@@ -32,12 +32,12 @@ class UserProfilePage(BasePage):
     # 定位器
     # ═══════════════════════════════════════════════════════════
 
-    USERNAME_XPATH = "//h1 | //h2"
-    BIO_CSS = ".text-gray-600"
-    FOLLOW_BTN_XPATH = "//button[contains(text(),'关注') or contains(text(),'取消关注')]"
+    USERNAME_XPATH = "//section[contains(@class,'ui-page')]//header//h1"
+    BIO_CSS = "section.ui-page .prose"
+    FOLLOW_BTN_XPATH = "//section[contains(@class,'ui-page')]//header//button[normalize-space(.)='关注' or normalize-space(.)='已关注' or normalize-space(.)='处理中...']"
 
     # 用户帖子列表（复用 DiscoverPage 的样式）
-    USER_THREADS_CSS = "ul.space-y-4 > li.group"
+    USER_THREADS_CSS = "section.ui-page > .ui-panel ul > li.ui-list-row"
 
     # ── 定位器属性 ─────────────────────────────────────────
 
@@ -66,7 +66,6 @@ class UserProfilePage(BasePage):
         WebDriverWait(self.driver, 10).until(
             EC.visibility_of_element_located((By.XPATH, self.USERNAME_XPATH))
         )
-        time.sleep(0.3)
 
     def click_follow(self) -> None:
         """

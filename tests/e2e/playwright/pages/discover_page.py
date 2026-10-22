@@ -5,6 +5,8 @@
 功能: 帖子列表浏览、分区/标签/关键词筛选、分页
 """
 
+import re
+
 from playwright.sync_api import Locator, Page
 
 from tests.e2e.playwright.pages.base_page import BasePage
@@ -23,12 +25,12 @@ class DiscoverPage(BasePage):
     @property
     def thread_list(self) -> Locator:
         """帖子列表容器"""
-        return self.page.locator(".rounded-xl.border.border-gray-100 ul")
+        return self.page.locator(".discover-page > .ui-panel > ul")
 
     @property
     def thread_cards(self) -> Locator:
         """所有帖子卡片"""
-        return self.page.locator("ul.space-y-4 > li.group")
+        return self.page.locator(".discover-page > .ui-panel > ul > li.ui-list-row")
 
     def thread_card_by_index(self, index: int) -> Locator:
         """按索引获取帖子卡片 (0-based)"""
@@ -52,34 +54,34 @@ class DiscoverPage(BasePage):
     @property
     def error_state(self) -> Locator:
         """错误状态"""
-        return self.page.locator(".text-red-600")
+        return self.page.locator(".discover-page [role='alert']")
 
     # 搜索筛选
     @property
     def search_keyword_display(self) -> Locator:
         """搜索关键词显示"""
-        return self.page.locator(".mb-2.text-xs")
+        return self.page.locator(".discover-page [aria-label='当前筛选']")
 
     # 分页
     @property
     def prev_page_btn(self) -> Locator:
-        return self.page.get_by_role("button", name="上一页")
+        return self.page.get_by_role("navigation", name="帖子分页").get_by_role("button", name="上一页")
 
     @property
     def next_page_btn(self) -> Locator:
-        return self.page.get_by_role("button", name="下一页")
+        return self.page.get_by_role("navigation", name="帖子分页").get_by_role("button", name="下一页")
 
     @property
     def page_input(self) -> Locator:
-        return self.page.locator("input[inputmode='numeric']")
+        return self.page.locator("nav[aria-label='帖子分页'] input[aria-label='页码'][inputmode='numeric']")
 
     @property
     def page_info(self) -> Locator:
-        return self.page.locator("text=/共 \\d+ 条/")
+        return self.page.locator(".discover-page .ui-panel").get_by_text(re.compile(r"^共 \d+ 条"))
 
     @property
     def total_pages_span(self) -> Locator:
-        return self.page.locator("text=/\\d+ 页/").last
+        return self.page.locator("nav[aria-label='帖子分页']").get_by_text(re.compile(r"\d+ 页")).last
 
     # ── 操作 ──────────────────────────────────────────────────
 
@@ -97,7 +99,9 @@ class DiscoverPage(BasePage):
     def wait_for_content(self) -> None:
         """等待帖子列表或空状态出现"""
         wait_for_loading_gone(self.page)
-        self.page.wait_for_timeout(300)  # 等待 v-else 切换
+        self.page.locator(
+            ".discover-page > .ui-panel > ul, .discover-page > .ui-empty, .discover-page [role='alert']"
+        ).first.wait_for(state="visible", timeout=15000)
 
     def get_thread_count(self) -> int:
         """获取当前显示的帖子数量"""
@@ -111,23 +115,40 @@ class DiscoverPage(BasePage):
 
     def click_tag(self, tag_name: str) -> None:
         """点击标签"""
-        self.page.get_by_text(f"#{tag_name}").first.click()
+        self.thread_list.get_by_text(f"#{tag_name}").first.click()
         self.wait_for_content()
 
     def go_to_page(self, page_num: int) -> None:
         """跳转到指定页"""
         self.page_input.fill(str(page_num))
         self.page_input.press("Enter")
+        self.page.wait_for_function(
+            "value => new URL(location.href).searchParams.get('page') === value",
+            arg=str(page_num),
+            timeout=10000,
+        )
         self.wait_for_content()
 
     def go_prev_page(self) -> None:
         """上一页"""
+        target = max(1, self.get_current_page() - 1)
         self.prev_page_btn.click()
+        self.page.wait_for_function(
+            "value => new URL(location.href).searchParams.get('page') === value",
+            arg=str(target),
+            timeout=10000,
+        )
         self.wait_for_content()
 
     def go_next_page(self) -> None:
         """下一页"""
+        target = self.get_current_page() + 1
         self.next_page_btn.click()
+        self.page.wait_for_function(
+            "value => new URL(location.href).searchParams.get('page') === value",
+            arg=str(target),
+            timeout=10000,
+        )
         self.wait_for_content()
 
     def get_current_page(self) -> int:
@@ -155,4 +176,4 @@ class DiscoverPage(BasePage):
         return self.get_thread_count() > 0
 
     def has_pagination(self) -> bool:
-        return self.page_info.is_visible()
+        return self.next_page_btn.count() > 0 and self.next_page_btn.is_enabled()

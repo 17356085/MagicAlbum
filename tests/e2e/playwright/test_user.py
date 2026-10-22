@@ -22,20 +22,61 @@ class TestUserProfile:
         """用户主页加载（查看自己的主页）"""
         user_data = auth_session["user"]
         user_id = user_data.get("id") or user_data.get("userId")
+        expected_username = str(user_data.get("username") or "").strip()
+        assert user_id is not None
+        assert expected_username
 
         profile = UserProfilePage(authenticated_page)
-        profile.go(user_id)
-        profile.wait_for_content()
+        with authenticated_page.expect_response(
+            lambda response: (
+                response.request.method == "GET"
+                and response.url.split("?", 1)[0].rstrip("/").endswith(
+                    f"/users/{user_id}/profile"
+                )
+            ),
+            timeout=15000,
+        ) as profile_response_info:
+            profile.go(user_id)
 
-        assert profile.username_display.is_visible()
+        profile_response = profile_response_info.value
+        assert profile_response.status == 200
+        body = profile_response.json()
+        payload = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(payload, dict):
+            payload = body
+        assert isinstance(payload, dict)
+        assert str(payload.get("id") or payload.get("userId")) == str(user_id)
+        assert str(payload.get("username") or "").strip() == expected_username
+
+        expected_nickname = str(payload.get("nickname") or "").strip()
+        expected_display_name = expected_nickname or expected_username
+
+        expect(profile.username_display).to_have_text(expected_username)
+        expect(profile.nickname_display).to_have_text(
+            expected_display_name
+        )
 
     @pytest.mark.ui
     def test_user_profile_not_found(self, page: Page) -> None:
         """访问不存在的用户"""
         profile = UserProfilePage(page)
-        profile.go(99999999)
+        missing_user_id = 99999999
+        with page.expect_response(
+            lambda response: (
+                response.request.method == "GET"
+                and response.url.split("?", 1)[0].rstrip("/").endswith(
+                    f"/users/{missing_user_id}/profile"
+                )
+            ),
+            timeout=15000,
+        ) as profile_response_info:
+            profile.go(missing_user_id)
+
+        profile_response = profile_response_info.value
+        assert profile_response.status == 404
         profile.wait_for_content()
-        # 页面应显示错误或不存在提示
+        expect(profile.error_alert).to_be_visible()
+        assert (profile.error_alert.text_content() or "").strip()
 
 
 class TestSettings:
@@ -64,7 +105,18 @@ class TestSettings:
             settings.connected_tab,
             settings.account_link,
         )
-        assert sum(tab.count() for tab in tabs) >= 2  # 至少有 2 个 tab
+        for tab in tabs:
+            expect(tab).to_have_count(1)
+            expect(tab).to_be_visible()
+
+        settings.switch_to_profile()
+        expect(settings.profile_panel).to_be_visible()
+        settings.switch_to_notifications()
+        expect(settings.notifications_panel).to_be_visible()
+        settings.switch_to_connected()
+        expect(settings.connected_panel).to_be_visible()
+        settings.account_link.click()
+        expect(settings.account_panel).to_be_visible()
 
     @pytest.mark.p2
     @pytest.mark.ui

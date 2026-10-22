@@ -20,12 +20,12 @@ class HeaderPage(BasePage):
 
     @property
     def header(self) -> Locator:
-        return self.page.locator("header").first
+        return self.page.locator("header.community-header")
 
     @property
     def brand_link(self) -> Locator:
         """品牌/Logo链接，通常回到首页"""
-        return self.header.locator("a[href='/']").first
+        return self.header.locator("a[href='/discover']").first
 
     @property
     def search_input(self) -> Locator:
@@ -35,12 +35,12 @@ class HeaderPage(BasePage):
     @property
     def login_entry_btn(self) -> Locator:
         """登录入口按钮（未登录时显示）"""
-        return self.page.get_by_role("button", name="登录")
+        return self.header.get_by_role("button", name="登录")
 
     @property
     def user_menu_trigger(self) -> Locator:
-        """用户菜单触发按钮（已登录时显示）"""
-        return self.header.locator("button:has(img.rounded-full)").first
+        """已登录账户操作按钮"""
+        return self.header.get_by_role("button", name="登出")
 
     @property
     def user_avatar(self) -> Locator:
@@ -50,14 +50,13 @@ class HeaderPage(BasePage):
     @property
     def create_thread_btn(self) -> Locator:
         """发帖按钮"""
-        return self.page.get_by_role("button", name="发帖")
+        return self.header.get_by_role("link", name="发帖")
 
     # ── 操作 ──────────────────────────────────────────────────
 
     def click_login(self) -> None:
         """点击登录按钮，触发弹窗"""
         self.login_entry_btn.click()
-        self.page.wait_for_timeout(500)
 
     def search(self, keyword: str) -> None:
         """执行搜索"""

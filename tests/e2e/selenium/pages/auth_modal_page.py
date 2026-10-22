@@ -30,8 +30,6 @@
                   button[type='submit']  "注册" / "提交中…"
 """
 
-import time
-
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.common.by import By
@@ -54,29 +52,29 @@ class AuthModalPage(BasePage):
     # ═══════════════════════════════════════════════════════════
 
     # 弹窗最外层容器
-    MODAL_ROOT_CSS = ".fixed.inset-0.z-50"
+    MODAL_ROOT_CSS = "div.ui-dialog-layer"
 
     # 关闭按钮
     CLOSE_BTN_CSS = "button[aria-label='关闭']"
 
     # 登录/注册 Tab 切换（在弹窗 header 中，有 rounded-full 类）
-    LOGIN_TAB_XPATH = "//button[contains(@class,'rounded-full') and contains(.,'登录')]"
-    REGISTER_TAB_XPATH = "//button[contains(@class,'rounded-full') and contains(.,'注册')]"
+    LOGIN_TAB_XPATH = "//div[contains(@class,'ui-dialog-layer')]//button[contains(@class,'auth-view-tab') and normalize-space(.)='登录']"
+    REGISTER_TAB_XPATH = "//div[contains(@class,'ui-dialog-layer')]//button[contains(@class,'auth-view-tab') and normalize-space(.)='注册']"
 
     # 登录表单（AuthLoginForm）
-    LOGIN_PHONE_CSS = "input[type='tel']"
-    LOGIN_EMAIL_CSS = "input[type='email']"
-    LOGIN_PASSWORD_CSS = "input[type='password']"
-    LOGIN_CODE_CSS = "input[inputmode='numeric']"
-    LOGIN_SUBMIT_XPATH = "//form//button[@type='submit' and contains(.,'登录')]"
+    LOGIN_PHONE_CSS = "div.ui-dialog-layer #auth-login-phone, div.ui-dialog-layer #auth-login-phone-code"
+    LOGIN_EMAIL_CSS = "div.ui-dialog-layer #auth-login-email"
+    LOGIN_PASSWORD_CSS = "div.ui-dialog-layer #auth-login-password"
+    LOGIN_CODE_CSS = "div.ui-dialog-layer #auth-login-code"
+    LOGIN_SUBMIT_XPATH = "//div[contains(@class,'ui-dialog-layer')]//form//button[@type='submit' and normalize-space(.)='登录']"
 
     # 注册表单（AuthRegisterForm）
-    REGISTER_USERNAME_CSS = "input[placeholder*='用户名']"
-    REGISTER_PHONE_CSS = "input[placeholder*='手机号']"
-    REGISTER_EMAIL_CSS = "input[placeholder*='name@example.com']"
-    REGISTER_PASSWORD_CSS = "input[placeholder*='不少于 8 位']"
-    REGISTER_CONFIRM_CSS = "input[placeholder*='再次输入密码']"
-    REGISTER_SUBMIT_XPATH = "//form//button[@type='submit' and contains(.,'注册')]"
+    REGISTER_USERNAME_CSS = "div.ui-dialog-layer #auth-register-username"
+    REGISTER_PHONE_CSS = "div.ui-dialog-layer #auth-register-phone"
+    REGISTER_EMAIL_CSS = "div.ui-dialog-layer #auth-register-email"
+    REGISTER_PASSWORD_CSS = "div.ui-dialog-layer #auth-register-password"
+    REGISTER_CONFIRM_CSS = "div.ui-dialog-layer #auth-register-confirm-password"
+    REGISTER_SUBMIT_XPATH = "//div[contains(@class,'ui-dialog-layer')]//form//button[@type='submit' and normalize-space(.)='注册']"
 
     # ── 定位器属性 ─────────────────────────────────────────
 
@@ -132,7 +130,6 @@ class AuthModalPage(BasePage):
                 (By.CSS_SELECTOR, self.MODAL_ROOT_CSS)
             )
         )
-        time.sleep(0.3)  # CSS transition
 
     def wait_for_modal_closed(self, timeout: float = 5) -> bool:
         """等待弹窗关闭"""
@@ -148,15 +145,18 @@ class AuthModalPage(BasePage):
 
     def close(self) -> None:
         self.close_button.click()
-        time.sleep(0.3)
 
     def switch_to_login(self) -> None:
         self.login_tab.click()
-        time.sleep(0.2)
+        WebDriverWait(self.driver, settings.EXPLICIT_WAIT).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, self.LOGIN_PHONE_CSS))
+        )
 
     def switch_to_register(self) -> None:
         self.register_tab.click()
-        time.sleep(0.2)
+        WebDriverWait(self.driver, settings.EXPLICIT_WAIT).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, self.REGISTER_USERNAME_CSS))
+        )
 
     def login_with_phone(self, phone: str, password: str) -> None:
         """手机号密码登录"""
@@ -170,12 +170,14 @@ class AuthModalPage(BasePage):
         """邮箱密码登录 — 需要先切换到邮箱模式"""
         # 默认是手机号密码模式，点击"切换到邮箱登录"
         switch_buttons = self.driver.find_elements(
-            By.XPATH, "//button[contains(.,'切换到邮箱登录')]"
+            By.XPATH, "//div[contains(@class,'ui-dialog-layer')]//button[normalize-space(.)='切换到邮箱登录']"
         )
         if switch_buttons:
             switch_btn = switch_buttons[0]
             switch_btn.click()
-            time.sleep(0.2)
+            WebDriverWait(self.driver, settings.EXPLICIT_WAIT).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, self.LOGIN_EMAIL_CSS))
+            )
         self.email_input.clear()
         self.email_input.send_keys(email)
         self.password_input.clear()
@@ -222,15 +224,16 @@ class AuthModalPage(BasePage):
             return False
 
     def is_login_view(self) -> bool:
-        try:
-            self.driver.find_element(By.CSS_SELECTOR, self.LOGIN_PHONE_CSS)
-            return True
-        except NoSuchElementException:
-            return False
+        return any(
+            element.is_displayed()
+            for element in self.driver.find_elements(By.CSS_SELECTOR, self.LOGIN_PHONE_CSS)
+        ) or any(
+            element.is_displayed()
+            for element in self.driver.find_elements(By.CSS_SELECTOR, self.LOGIN_EMAIL_CSS)
+        )
 
     def is_register_view(self) -> bool:
-        try:
-            self.driver.find_element(By.CSS_SELECTOR, self.REGISTER_USERNAME_CSS)
-            return True
-        except NoSuchElementException:
-            return False
+        return any(
+            element.is_displayed()
+            for element in self.driver.find_elements(By.CSS_SELECTOR, self.REGISTER_USERNAME_CSS)
+        )

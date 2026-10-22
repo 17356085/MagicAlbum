@@ -87,17 +87,18 @@ docker compose --env-file .env config --quiet
 docker compose --env-file .env up -d --build
 ```
 
-访问 <http://127.0.0.1:5173>。停止使用 `docker compose --env-file .env down`；不要加 `-v`，否则会删除命名卷中的数据。上传文件有独立命名卷，但仍应自行备份。完整 Compose 的配置检查已做过，**当前本地端到端验收使用的是上面的 PowerShell 模式**，不要据此推断完整镜像或公网部署已验收。Compose 仅绑定本机回环地址，并启用本地认证与 Mock AI，不可直接暴露公网。
+访问 <http://127.0.0.1:5173>。停止使用 `docker compose --env-file .env down`；不要加 `-v`，否则会删除命名卷中的数据。上传文件有独立命名卷，但仍应自行备份。完整镜像、浏览器旅程和独立数据库／上传恢复已有隔离 CI 运行记录，详见[阶段进度](docs/engineering/stage-progress.md)和[恢复验收](docs/engineering/m0-runtime-verification.md)。这些记录不等于公网生产验收。Compose 仅绑定本机回环地址，并启用本地认证与 Mock AI，不可直接暴露公网。
 
 ## 已有能力与边界
 
 | 能力 | 当前本地状态 |
 | --- | --- |
-| 账号、资料、发帖、评论、分区与搜索 | 有前后端流程；草稿与最近浏览只保存在当前浏览器。 |
-| 关注动态、点赞、收藏、站内通知 | 本地可用；收藏和通知由后端持久化。 |
-| 图片上传 | 本地文件存储；数据与容器／运行目录一起管理和备份。 |
-| 举报与管理入口 | 举报入库、管理员驳回／隐藏；需手动指定现有管理员邮箱。 |
-| AI、第三方账号、邮件通知 | 本机 AI 为 Mock；真实 AI、外部授权和邮件投递需要额外服务与配置，不能把入口或模型类当作已完成集成。 |
+| 账号、资料、发帖、评论、分区与搜索 | 草稿与最近浏览按账号保存在当前浏览器；可选 Elasticsearch 提供全文索引、重建和故障降级。 |
+| 关注动态、点赞、收藏、站内通知 | 收藏与通知持久化；通知支持 Outbox 可靠投递、SSE 和断线补拉。 |
+| 图片上传与预览 | 支持本地与 S3 存储适配；可选 Go worker 异步生成预览，由 Java 管理任务与结果。外部对象存储备份和云 ACL 另验。 |
+| 社区管理与举报 | 持久化管理员／版主范围、发帖限制、举报隐藏与恢复、审计；可信用户 ID 初始化规则见上文。 |
+| AI 摘要 | 作者或有权限的管理者主动生成，任务版本、取消和预算账本持久化；默认 Mock，受控协议测试通过不能代替真实外部模型验收。 |
+| 第三方账号与外部发送通道 | 有适配代码和局部测试；外部账号、凭据及真实投递需单独验收。 |
 | 多租户与完整运营后台 | 不在当前可用范围。 |
 
 ## 项目结构与验证
@@ -107,7 +108,11 @@ backend/               论坛核心 API（8080）
 gateway/               前端 API 网关（9000）
 notification-service/  站内通知服务（8081）
 frontend/              Vue 前端（5173）
-scripts/               Windows 本地运行、数据库辅助命令与仓库检查
+services/media-service/ Go 异步媒体 worker
+config/                Java 静态检查与共享工程规则
+scripts/               本地运行、数据库辅助命令与仓库检查
+scripts/ci/            隔离运行验收与证据门禁
+scripts/__tests__/     工程脚本回归
 tests/                 Python API 与浏览器测试
 perf/                  压测实验材料；不代表已达到性能目标
 docs/engineering/      目录及编码规范（随仓库交付）
@@ -126,10 +131,11 @@ pnpm test
 pnpm build
 ```
 
-Python 接口和浏览器测试需要单独准备测试环境及账号，见 [`tests/README.md`](./tests/README.md)。本地启动脚本已包括 Java 构建和测试；CI 配置不等于全部端到端流程已在托管环境运行。
+Go worker 的检查入口见[服务说明](services/README.md)，工程脚本见[脚本索引](scripts/README.md)。Python 接口和浏览器测试需要隔离环境及专用账号，见 [`tests/README.md`](./tests/README.md)。单元测试、完整 Python 回归和各专项运行门禁分别记录结果；已有 CI 证据以对应提交及实际报告为准。
 
 ## 开发资料
 
+- [工程文档索引](docs/engineering/README.md)：按架构、运维、阶段实施和历史评审查找资料。
 - [前端说明](./frontend/README.md)：依赖、代理与前端检查。
 - [Python 测试](./tests/README.md)：接口及浏览器测试环境。
 - [性能实验](./perf/README.md)：隔离压测配置和结果解释；历史数字不是当前性能承诺。

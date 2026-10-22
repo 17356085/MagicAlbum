@@ -42,16 +42,16 @@ class ThreadCreatePage(BasePage):
     # 源码: <h1 class="text-2xl font-semibold mb-4">发帖</h1>
     HEADING_XPATH = "//h1[contains(.,'发帖')]"
     # 源码: <select v-model="form.sectionId">...</select>
-    SECTION_SELECT_CSS = "select"
+    SECTION_SELECT_CSS = "#thread-create-section"
     TITLE_INPUT_CSS = "input[placeholder*='请输入标题']"
     TAG_INPUT_CSS = "input[placeholder*='用空格或逗号分隔']"
     # MarkdownTextareaEditor 组件中包含 textarea
-    CONTENT_EDITOR_CSS = "textarea"
+    CONTENT_EDITOR_CSS = "textarea[placeholder*='请输入帖子正文']"
 
     # 按钮
     # 源码: <button @click="submit">{{ submitting ? '发布中...' : '发布' }}</button>
-    SUBMIT_BTN_XPATH = "//button[contains(.,'发布') and not(contains(.,'发布中'))] | //button[text()='发布']"
-    SAVE_DRAFT_BTN_XPATH = "//button[contains(.,'保存草稿')]"
+    SUBMIT_BTN_XPATH = "//button[contains(normalize-space(.),'发布') and not(contains(normalize-space(.),'发布中'))]"
+    SAVE_DRAFT_BTN_XPATH = "//button[contains(normalize-space(.),'保存草稿') or contains(normalize-space(.),'保存到本机')]"
     BEAUTIFY_BTN_XPATH = "//button[contains(.,'美化内容')]"
     CLEAR_DRAFT_BTN_XPATH = "//button[contains(.,'清除草稿')]"
     # 源码: <button @click="onLoginClick">立即登录</button>
@@ -60,8 +60,8 @@ class ThreadCreatePage(BasePage):
     # 提示
     # 源码: <span>请先登录后再发帖</span>
     LOGIN_PROMPT_TEXT = "请先登录后再发帖"
-    SUCCESS_CSS = ".text-green-600"
-    ERROR_CSS = ".text-red-400, .text-red-500, .text-red-600"
+    SUCCESS_CSS = "[role='status'][class*='text-emerald']"
+    ERROR_CSS = "[role='alert']"
 
     # ── 定位器属性 ─────────────────────────────────────────
 
@@ -87,19 +87,35 @@ class ThreadCreatePage(BasePage):
 
     @property
     def submit_btn(self) -> WebElement:
-        return self.driver.find_element(By.XPATH, self.SUBMIT_BTN_XPATH)
+        return self._visible_button(self.SUBMIT_BTN_XPATH)
 
     @property
     def save_draft_btn(self) -> WebElement:
-        return self.driver.find_element(By.XPATH, self.SAVE_DRAFT_BTN_XPATH)
+        return self._visible_button(self.SAVE_DRAFT_BTN_XPATH)
 
     @property
     def beautify_btn(self) -> WebElement:
-        return self.driver.find_element(By.XPATH, self.BEAUTIFY_BTN_XPATH)
+        return self._visible_button(self.BEAUTIFY_BTN_XPATH)
 
     @property
     def clear_draft_btn(self) -> WebElement:
-        return self.driver.find_element(By.XPATH, self.CLEAR_DRAFT_BTN_XPATH)
+        return self._visible_button(self.CLEAR_DRAFT_BTN_XPATH)
+
+    @property
+    def login_btn(self) -> WebElement:
+        return self.driver.find_element(By.XPATH, self.LOGIN_BTN_XPATH)
+
+    def _visible_button(self, xpath: str) -> WebElement:
+        for element in self.driver.find_elements(By.XPATH, xpath):
+            if element.is_displayed():
+                return element
+        raise NoSuchElementException(f"未找到可见按钮: {xpath}")
+
+    def _visible_element_by_css(self, selector: str) -> WebElement:
+        for element in self.driver.find_elements(By.CSS_SELECTOR, selector):
+            if element.is_displayed():
+                return element
+        raise NoSuchElementException(f"未找到可见元素: {selector}")
 
     @property
     def login_prompt(self) -> WebElement:
@@ -109,11 +125,11 @@ class ThreadCreatePage(BasePage):
 
     @property
     def success_msg(self) -> WebElement:
-        return self.driver.find_element(By.CSS_SELECTOR, self.SUCCESS_CSS)
+        return self._visible_element_by_css(self.SUCCESS_CSS)
 
     @property
     def error_msg(self) -> WebElement:
-        return self.driver.find_element(By.CSS_SELECTOR, self.ERROR_CSS)
+        return self._visible_element_by_css(self.ERROR_CSS)
 
     # ═══════════════════════════════════════════════════════════
     # 操作
@@ -138,7 +154,6 @@ class ThreadCreatePage(BasePage):
                 or self.LOGIN_PROMPT_TEXT in d.find_element(By.TAG_NAME, "body").text
             )
         )
-        time.sleep(0.3)
 
     def select_section(self, name: str = None) -> None:
         """
@@ -211,12 +226,16 @@ class ThreadCreatePage(BasePage):
           发布按钮在表单验证通过前是 disabled 的
           需要等待按钮 enabled 再点击
         """
-        # 等待按钮可点击（disabled 状态解除）
-        WebDriverWait(self.driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, self.SUBMIT_BTN_XPATH))
+        # 移动端与桌面端各有一个按钮；选择当前可见按钮，空表单保持 disabled。
+        button = WebDriverWait(self.driver, 10).until(
+            lambda d: next(
+                (element for element in d.find_elements(By.XPATH, self.SUBMIT_BTN_XPATH)
+                 if element.is_displayed()),
+                False,
+            )
         )
-        self.submit_btn.click()
-        time.sleep(1)  # 等待提交响应
+        if button.is_enabled():
+            button.click()
 
     def save_draft(self) -> None:
         """保存草稿"""

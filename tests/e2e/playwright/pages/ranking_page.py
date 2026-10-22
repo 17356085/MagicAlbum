@@ -28,7 +28,11 @@ class RankingPage(BasePage):
     @property
     def ranking_items(self) -> Locator:
         """排行榜条目"""
-        return self.page.locator("li.group, .space-y-4 > *")
+        return self.page.locator(
+            ".ranking-page > div.space-y-4 > div.ui-panel > div[role='link'], "
+            ".ranking-page > div.space-y-4 > div.grid > div[role='link'], "
+            ".ranking-page > div.space-y-4 > div.ui-panel > ul > li"
+        )
 
     @property
     def section_filter(self) -> Locator:
@@ -62,6 +66,13 @@ class RankingPage(BasePage):
 
     def get_item_count(self) -> int:
         return self.ranking_items.count()
+
+    def get_item_texts(self) -> list[str]:
+        """Return the rendered text for each ranked thread, in API order."""
+        return [
+            (self.ranking_items.nth(index).inner_text() or "").strip()
+            for index in range(self.ranking_items.count())
+        ]
 
     def has_top_one(self) -> bool:
         return self.top_one_card.is_visible()

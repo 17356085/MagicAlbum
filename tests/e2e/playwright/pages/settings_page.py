@@ -22,22 +22,39 @@ class SettingsPage(BasePage):
     @property
     def profile_tab(self) -> Locator:
         """个人资料Tab"""
-        return self.page.get_by_role("button", name="资料设置")
+        return self.page.get_by_role("button", name="资料设置", exact=True)
 
     @property
     def notifications_tab(self) -> Locator:
         """通知Tab"""
-        return self.page.get_by_role("button", name="通知管理")
+        return self.page.get_by_role("button", name="通知管理", exact=True)
 
     @property
     def connected_tab(self) -> Locator:
         """关联账号Tab"""
-        return self.page.get_by_role("button", name="第三方关联")
+        return self.page.get_by_role("button", name="第三方关联", exact=True)
 
     @property
     def account_link(self) -> Locator:
         """账号信息Tab按钮"""
-        return self.page.get_by_role("button", name="账号信息")
+        return self.page.get_by_role("button", name="账号信息", exact=True)
+
+    # Tab content
+    @property
+    def profile_panel(self) -> Locator:
+        return self.page.get_by_role("group", name="基本资料", exact=True)
+
+    @property
+    def notifications_panel(self) -> Locator:
+        return self.page.get_by_role("heading", name="通知偏好", exact=True)
+
+    @property
+    def connected_panel(self) -> Locator:
+        return self.page.get_by_role("heading", name="第三方关联", exact=True)
+
+    @property
+    def account_panel(self) -> Locator:
+        return self.page.get_by_role("group", name="账户信息", exact=True)
 
     # 资料表单
     @property

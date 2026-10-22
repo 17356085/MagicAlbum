@@ -7,8 +7,33 @@
 import pytest
 from playwright.sync_api import Page
 
+from tests.api.api_client import ApiClient
 from tests.e2e.playwright.pages.discover_page import DiscoverPage
 from tests.e2e.playwright.pages.header_page import HeaderPage
+
+
+def _items(response) -> list[dict]:
+    body = response.json()
+    nested = body.get("data") if isinstance(body, dict) else None
+    payload = nested if isinstance(nested, dict) else body
+    values = payload.get("items", []) if isinstance(payload, dict) else []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def _live_filter_values(api_client: ApiClient) -> tuple[int, str]:
+    sections = api_client.list_sections(page=1, size=100)
+    assert sections.status_code == 200
+    section_items = _items(sections)
+    assert section_items, "隔离测试栈必须返回至少一个真实分区"
+    section_id = int(section_items[0]["id"])
+
+    tags = api_client.list_popular_tags(size=20)
+    assert tags.status_code == 200
+    tag_items = _items(tags)
+    assert tag_items, "隔离测试栈必须返回至少一个真实标签"
+    tag_name = tag_items[0].get("name")
+    assert isinstance(tag_name, str) and tag_name.strip()
+    return section_id, tag_name.strip()
 
 
 class TestSearch:
@@ -40,10 +65,11 @@ class TestSearch:
 
     @pytest.mark.p0
     @pytest.mark.ui
-    def test_filter_by_tag_displays_indicator(self, page: Page) -> None:
+    def test_filter_by_tag_displays_indicator(self, page: Page, api_client: ApiClient) -> None:
         """标签筛选后显示标签提示"""
+        _, tag = _live_filter_values(api_client)
         discover = DiscoverPage(page)
-        discover.go_with_query(tag="编程", page=1)
+        discover.go_with_query(tag=tag, page=1)
         discover.wait_for_content()
 
         assert discover.search_keyword_display.is_visible()
@@ -60,10 +86,11 @@ class TestSearch:
 
     @pytest.mark.p1
     @pytest.mark.ui
-    def test_combined_search_tag_and_section(self, page: Page) -> None:
+    def test_combined_search_tag_and_section(self, page: Page, api_client: ApiClient) -> None:
         """标签+分区组合筛选"""
+        section_id, tag = _live_filter_values(api_client)
         discover = DiscoverPage(page)
-        discover.go_with_query(tag="编程", sectionId=1, page=1)
+        discover.go_with_query(tag=tag, sectionId=section_id, page=1)
         discover.wait_for_content()
 
         url = page.url

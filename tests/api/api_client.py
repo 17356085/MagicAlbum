@@ -5,6 +5,7 @@ API 测试辅助模块 — 封装所有后端 API 调用。
 """
 
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -15,11 +16,18 @@ class ApiClient:
     def __init__(self, base_url: str = "http://localhost:9000/api/v1"):
         self.base_url = base_url.rstrip("/")
         self.token: str | None = None
+        # The API rate limiter treats this as the client/device identity.  Keep
+        # one stable UUID per client instead of silently falling back to the
+        # shared User-Agent or IP address across concurrent tests.
+        self.device_id = str(uuid4())
         self._client = httpx.Client(timeout=30)
 
     @property
     def headers(self) -> dict:
-        h = {"Content-Type": "application/json"}
+        h = {
+            "Content-Type": "application/json",
+            "X-Device-Id": self.device_id,
+        }
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
         return h
@@ -316,6 +324,20 @@ class ApiClient:
             f"{self.base_url}/notifications", params=params, headers=self.headers
         )
 
+    def list_admin_reports(self, status: str = "PENDING", page: int = 1, size: int = 50) -> httpx.Response:
+        return self._client.get(
+            f"{self.base_url}/admin/reports",
+            params={"status": status, "page": page, "size": size},
+            headers=self.headers,
+        )
+
+    def resolve_admin_report(self, report_id: int, action: str, reason: str) -> httpx.Response:
+        return self._client.post(
+            f"{self.base_url}/admin/reports/{report_id}/resolve",
+            json={"action": action, "reason": reason},
+            headers=self.headers,
+        )
+
     def mark_notification_read(self, notification_id: int) -> httpx.Response:
         return self._client.patch(
             f"{self.base_url}/notifications/{notification_id}/read",
@@ -329,10 +351,28 @@ class ApiClient:
             f"{self.base_url}/ai/summary/{thread_id}", headers=self.headers
         )
 
-    def trigger_summary(self, thread_id: int, force: bool = False) -> httpx.Response:
+    def get_summary_task(self, task_id: str) -> httpx.Response:
+        return self._client.get(
+            f"{self.base_url}/ai/summary/tasks/{task_id}", headers=self.headers
+        )
+
+    def cancel_summary(self, thread_id: int, task_id: str) -> httpx.Response:
+        return self._client.post(
+            f"{self.base_url}/ai/summary/{thread_id}/tasks/{task_id}/cancel",
+            headers=self.headers,
+        )
+
+    def trigger_summary(
+        self,
+        thread_id: int,
+        force: bool = False,
+        idempotency_key: str | None = None,
+    ) -> httpx.Response:
+        key = idempotency_key or str(uuid4())
+        headers = {**self.headers, "Idempotency-Key": key}
         return self._client.post(
             f"{self.base_url}/ai/summary/{thread_id}?force={force}",
-            headers=self.headers,
+            headers=headers,
         )
 
     # ── Helper ───────────────────────────────────────────────
