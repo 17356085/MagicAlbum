@@ -5,10 +5,12 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listSections } from '@/api/sections'
 import { getThread } from '@/api/threads'
-import { updateThread } from '@/api/my'
+import { updateThread } from '@/api/threadWrites'
+import { isThreadWriteUnconfirmedError } from '@/api/threadWriteResponse'
 import { uploadImage } from '@/api/uploads'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown } from '@/composables/useMarkdownTools'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import type { Id, Section } from '@/types'
@@ -32,8 +34,12 @@ const uploadProgress = ref(0)
 const beautifying = ref(false)
 const editorBusy = computed(() => submitting.value || isUploading.value || beautifying.value)
 const error = ref('')
+const threadLoadError = ref('')
 const success = ref('')
+const saveUnconfirmed = ref(false)
 const sections = ref<Section[]>([])
+const sectionsLoading = ref(false)
+const sectionsError = ref('')
 const form = ref<ThreadEditForm>({ sectionId: '', title: '', content: '', tags: '' })
 
 interface AuthContextSnapshot {
@@ -44,6 +50,7 @@ interface AuthContextSnapshot {
 
 let mounted = false
 let loadSequence = 0
+let sectionsRequestSeq = 0
 let submissionSequence = 0
 let activeSubmissionId: number | null = null
 let successTimer: ReturnType<typeof setTimeout> | null = null
@@ -141,15 +148,25 @@ function invalidatePageContext(resetForm = true): void {
   beautifying.value = false
   clearSuccessTimer()
   clearNavigationTimer()
+  error.value = ''
+  success.value = ''
+  threadLoadError.value = ''
+  saveUnconfirmed.value = false
   if (resetForm) form.value = emptyForm()
 }
 
 async function loadSections(): Promise<void> {
+  if (!mounted) return
+  const requestSeq = ++sectionsRequestSeq
+  sectionsLoading.value = true
+  sectionsError.value = ''
   try {
     const data = await listSections({ size: 100 })
-    if (mounted) sections.value = data.items
+    if (mounted && requestSeq === sectionsRequestSeq) sections.value = data.items
   } catch (_) {
-    if (mounted) sections.value = []
+    if (mounted && requestSeq === sectionsRequestSeq) sectionsError.value = '分区加载失败，请重试'
+  } finally {
+    if (mounted && requestSeq === sectionsRequestSeq) sectionsLoading.value = false
   }
 }
 
@@ -158,9 +175,11 @@ async function loadThread(): Promise<void> {
   const context = getAuthContextSnapshot()
   loading.value = true
   error.value = ''
+  threadLoadError.value = ''
   try {
     const thread = await getThread(context.routeId)
     if (!isCurrentContext(context) || requestId !== loadSequence) return
+    threadLoadError.value = ''
     form.value = {
       sectionId: String(thread.sectionId || ''),
       title: thread.title || '',
@@ -168,15 +187,28 @@ async function loadThread(): Promise<void> {
       tags: Array.isArray(thread.tags) ? thread.tags.join(' ') : '',
     }
   } catch (_) {
-    if (isCurrentContext(context) && requestId === loadSequence) error.value = '加载帖子失败'
+    if (isCurrentContext(context) && requestId === loadSequence) threadLoadError.value = '加载帖子失败，请重试'
   } finally {
     if (mounted && requestId === loadSequence) loading.value = false
   }
 }
 
+function retryThread(): void {
+  void loadThread()
+}
+
 async function uploadThreadImage(file: File): Promise<string> {
   if (!mounted || submitting.value || isUploading.value || beautifying.value) {
     if (mounted && (submitting.value || beautifying.value)) error.value = '请等待当前编辑操作完成'
+    return ''
+  }
+  const uploadToken = token.value
+  if (!hasRealToken(uploadToken)) {
+    error.value = '请先登录后上传图片'
+    return ''
+  }
+  if (uploadToken !== getStoredAccessToken()) {
+    error.value = '登录状态已变化，请刷新后重试'
     return ''
   }
   const context = getAuthContextSnapshot()
@@ -185,7 +217,7 @@ async function uploadThreadImage(file: File): Promise<string> {
   try {
     isUploading.value = true
     uploadProgress.value = 0
-    const { url, path } = await uploadImage(file, token.value, (progress) => {
+    const { url, path } = await uploadImage(file, uploadToken, (progress) => {
       if (isCurrentUpload(uploadId, context)) uploadProgress.value = progress
     })
     if (!isCurrentUpload(uploadId, context)) return ''
@@ -235,6 +267,7 @@ async function submit(): Promise<void> {
   }
   error.value = ''
   success.value = ''
+  saveUnconfirmed.value = false
   clearSuccessTimer()
   clearNavigationTimer()
   if (form.value.content.length > THREAD_CONTENT_MAX_LENGTH) {
@@ -273,15 +306,40 @@ async function submit(): Promise<void> {
     navigationTimer = setTimeout(() => {
       navigationTimer = null
       if (!isCurrentSubmission(submissionId, context)) return
-      activeSubmissionId = null
-      void router.push(`/threads/${originalThreadId}`)
+      void Promise.resolve()
+        .then(() => router.push(`/threads/${originalThreadId}`))
+        .then((failure) => {
+          if (!isCurrentSubmission(submissionId, context)) return
+          if (failure) {
+            clearSuccessTimer()
+            success.value = ''
+            error.value = '保存成功，但跳转失败，请重试'
+          }
+          activeSubmissionId = null
+          submitting.value = false
+        })
+        .catch(() => {
+          if (!isCurrentSubmission(submissionId, context)) return
+          clearSuccessTimer()
+          success.value = ''
+          error.value = '保存成功，但跳转失败，请重试'
+          activeSubmissionId = null
+          submitting.value = false
+        })
     }, 400)
   } catch (e: unknown) {
-    if (isCurrentSubmission(submissionId, context)) error.value = errorMessage(e, '保存失败')
+    if (isCurrentSubmission(submissionId, context)) {
+      saveUnconfirmed.value = isThreadWriteUnconfirmedError(e)
+      error.value = saveUnconfirmed.value
+        ? '保存结果暂未确认，当前内容已保留。请先查看帖子核对。'
+        : errorMessage(e, '保存失败')
+    }
   } finally {
     if (activeSubmissionId === submissionId) {
-      submitting.value = false
-      if (!navigationScheduled) activeSubmissionId = null
+      if (!navigationScheduled) {
+        submitting.value = false
+        activeSubmissionId = null
+      }
     }
   }
 }
@@ -323,6 +381,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   mounted = false
+  sectionsRequestSeq += 1
   window.removeEventListener('auth-state-changed', onAuthStateChanged)
   invalidatePageContext(false)
   clearSuccessTimer()
@@ -344,25 +403,38 @@ onUnmounted(() => {
       </div>
       <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 lg:hidden">
         <button type="button" class="ui-button-primary min-h-12 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="submit">
-          {{ submitting ? '保存中...' : '保存修改' }}
+          {{ submitting ? '保存中...' : saveUnconfirmed ? '再次保存' : '保存修改' }}
         </button>
       </div>
       <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm hidden lg:inline-flex" @click="cancel">
         返回我的帖子
       </button>
-      <span v-if="error" class="ui-error col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="alert" aria-live="assertive">{{ error }}</span>
+      <span v-if="error" class="ui-error col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="alert" aria-live="assertive">
+        {{ error }}
+        <router-link v-if="saveUnconfirmed" data-testid="unconfirmed-edit-link" :to="`/threads/${threadId}`" target="_blank" rel="noopener noreferrer" class="ml-1 text-[var(--ui-accent)] underline">在新标签页查看帖子</router-link>
+      </span>
       <span v-else-if="success" class="col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 lg:hidden" role="status" aria-live="polite">{{ success }}</span>
     </header>
 
     <div class="ui-panel p-4 lg:p-6">
       <div v-if="loading" class="ui-muted ui-empty" role="status" aria-live="polite">正在加载帖子...</div>
+      <div v-else-if="threadLoadError" class="ui-error ui-empty" role="alert" aria-live="assertive">
+        <p>{{ threadLoadError }}</p>
+        <button type="button" class="ui-button mt-3" @click="retryThread">重试</button>
+      </div>
       <div v-else class="space-y-4">
       <div>
         <label for="thread-edit-section" class="mb-1 block text-sm font-medium">分区</label>
-        <select id="thread-edit-section" v-model="form.sectionId" :disabled="submitting" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
+        <select id="thread-edit-section" v-model="form.sectionId" :disabled="submitting || sectionsLoading" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
           <option value="">保持原分区</option>
           <option v-for="section in sections" :key="section.id" :value="section.id">{{ section.name }}</option>
         </select>
+        <p v-if="sectionsLoading" class="ui-muted mt-1 text-xs" role="status" aria-live="polite">正在加载分区...</p>
+        <div v-else-if="sectionsError" class="ui-error mt-2 flex flex-wrap items-center gap-2 text-sm" role="alert" aria-live="assertive">
+          <span>{{ sectionsError }}</span>
+          <button type="button" class="ui-button min-h-9 px-3 py-1 text-sm" @click="loadSections">重试</button>
+        </div>
+        <p v-else-if="sections.length === 0" class="ui-muted mt-2 text-sm" role="status">暂无可用分区</p>
       </div>
 
       <div>
@@ -412,11 +484,14 @@ onUnmounted(() => {
       <div class="flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 dark:border-gray-700 lg:flex-row lg:flex-wrap lg:items-center">
         <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
         <button type="button" :disabled="editorBusy" class="ui-button-primary min-h-12 px-3 py-2 text-sm hidden lg:inline-flex" @click="submit">
-          {{ submitting ? '保存中...' : '保存修改' }}
+          {{ submitting ? '保存中...' : saveUnconfirmed ? '再次保存' : '保存修改' }}
         </button>
         <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" @click="cancel">取消</button>
         <span v-if="success" class="hidden text-sm text-emerald-700 dark:text-emerald-300 lg:inline" role="status" aria-live="polite">{{ success }}</span>
-        <span v-if="error" class="ui-error hidden py-2 text-sm lg:inline" role="alert" aria-live="assertive">{{ error }}</span>
+        <span v-if="error" class="ui-error hidden py-2 text-sm lg:inline" role="alert" aria-live="assertive">
+          {{ error }}
+          <router-link v-if="saveUnconfirmed" data-testid="unconfirmed-edit-link" :to="`/threads/${threadId}`" target="_blank" rel="noopener noreferrer" class="ml-1 text-[var(--ui-accent)] underline">在新标签页查看帖子</router-link>
+        </span>
       </div>
     </div>
     </div>

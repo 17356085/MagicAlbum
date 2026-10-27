@@ -84,6 +84,7 @@ class RemoteNotificationServiceTest {
                 .andExpect(request -> assertThat(request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull())
                 .andRespond(withSuccess(
                         "{\"id\":8,\"type\":\"reply\",\"title\":\"Title\",\"content\":\"Content\","
+                                + "\"threadId\":9,\"targetId\":8,\"targetType\":\"post\","
                                 + "\"read\":false,\"createdAt\":\"2026-10-14T10:00:00Z\"}",
                         MediaType.APPLICATION_JSON));
 

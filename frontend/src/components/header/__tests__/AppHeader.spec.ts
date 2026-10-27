@@ -205,10 +205,9 @@ describe('AppHeader suggestions', () => {
     wrapper.unmount()
   })
 
-  it('does not write a late profile prefetch after the request changes', async () => {
-    const avatar = deferred<UserProfile & Partial<User>>()
-    mocks.suggestUsers.mockResolvedValue([user(1, 'alpha-user')])
-    mocks.getUserProfile.mockReturnValue(avatar.promise)
+  it('uses nicknames and avatars from the search response without extra profile requests', async () => {
+    const match = { ...user(1, 'user-1'), nickname: 'Alpha', avatarUrl: '/uploads/alpha.png' }
+    mocks.suggestUsers.mockResolvedValue([match])
     const { wrapper, search } = await createWrapper()
 
     search.vm.$emit('update:search-type', 'users')
@@ -216,14 +215,39 @@ describe('AppHeader suggestions', () => {
     await nextTick()
     vi.advanceTimersByTime(250)
     await flushPromises()
-    expect(mocks.getUserProfile).toHaveBeenCalledWith(1)
+    expect(search.props('visibleSuggestions')).toEqual([match])
+    expect(search.props('suggestProfiles')).toEqual({
+      '1': { nickname: 'Alpha', avatarUrl: '/uploads/alpha.png' },
+    })
+    expect(mocks.suggestUsers).toHaveBeenCalledTimes(1)
+    expect(mocks.getUserProfile).not.toHaveBeenCalled()
 
     search.vm.$emit('update:search-query', 'beta')
     await nextTick()
-    avatar.resolve(profile(1, '过期昵称'))
+    expect(search.props('suggestProfiles')).toEqual({})
+    wrapper.unmount()
+  })
+
+  it('uses refreshed profile fields when the same user appears in a later search', async () => {
+    mocks.suggestUsers.mockResolvedValueOnce([
+      { ...user(1, 'alpha-beta'), nickname: 'Old nickname', avatarUrl: '/old.png' },
+    ]).mockResolvedValueOnce([
+      { ...user(1, 'alpha-beta'), nickname: 'New nickname', avatarUrl: '/new.png' },
+    ])
+    const { wrapper, search } = await createWrapper()
+    search.vm.$emit('update:search-type', 'users')
+    search.vm.$emit('update:search-query', 'alpha')
+    vi.advanceTimersByTime(250)
     await flushPromises()
 
-    expect(search.props('suggestProfiles')).toEqual({})
+    search.vm.$emit('update:search-query', 'beta')
+    vi.advanceTimersByTime(250)
+    await flushPromises()
+
+    expect(search.props('suggestProfiles')).toEqual({
+      '1': { nickname: 'New nickname', avatarUrl: '/new.png' },
+    })
+    expect(mocks.getUserProfile).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -255,5 +279,92 @@ describe('AppHeader suggestions', () => {
 
     expect(router.currentRoute.value.name).toBe('discover')
     wrapper.unmount()
+  })
+
+  it('hydrates a token-only session once across the immediate watch and mount', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-only', user: null })
+    mocks.getMyProfile.mockResolvedValue(profile(7, 'Server user'))
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/discover', name: 'discover', component: { template: '<div />' } }],
+    })
+    await router.push('/discover')
+    await router.isReady()
+    const wrapper = mount(AppHeader, {
+      global: {
+        plugins: [pinia, router],
+        stubs: {
+          SearchBox: SearchBoxStub,
+          BrandBar: true,
+          NotificationsMenu: true,
+          AuthEntry: true,
+          UserMenu: true,
+          AuthModal: true,
+          RouterLink: RouterLinkStub,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(mocks.getMyProfile).toHaveBeenCalledTimes(1)
+    expect(auth.user).toEqual(expect.objectContaining({ id: 7, username: 'user-7' }))
+    wrapper.unmount()
+  })
+
+  it('starts one forced profile read when the token changes with a complete cached user', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore()
+    const cachedUser = { ...user(1, 'cached-user'), nickname: 'Cached', avatarUrl: '/cached.png' }
+    auth.applyAuthState({ accessToken: 'token-a', user: cachedUser })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/discover', name: 'discover', component: { template: '<div />' } }],
+    })
+    await router.push('/discover')
+    await router.isReady()
+    const wrapper = mount(AppHeader, {
+      global: {
+        plugins: [pinia, router],
+        stubs: {
+          SearchBox: SearchBoxStub,
+          BrandBar: true,
+          NotificationsMenu: true,
+          AuthEntry: true,
+          UserMenu: true,
+          AuthModal: true,
+          RouterLink: RouterLinkStub,
+        },
+      },
+    })
+    await flushPromises()
+    expect(mocks.getMyProfile).not.toHaveBeenCalled()
+
+    mocks.getMyProfile.mockResolvedValue(profile(1, 'Fresh'))
+    auth.applyAuthState({ accessToken: 'token-b', user: cachedUser })
+    await flushPromises()
+
+    expect(mocks.getMyProfile).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('refreshes the visible username after an account save event without remounting', async () => {
+    const { wrapper, auth } = await createProtectedWrapper()
+    try {
+      await flushPromises()
+      const profileReads = mocks.getMyProfile.mock.calls.length
+      auth.updateCurrentUser({ username: 'saved_username' })
+      window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: 1, username: 'saved_username' } }))
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'UserMenu' }).props('displayName')).toBe('saved_username')
+      expect(auth.user?.username).toBe('saved_username')
+      expect(auth.token).toBe('protected-token')
+      expect(mocks.getMyProfile).toHaveBeenCalledTimes(profileReads)
+    } finally { wrapper.unmount() }
   })
 })

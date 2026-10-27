@@ -4,22 +4,16 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import MobileMe from '@/pages/MobileMe.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { getPendingAuthRedirect } from '@/utils/authStorage'
 
 const page = { template: '<div />' }
 const mocks = vi.hoisted(() => ({ getGovernanceMe: vi.fn() }))
 vi.mock('@/api/governance', () => ({ getGovernanceMe: mocks.getGovernanceMe }))
-let dialogShowModal: PropertyDescriptor | undefined
-let dialogClose: PropertyDescriptor | undefined
-const showModalMock = vi.fn(function (this: HTMLDialogElement) {
-  Object.defineProperty(this, 'open', { configurable: true, value: true, writable: true })
-})
-const closeMock = vi.fn(function (this: HTMLDialogElement) {
-  Object.defineProperty(this, 'open', { configurable: true, value: false, writable: true })
-})
+const mountedWrappers: Array<ReturnType<typeof mount>> = []
 
-async function createWrapper(loggedIn: boolean) {
+async function createWrapper(loggedIn: boolean, attachTo?: Element) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
@@ -45,8 +39,13 @@ async function createWrapper(loggedIn: boolean) {
   })
   await router.push('/me')
   await router.isReady()
-  const wrapper = mount(MobileMe, { global: { plugins: [pinia, router] } })
+  const wrapper = mount(MobileMe, { global: { plugins: [pinia, router] }, attachTo })
+  mountedWrappers.push(wrapper)
   return { auth, wrapper }
+}
+
+function findDialogButton(wrapper: ReturnType<typeof mount>, text: string) {
+  return wrapper.get('[role="dialog"]').findAll('button').find((button) => button.text() === text)
 }
 
 describe('MobileMe', () => {
@@ -55,19 +54,11 @@ describe('MobileMe', () => {
     mocks.getGovernanceMe.mockReset()
     mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
     document.documentElement.classList.remove('dark')
-    dialogShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal')
-    dialogClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
-    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: showModalMock })
-    Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: closeMock })
-    showModalMock.mockClear()
-    closeMock.mockClear()
   })
 
   afterEach(() => {
-    if (dialogShowModal) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', dialogShowModal)
-    else delete (HTMLDialogElement.prototype as unknown as Record<string, unknown>).showModal
-    if (dialogClose) Object.defineProperty(HTMLDialogElement.prototype, 'close', dialogClose)
-    else delete (HTMLDialogElement.prototype as unknown as Record<string, unknown>).close
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
+    vi.restoreAllMocks()
     document.documentElement.classList.remove('dark')
     localStorage.clear()
   })
@@ -96,12 +87,10 @@ describe('MobileMe', () => {
     await themeButton!.trigger('click')
     await nextTick()
     expect(document.documentElement.classList.contains('dark')).toBe(true)
-    wrapper.unmount()
-    loginEvent.mockRestore()
   })
 
-  it('opens the native dialog and logs out through the auth store', async () => {
-    const { auth, wrapper } = await createWrapper(true)
+  it('opens the shared confirmation and logs out through the auth store', async () => {
+    const { auth, wrapper } = await createWrapper(true, document.body)
 
     expect(wrapper.find('a[href="/users/7"]').exists()).toBe(true)
     expect(wrapper.find('a[href="/my/threads"]').exists()).toBe(true)
@@ -113,10 +102,109 @@ describe('MobileMe', () => {
     expect(wrapper.find('a[href="/settings"]').exists()).toBe(true)
 
     await wrapper.get('button.mobile-me__logout').trigger('click')
-    expect(showModalMock).toHaveBeenCalledTimes(1)
-    await wrapper.get('button.mobile-me__dialog-button--primary').trigger('click')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('退出登录？')
+    await findDialogButton(wrapper, '确认退出')!.trigger('click')
     expect(auth.isLoggedIn).toBe(false)
     expect(wrapper.find('button.mobile-me__logout').exists()).toBe(false)
+  })
+
+  it('cancels and escapes without native dialog methods, then confirms normally', async () => {
+    const originalShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal')
+    const originalClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
+    try {
+      delete (HTMLDialogElement.prototype as unknown as Record<string, unknown>).showModal
+      delete (HTMLDialogElement.prototype as unknown as Record<string, unknown>).close
+      const { auth, wrapper } = await createWrapper(true, document.body)
+      const logoutButton = wrapper.get<HTMLButtonElement>('button.mobile-me__logout')
+
+      await logoutButton.trigger('click')
+      await findDialogButton(wrapper, '取消')!.trigger('click')
+      expect(auth.isLoggedIn).toBe(true)
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+
+      logoutButton.element.focus()
+      await logoutButton.trigger('click')
+      const dialog = wrapper.get('[role="dialog"]')
+      expect(document.activeElement).toBe(dialog.element)
+      await dialog.trigger('keydown', { key: 'Escape' })
+      expect(auth.isLoggedIn).toBe(true)
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(document.activeElement).toBe(logoutButton.element)
+
+      await logoutButton.trigger('click')
+      await findDialogButton(wrapper, '确认退出')!.trigger('click')
+      expect(auth.isLoggedIn).toBe(false)
+    } finally {
+      if (originalShowModal) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', originalShowModal)
+      else delete (HTMLDialogElement.prototype as unknown as Record<string, unknown>).showModal
+      if (originalClose) Object.defineProperty(HTMLDialogElement.prototype, 'close', originalClose)
+      else delete (HTMLDialogElement.prototype as unknown as Record<string, unknown>).close
+    }
+  })
+
+  it('keeps the confirmation open for an auth event in the same session', async () => {
+    const { auth, wrapper } = await createWrapper(true, document.body)
+    await wrapper.get('button.mobile-me__logout').trigger('click')
+    const generation = auth.getAuthGeneration()
+    window.dispatchEvent(new CustomEvent('auth-state-changed', { detail: { loggedIn: true } }))
+    await nextTick()
+    expect(auth.getAuthGeneration()).toBe(generation)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    await findDialogButton(wrapper, '取消')!.trigger('click')
+    expect(auth.isLoggedIn).toBe(true)
+  })
+
+  it('logs out once for repeated opens and same-tick confirmations', async () => {
+    const { auth, wrapper } = await createWrapper(true, document.body)
+    const logout = vi.spyOn(auth, 'logout')
+    const logoutButton = wrapper.get('button.mobile-me__logout')
+    await logoutButton.trigger('click')
+    await logoutButton.trigger('click')
+    expect(wrapper.findAll('[role="dialog"]')).toHaveLength(1)
+    const confirmButton = findDialogButton(wrapper, '确认退出')!
+    confirmButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    confirmButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    expect(logout).toHaveBeenCalledTimes(1)
+    expect(auth.isLoggedIn).toBe(false)
+  })
+
+  it('closes A confirmation on a B session change and ignores the stale confirm', async () => {
+    const { auth, wrapper } = await createWrapper(true, document.body)
+    await wrapper.get('button.mobile-me__logout').trigger('click')
+    const confirmDialog = wrapper.findComponent(ConfirmDialog)
+    const confirmHandler = (confirmDialog.vm as unknown as {
+      $: { vnode: { props?: Record<string, unknown> } }
+    }).$.vnode.props?.onConfirm
+    expect(typeof confirmHandler).toBe('function')
+    const logout = vi.spyOn(auth, 'logout')
+
+    auth.applyAuthState({ accessToken: 'mobile-me-token-b', user: { id: 8, username: 'b', nickname: 'B' } })
+    await nextTick()
+    expect(auth.isLoggedIn).toBe(true)
+    expect(auth.token).toBe('mobile-me-token-b')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+
+    ;(confirmHandler as () => void)()
+    expect(logout).not.toHaveBeenCalled()
+    expect(auth.token).toBe('mobile-me-token-b')
+  })
+
+  it('ignores a delayed parent confirm callback after the page is unmounted', async () => {
+    const { auth, wrapper } = await createWrapper(true, document.body)
+    await wrapper.get('button.mobile-me__logout').trigger('click')
+    const confirmDialog = wrapper.findComponent(ConfirmDialog)
+    const confirmHandler = (confirmDialog.vm as unknown as {
+      $: { vnode: { props?: Record<string, unknown> } }
+    }).$.vnode.props?.onConfirm
+    expect(typeof confirmHandler).toBe('function')
+    const logout = vi.spyOn(auth, 'logout')
+
     wrapper.unmount()
+    mountedWrappers.splice(mountedWrappers.indexOf(wrapper), 1)
+    ;(confirmHandler as () => void)()
+
+    expect(logout).not.toHaveBeenCalled()
+    expect(auth.isLoggedIn).toBe(true)
   })
 })

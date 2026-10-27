@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.List;
@@ -16,14 +17,16 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
 
     Optional<NotificationOutbox> findFirstByStatusOrderByCreatedAtAsc(NotificationOutboxStatus status);
 
-    List<NotificationOutbox> findTop100ByStatusAndAvailableAtLessThanEqualOrderByAvailableAtAscIdAsc(
+    List<NotificationOutbox> findByStatusAndAvailableAtLessThanEqualOrderByAvailableAtAscIdAsc(
             NotificationOutboxStatus status,
-            Instant availableAt
+            Instant availableAt,
+            Pageable pageable
     );
 
-    List<NotificationOutbox> findTop100ByStatusAndLeaseUntilLessThanOrderByLeaseUntilAscIdAsc(
+    List<NotificationOutbox> findByStatusAndLeaseUntilLessThanOrderByLeaseUntilAscIdAsc(
             NotificationOutboxStatus status,
-            Instant leaseUntil
+            Instant leaseUntil,
+            Pageable pageable
     );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -35,6 +38,7 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
                    o.attempts = o.attempts + 1,
                    o.updatedAt = :now
              where o.id = :id
+               and o.attempts = :expectedAttempts
                and ((o.status = :pending and o.availableAt <= :now)
                  or (o.status = :inFlight and o.leaseUntil < :now))
             """)
@@ -44,7 +48,8 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
             @Param("inFlight") NotificationOutboxStatus inFlight,
             @Param("now") Instant now,
             @Param("owner") String owner,
-            @Param("leaseUntil") Instant leaseUntil
+            @Param("leaseUntil") Instant leaseUntil,
+            @Param("expectedAttempts") int expectedAttempts
     );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)

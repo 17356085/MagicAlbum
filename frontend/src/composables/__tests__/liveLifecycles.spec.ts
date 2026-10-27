@@ -80,6 +80,42 @@ describe('live connection session lifecycles', () => {
     } finally { unsubscribe() }
   })
 
+  it('emits session only when the auth token changes and resyncs once after visibility resumes', async () => {
+    activate(1, 'first')
+    const signals: string[] = []
+    const unsubscribe = subscribeNotificationChanges(signal => signals.push(signal))
+    const wrapper = start(useLiveNotifications)
+    try {
+      await nextTick()
+      await flushPromises()
+      signals.length = 0
+      const firstSignal = mocks.stream.mock.calls[0]?.[2] as AbortSignal
+
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await nextTick()
+
+      expect(firstSignal.aborted).toBe(true)
+      expect(signals).toEqual([])
+
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await nextTick()
+      await flushPromises()
+
+      expect(signals).toEqual(['resync'])
+      expect(mocks.stream).toHaveBeenCalledTimes(2)
+
+      activate(2, 'second')
+      await nextTick()
+      await flushPromises()
+      expect(signals).toEqual(['resync', 'session', 'resync'])
+    } finally {
+      unsubscribe()
+      wrapper.unmount()
+    }
+  })
+
   it('abandons the old polling batch when the first request finishes after an account switch', async () => {
     localStorage.setItem('bluealbum:media:1', JSON.stringify([asset, { ...asset, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39' }]))
     activate(1, 'first')

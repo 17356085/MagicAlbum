@@ -125,8 +125,6 @@ class AuthQrServiceTest {
 
         QrLoginStatusResponse confirmed = service.confirm(created.getQrId(), 1001L);
         assertEquals(QrLoginStatus.CONFIRMED, confirmed.getStatus());
-        assertNotNull(confirmed.getUser());
-        assertEquals(1001L, confirmed.getUser().getId());
 
         ResponseStatusException exchangeError = assertThrows(
                 ResponseStatusException.class,

@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAllRecentVisits, clearAllRecentVisits, pruneExpired, removeRecentVisit } from '@/composables/useRecentVisits'
+import {
+  captureRecentVisitsScope,
+  clearAllRecentVisits,
+  getAllRecentVisits,
+  isRecentVisitsScopeCurrent,
+  pruneExpired,
+  removeRecentVisit,
+} from '@/composables/useRecentVisits'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { listSections } from '@/api/sections'
 import { safeBack as navigateBackSafely } from '@/utils/router'
 import type { RecentVisit, Section } from '@/types'
+import type { RecentVisitsIdentity, RecentVisitsScope } from '@/composables/useRecentVisits'
 
 const router = useRouter()
 interface RecentHistoryQuery {
@@ -22,13 +30,57 @@ const inputPage = ref('1')
 // 本地输入值：仅在触发搜索后同步到 query.q
 const searchText = ref('')
 const sections = ref<Section[]>([])
+const displayedScope = ref<RecentVisitsScope | null>(null)
+const scopeError = ref(false)
 const authStore = useAuthStore()
 const { isLoggedIn } = storeToRefs(authStore)
+const hasValidDisplayedScope = computed(() => {
+  const scope = displayedScope.value
+  return !!scope && !scopeError.value && isRecentVisitsScopeCurrent(scope, currentIdentity())
+})
+
+function currentIdentity(): RecentVisitsIdentity {
+  return {
+    token: String(authStore.token || ''),
+    ownerId: authStore.user?.id ?? authStore.user?.userId ?? null,
+  }
+}
+
+function clearScopeView(showError: boolean): void {
+  items.value = []
+  displayedScope.value = null
+  scopeError.value = showError
+}
 
 function load(): void {
   // 修剪过期记录并加载
-  try { pruneExpired() } catch (_) {}
-  items.value = getAllRecentVisits()
+  if (!isLoggedIn.value) {
+    clearScopeView(false)
+    return
+  }
+
+  const expected = currentIdentity()
+  const scope = captureRecentVisitsScope(expected)
+  if (!scope) {
+    clearScopeView(true)
+    return
+  }
+
+  try { pruneExpired(scope) } catch (_) {}
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+
+  const nextItems = getAllRecentVisits(scope)
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+
+  displayedScope.value = scope
+  items.value = nextItems
+  scopeError.value = false
 }
 
 async function loadSections(): Promise<void> {
@@ -41,12 +93,22 @@ async function loadSections(): Promise<void> {
 }
 
 function clearAll(): void {
-  clearAllRecentVisits()
+  const scope = displayedScope.value
+  if (!scope || !isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+  clearAllRecentVisits(scope)
   load()
 }
 
 function removeOne(item: RecentVisit): void {
-  removeRecentVisit(item)
+  const scope = displayedScope.value
+  if (!scope || !isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+  removeRecentVisit(item, scope)
   load()
 }
 
@@ -135,7 +197,7 @@ function onAuthStateChanged(): void {
   inputPage.value = '1'
 
   if (!isLoggedIn.value) {
-    items.value = []
+    clearScopeView(false)
     router.replace({ name: 'discover' })
     return
   }
@@ -154,9 +216,14 @@ onMounted(() => {
 })
 watch(isLoggedIn, (v) => {
   if (!v) {
-    items.value = []
+    clearScopeView(false)
     router.replace({ name: 'discover' })
   }
+})
+watch([() => authStore.token, () => authStore.user?.id ?? authStore.user?.userId], () => {
+  query.value.page = 1
+  inputPage.value = '1'
+  if (isLoggedIn.value) load()
 })
 watch(() => query.value.page, (val) => {
   inputPage.value = String(val || 1)
@@ -182,9 +249,16 @@ onBeforeUnmount(() => {
             <p class="ui-description">保留最近 90 天浏览过的帖子</p>
           </div>
         </div>
-        <button type="button" class="ui-button text-red-600 hover:border-red-300 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30" @click="clearAll">清空</button>
+        <button type="button" class="ui-button text-red-600 hover:border-red-300 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30" :disabled="!hasValidDisplayedScope" @click="clearAll">清空</button>
       </header>
 
+      <div v-if="scopeError" class="ui-empty" role="alert">
+        <h2>账号状态已变化</h2>
+        <p>浏览记录暂不可用，请重新加载。</p>
+        <button type="button" class="ui-button" @click="load">重新加载</button>
+      </div>
+
+      <template v-else>
       <div class="ui-toolbar items-end">
         <label class="min-w-[220px] flex-1">
           <span class="mb-1 block text-xs font-medium text-[var(--ui-muted)]">关键词</span>
@@ -237,6 +311,7 @@ onBeforeUnmount(() => {
           <button type="button" class="ui-button" :disabled="(query.page || 1) >= totalPages" @click="nextPage">下一页</button>
         </div>
       </footer>
+      </template>
     </section>
   </section>
 </template>

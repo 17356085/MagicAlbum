@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listSections } from '@/api/sections'
 import { listThreadRanking } from '@/api/threads'
@@ -13,6 +13,7 @@ const router = useRouter()
 const loading = ref(false)
 const sectionsLoading = ref(false)
 const error = ref('')
+const sectionsError = ref('')
 const items = ref<Thread[]>([])
 const sections = ref<Section[]>([])
 const sectionId = ref<Id | null>(null)
@@ -26,11 +27,32 @@ const topOne = computed(() => items.value[0] || null)
 const topNext = computed(() => items.value.slice(1, 3))
 const restItems = computed(() => items.value.slice(3))
 
-function readQuery(): void {
-  const sidRaw = route.query.sectionId ? getSingleQueryValue(route.query.sectionId) : ''
-  const pageRaw = route.query.page ? Number(getSingleQueryValue(route.query.page)) : 1
-  sectionId.value = sidRaw ? Number(sidRaw) : null
-  page.value = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1
+let rankingRequestSeq = 0
+let sectionsRequestSeq = 0
+let disposed = false
+let sectionsLoaded = false
+
+function normalizePage(value: Parameters<typeof getSingleQueryValue>[0]): number {
+  const raw = getSingleQueryValue(value)
+  const parsed = raw ? Number(raw) : 1
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1
+}
+
+function normalizeSectionId(value: Parameters<typeof getSingleQueryValue>[0]): Id | null {
+  const raw = getSingleQueryValue(value).trim()
+  if (!/^\d+$/.test(raw)) return null
+  const canonical = raw.replace(/^0+/, '')
+  if (!canonical) return null
+  const parsed = Number(canonical)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : canonical
+}
+
+function readQuery(): { sectionId: Id | null; page: number } {
+  const nextSectionId = normalizeSectionId(route.query.sectionId)
+  const nextPage = normalizePage(route.query.page)
+  sectionId.value = nextSectionId
+  page.value = nextPage
+  return { sectionId: nextSectionId, page: nextPage }
 }
 
 function changeSection(next: Id | null): void {
@@ -56,37 +78,52 @@ function goToInputPage(): void {
 }
 
 async function loadSections(): Promise<void> {
-  if (sections.value.length > 0) return
+  if (disposed || sectionsLoaded || sectionsLoading.value) return
+  const requestSeq = ++sectionsRequestSeq
   sectionsLoading.value = true
+  sectionsError.value = ''
   try {
     const data = await listSections({ size: 50 })
+    if (disposed || requestSeq !== sectionsRequestSeq) return
     sections.value = data.items
+    sectionsLoaded = true
   } catch (_) {
-    sections.value = []
+    if (!disposed && requestSeq === sectionsRequestSeq) sectionsError.value = '加载分区失败'
   } finally {
-    sectionsLoading.value = false
+    if (!disposed && requestSeq === sectionsRequestSeq) sectionsLoading.value = false
   }
 }
 
 async function loadRanking(): Promise<void> {
-  readQuery()
+  if (disposed) return
+  const requestSeq = ++rankingRequestSeq
+  const query = readQuery()
   loading.value = true
   error.value = ''
   try {
     const data = await listThreadRanking({
-      sectionId: sectionId.value || undefined,
-      page: page.value,
+      sectionId: query.sectionId || undefined,
+      page: query.page,
       size: size.value,
     })
+    if (disposed || requestSeq !== rankingRequestSeq) return
     items.value = data.items
     total.value = data.total
     page.value = data.page
     size.value = data.size
   } catch (_) {
-    error.value = '加载排行榜失败'
+    if (!disposed && requestSeq === rankingRequestSeq) error.value = '加载排行榜失败'
   } finally {
-    loading.value = false
+    if (!disposed && requestSeq === rankingRequestSeq) loading.value = false
   }
+}
+
+function retrySections(): void {
+  void loadSections()
+}
+
+function retryRanking(): void {
+  if (!loading.value) void loadRanking()
 }
 
 function excerpt(thread: Thread): string {
@@ -138,18 +175,26 @@ function openThread(id: Id): void {
   router.push(`/threads/${id}`)
 }
 
-onMounted(async () => {
-  await loadSections()
-  await loadRanking()
+onMounted(() => {
+  void loadSections()
 })
 
-watch(() => route.query, () => {
-  loadRanking()
-})
+watch(() => {
+  const normalizedSectionId = normalizeSectionId(route.query.sectionId)
+  return `${normalizedSectionId === null ? '' : String(normalizedSectionId)}|${normalizePage(route.query.page)}`
+}, () => {
+  void loadRanking()
+}, { immediate: true })
 
 watch(page, (val) => {
   inputPage.value = String(val || 1)
 }, { immediate: true })
+
+onUnmounted(() => {
+  disposed = true
+  rankingRequestSeq += 1
+  sectionsRequestSeq += 1
+})
 </script>
 
 <template>
@@ -160,13 +205,13 @@ watch(page, (val) => {
         <p class="ui-description hidden lg:block">看看社区里正在获得回应和关注的帖子。</p>
       </div>
     </header>
-    <div v-if="sectionsLoading || loading" class="ui-panel ui-empty" role="status">正在加载...</div>
-    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
-    <div v-else-if="items.length === 0" class="ui-panel p-6 text-center text-[var(--ui-muted)]">
-      <div class="mb-4 flex gap-2 overflow-x-auto ui-scroll pb-2">
+    <div class="ui-panel overflow-hidden" data-testid="ranking-filters">
+      <div class="flex flex-wrap items-center gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+        <div class="flex min-w-0 flex-1 gap-2 overflow-x-auto ui-scroll pb-1">
         <button
           type="button"
           class="ui-button shrink-0"
+          :aria-pressed="!sectionId"
           :class="!sectionId ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
           @click="changeSection(null)"
         >
@@ -177,42 +222,31 @@ watch(page, (val) => {
           :key="section.id"
           type="button"
           class="ui-button shrink-0"
+          :aria-pressed="String(sectionId || '') === String(section.id)"
           :class="String(sectionId || '') === String(section.id) ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
           @click="changeSection(section.id)"
         >
           {{ section.name }}
         </button>
+        </div>
+        <span v-if="sectionsLoading" class="text-xs text-[var(--ui-muted)]" role="status">正在加载分区...</span>
+        <div v-if="sectionsError" class="flex items-center gap-2 text-sm text-[var(--ui-danger)]" data-testid="sections-error" role="alert">
+          <span>{{ sectionsError }}</span>
+          <button type="button" class="ui-button" @click="retrySections">重试分区</button>
+        </div>
       </div>
-      <div>暂无排行数据</div>
+    </div>
+    <div v-if="loading" class="ui-panel ui-empty" role="status">正在加载...</div>
+    <div v-else-if="error" class="ui-error" data-testid="ranking-error" role="alert">
+      <span>{{ error }}</span>
+      <button type="button" class="ui-button ml-3" @click="retryRanking">重试排行榜</button>
     </div>
     <div v-else class="space-y-4">
+      <div v-if="items.length === 0" class="ui-panel p-6 text-center text-[var(--ui-muted)]">暂无排行数据</div>
       <div
         v-if="topOne"
         class="ui-panel overflow-hidden"
       >
-        <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-          <div class="flex gap-2 overflow-x-auto ui-scroll pb-2">
-            <button
-              type="button"
-              class="ui-button shrink-0"
-              :class="!sectionId ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
-              @click="changeSection(null)"
-            >
-              全区
-            </button>
-            <button
-              v-for="section in sections"
-              :key="section.id"
-              type="button"
-              class="ui-button shrink-0"
-              :class="String(sectionId || '') === String(section.id) ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
-              @click="changeSection(section.id)"
-            >
-              {{ section.name }}
-            </button>
-          </div>
-        </div>
-
         <div
           class="group block cursor-pointer transition-colors hover:bg-[var(--ui-subtle)]"
           role="link"
@@ -361,36 +395,36 @@ watch(page, (val) => {
             </router-link>
           </li>
         </ul>
-        <div class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
-          <div class="ranking-pagination flex items-center gap-2">
-            <button
-              type="button"
-              class="ui-button"
-              :disabled="loading || page <= 1"
-              @click="setPage(page - 1)"
-            >
-              上一页
-            </button>
-            <span class="hidden text-sm text-[var(--ui-muted)] lg:inline">第</span>
-            <input
-              v-model="inputPage"
-              class="ui-field hidden w-16 text-center md:block"
-              aria-label="页码"
-              inputmode="numeric"
-              @keyup.enter="goToInputPage"
-              @blur="goToInputPage"
-            />
-            <span class="text-sm text-[var(--ui-muted)]"><span class="lg:hidden">{{ page }}</span> / {{ totalPages }} 页</span>
-            <button
-              type="button"
-              class="ui-button"
-              :disabled="loading || page >= totalPages"
-              @click="setPage(page + 1)"
-            >
-              下一页
-            </button>
-          </div>
+      </div>
+      <div v-if="items.length || page > 1 || total > 0" class="ui-panel overflow-hidden flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
+        <div class="ranking-pagination flex items-center gap-2">
+          <button
+            type="button"
+            class="ui-button"
+            :disabled="loading || page <= 1"
+            @click="setPage(page - 1)"
+          >
+            上一页
+          </button>
+          <span class="hidden text-sm text-[var(--ui-muted)] lg:inline">第</span>
+          <input
+            v-model="inputPage"
+            class="ui-field hidden w-16 text-center md:block"
+            aria-label="页码"
+            inputmode="numeric"
+            @keyup.enter="goToInputPage"
+            @blur="goToInputPage"
+          />
+          <span class="text-sm text-[var(--ui-muted)]"><span class="lg:hidden">{{ page }}</span> / {{ totalPages }} 页</span>
+          <button
+            type="button"
+            class="ui-button"
+            :disabled="loading || page >= totalPages"
+            @click="setPage(page + 1)"
+          >
+            下一页
+          </button>
         </div>
       </div>
     </div>

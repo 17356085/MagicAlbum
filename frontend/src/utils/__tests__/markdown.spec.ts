@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createMarkdownRenderer, renderInlineMarkdown, renderMarkdown } from '../markdown'
+import hljs from 'highlight.js/lib/common'
+import { applyRuntimeHighlight, createMarkdownRenderer, renderInlineMarkdown, renderMarkdown } from '../markdown'
 
 function parsed(markup: string): DocumentFragment {
   const template = document.createElement('template')
@@ -7,7 +8,10 @@ function parsed(markup: string): DocumentFragment {
   return template.content
 }
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
+})
 
 describe('Markdown rendering boundaries', () => {
   it('removes executable user HTML from block and inline rendering', () => {
@@ -38,6 +42,31 @@ describe('Markdown rendering boundaries', () => {
     expect(fragment.querySelector('.katex')).not.toBeNull()
     expect(fragment.querySelector('pre code')?.classList.contains('hljs')).toBe(true)
     expect(fragment.querySelector('pre code')?.textContent).toContain('const value = 1')
+  })
+
+  it('does not highlight locally rendered code again during content enhancement', () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderMarkdown(createMarkdownRenderer(), '```js\nconst value = 1\n```')
+    const highlightElement = vi.spyOn(hljs, 'highlightElement')
+
+    applyRuntimeHighlight(root)
+    applyRuntimeHighlight(root)
+
+    expect(root.querySelector('code')?.getAttribute('data-highlighted')).toBe('yes')
+    expect(highlightElement).not.toHaveBeenCalled()
+  })
+
+  it('still highlights server-rendered code once and enhances images', () => {
+    const root = document.createElement('div')
+    root.innerHTML = '<pre><code class="language-js">const value = 1</code></pre><img src="/uploads/image.png">'
+    const highlightElement = vi.spyOn(hljs, 'highlightElement')
+
+    applyRuntimeHighlight(root)
+    applyRuntimeHighlight(root)
+
+    expect(highlightElement).toHaveBeenCalledTimes(1)
+    expect(root.querySelector('code')?.textContent).toBe('const value = 1')
+    expect(root.querySelector('img')?.getAttribute('loading')).toBe('lazy')
   })
 
   it('escapes invalid math and prevents trusted HTML commands from injecting elements', () => {

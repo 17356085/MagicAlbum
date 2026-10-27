@@ -23,10 +23,9 @@ export function formatRelativeTime(input: TimeInput): string {
   if (hr < 24) return `${hr}小时${suffix}`
   const day = Math.floor(hr / 24)
   if (day < 7) return `${day}天${suffix}`
-  const week = Math.floor(day / 7)
-  if (week < 4) return `${week}周${suffix}`
+  if (day < 30) return `${Math.floor(day / 7)}周${suffix}`
   const month = Math.floor(day / 30)
-  if (month < 12) return `${month}个月${suffix}`
+  if (day < 365) return `${month}个月${suffix}`
   const year = Math.floor(day / 365)
   return `${year}年${suffix}`
 }

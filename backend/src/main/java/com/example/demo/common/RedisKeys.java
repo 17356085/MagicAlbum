@@ -1,5 +1,11 @@
 package com.example.demo.common;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+
 public final class RedisKeys {
     private RedisKeys() {
     }
@@ -39,7 +45,29 @@ public final class RedisKeys {
         String normalizedQ = q == null ? "" : q.trim();
         String normalizedTag = tag == null ? "" : tag.trim();
         String normalizedSectionId = sectionId == null ? "" : String.valueOf(sectionId);
-        return "cache:threads:list:" + normalizedQ + ":" + normalizedTag + ":" + normalizedSectionId + ":" + page + ":" + limit;
+        return "cache:threads:list:v2:" + sha256Hex(
+                normalizedQ,
+                normalizedTag,
+                normalizedSectionId,
+                String.valueOf(page),
+                String.valueOf(limit)
+        );
+    }
+
+    private static String sha256Hex(String... components) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            ByteBuffer lengthBuffer = ByteBuffer.allocate(Integer.BYTES);
+            for (String component : components) {
+                byte[] encoded = component.getBytes(StandardCharsets.UTF_8);
+                lengthBuffer.clear().putInt(encoded.length);
+                digest.update(lengthBuffer.array());
+                digest.update(encoded);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is required by the JVM", ex);
+        }
     }
 
     public static String threadsListPattern() {

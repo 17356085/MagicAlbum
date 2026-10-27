@@ -1,7 +1,9 @@
 import api from './client'
 import { decodePageResponse } from './pagination'
-import { normalizeThread } from './threads'
-import type { Id, PageResult, Post, Thread, UpdateThreadPayload } from '@/types'
+import { normalizeThread } from './threadNormalization'
+import type { Id, PageResult, Post, Thread } from '@/types'
+
+export { updateThread } from './threadWrites'
 
 interface MyListQuery {
   q?: string
@@ -54,12 +56,7 @@ export async function listMyPosts({
   return decodePageResponse<Post>(data, { page, size, endpoint: '/users/me/posts' })
 }
 
-// 线程编辑与删除（本人资源）
-export async function updateThread(id: Id, payload: UpdateThreadPayload): Promise<Thread> {
-  const { data } = await api.patch(`/threads/${id}`, payload)
-  return data
-}
-
+// 线程删除（本人资源）
 export async function deleteThread(id: Id): Promise<unknown> {
   const { data } = await api.delete(`/threads/${id}`)
   return data

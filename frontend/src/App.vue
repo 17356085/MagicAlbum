@@ -6,6 +6,7 @@ import SidebarLeft from '@/components/SidebarLeft.vue'
 import AiChat from '@/components/AiChat.vue'
 import MobileNavigation from '@/components/MobileNavigation.vue'
 import { useLiveNotifications } from '@/composables/useLiveNotifications'
+import { useAuthStorageSync } from '@/composables/useAuthStorageSync'
 import MediaProcessingStatus from '@/components/MediaProcessingStatus.vue'
 import { useMediaProcessing } from '@/composables/useMediaProcessing'
 import { useMobileViewport } from '@/composables/useMobileViewport'
@@ -40,11 +41,16 @@ interface StarParticle {
 
 // UI 设置（动态背景开关）
 const uiStore = useUIStore()
+useAuthStorageSync()
 useLiveNotifications()
 useMediaProcessing()
 const { dynamicBackgroundEnabled } = storeToRefs(uiStore)
 const authRenderKey = ref(0)
 const route = useRoute()
+// Only pages that guard their own route and viewer requests opt into reuse.
+const routeViewKey = computed(() => typeof route.meta?.publicViewKey === 'string'
+  ? route.meta.publicViewKey
+  : `${route.fullPath}:${authRenderKey.value}`)
 const { inputActive, viewportStyle } = useMobileViewport()
 const showMobileCreate = computed(() => ['/discover', '/sections', '/ranking', '/feed', '/my/threads'].includes(route.path))
 
@@ -332,7 +338,7 @@ onUnmounted(() => {
       </div>
       <div class="min-w-0">
         <div class="space-y-4">
-          <router-view :key="`${$route.fullPath}:${authRenderKey}`" />
+          <router-view :key="routeViewKey" />
         </div>
       </div>
     </main>

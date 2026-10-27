@@ -1,6 +1,7 @@
 package com.example.demo.notifications.outbox;
 
 import com.example.demo.notifications.service.NotificationService;
+import com.example.demo.notifications.service.NotificationCreationAcknowledgement;
 import com.example.demo.user.service.UserSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,9 +70,8 @@ public class NotificationOutboxDispatcher {
                     delivery.targetType(),
                     UUID.fromString(delivery.eventId())
             );
-            if (response == null || response.getId() == null) {
-                throw new IllegalStateException("Missing persisted notification acknowledgement");
-            }
+            NotificationCreationAcknowledgement.requireCreated(response, delivery.type(), delivery.title(), delivery.content(),
+                    delivery.threadId(), delivery.targetId(), delivery.targetType());
             outboxService.markDelivered(delivery.id(), owner);
         } catch (Exception failure) {
             boolean updated = outboxService.markFailedOrRetry(delivery, owner, failure);

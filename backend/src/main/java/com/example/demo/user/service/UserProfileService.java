@@ -1,6 +1,7 @@
 package com.example.demo.user.service;
 
 import com.example.demo.user.dto.ProfileDto;
+import com.example.demo.user.dto.UserSummaryDto;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserRepository;
@@ -96,6 +97,41 @@ public class UserProfileService {
                 dto.setLocation("");
             }
             enrichFollowState(dto, userId, null);
+            result.put(userId, dto);
+        }
+        return result;
+    }
+
+    public Map<Long, UserSummaryDto> getUserSummaries(Collection<Long> userIds) {
+        Map<Long, UserSummaryDto> result = new HashMap<>();
+        if (userIds == null || userIds.isEmpty()) return result;
+
+        List<User> users = userRepository.findAllById(userIds);
+        Map<Long, User> userMap = new HashMap<>();
+        for (User user : users) {
+            userMap.put(user.getId(), user);
+        }
+
+        Map<Long, UserProfile> profileMap = new HashMap<>();
+        for (UserProfile profile : profileRepository.findByUserIdIn(userIds)) {
+            profileMap.put(profile.getUserId(), profile);
+        }
+
+        for (Long userId : userIds) {
+            User user = userMap.get(userId);
+            if (user == null) continue;
+            UserProfile profile = profileMap.get(userId);
+            UserSummaryDto dto = new UserSummaryDto();
+            dto.setId(user.getId());
+            dto.setUsername(user.getUsername());
+            dto.setCreatedAt(user.getCreatedAt());
+            if (profile != null) {
+                dto.setNickname(nullToEmpty(profile.getNickname()));
+                dto.setAvatarUrl(nullToEmpty(profile.getAvatarUrl()));
+            } else {
+                dto.setNickname(nullToEmpty(user.getUsername()));
+                dto.setAvatarUrl("");
+            }
             result.put(userId, dto);
         }
         return result;

@@ -10,7 +10,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/check-initial-load.mjs",
     "lint": "eslint . --max-warnings=0",
     "type-check": "vue-tsc --noEmit -p tsconfig.json",
     "preview": "vite preview",

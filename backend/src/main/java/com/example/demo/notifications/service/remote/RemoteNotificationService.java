@@ -4,6 +4,7 @@ import com.example.demo.notifications.client.InternalServiceCredential;
 import com.example.demo.notifications.dto.NotificationDto;
 import com.example.demo.notifications.dto.NotificationPageResponse;
 import com.example.demo.notifications.service.NotificationService;
+import com.example.demo.notifications.service.NotificationCreationAcknowledgement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -127,10 +128,7 @@ public class RemoteNotificationService implements NotificationService {
                     .body(new CreateNotificationRequest(userId, type, title, content, threadId, targetId, targetType, eventId))
                     .retrieve()
                     .body(NotificationDto.class);
-            if (response == null) {
-                throw new IllegalStateException("empty notification response");
-            }
-            return response;
+            return NotificationCreationAcknowledgement.requireCreated(response, type, title, content, threadId, targetId, targetType);
         } catch (RestClientResponseException e) {
             throw mapDownstreamFailure(e);
         } catch (Exception e) {

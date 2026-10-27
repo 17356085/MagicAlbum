@@ -4,18 +4,16 @@ import com.example.demo.user.connected.dto.ConnectedAccountDto;
 import com.example.demo.user.connected.entity.UserConnectedAccount;
 import com.example.demo.user.connected.repo.UserConnectedAccountRepository;
 import com.example.demo.user.connected.service.ConnectedAccountsService;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.stereotype.Service;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
-@Service
-@ConditionalOnBean(UserConnectedAccountRepository.class)
 public class PersistentConnectedAccountsService implements ConnectedAccountsService {
     private static final String[] DEFAULT_PROVIDERS = new String[] {"github", "google", "wechat"};
 
@@ -38,9 +36,13 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
     }
 
     @Override
+    @Transactional
     public void bindExternalAccount(Long userId, String provider, String externalId, String displayName) {
         if (externalId == null || externalId.isBlank()) {
             throw new IllegalArgumentException("第三方账号标识不能为空");
+        }
+        if (provider == null || provider.isBlank()) {
+            throw new IllegalArgumentException("第三方平台不能为空");
         }
         String normalized = normalizeProvider(provider);
         UserConnectedAccount entity = repository.findByUserIdAndProvider(userId, normalized)
@@ -64,6 +66,7 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
     }
 
     @Override
+    @Transactional
     public void disconnect(Long userId, String provider) {
         repository.deleteByUserIdAndProvider(userId, normalizeProvider(provider));
     }
@@ -91,7 +94,7 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
     }
 
     private String normalizeProvider(String provider) {
-        return provider == null ? "" : provider.trim().toLowerCase();
+        return provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
     }
 
     private String trimToNull(String value) {

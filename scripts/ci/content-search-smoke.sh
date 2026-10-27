@@ -332,7 +332,7 @@ refresh_container_port() {
   case "$role" in
     mysql)
       MYSQL_PORT="$port"
-      export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8"
+      export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
       ;;
     rabbit)
       RABBIT_PORT="$port"
@@ -883,7 +883,7 @@ capture_container_metadata mysql "$MYSQL_NAME" "$MYSQL_PORT" 512
 capture_container_metadata rabbit "$RABBIT_NAME" "$RABBIT_PORT" 384
 capture_container_metadata es "$ES_NAME" "$ES_PORT" 1024
 
-export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8"
+export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
 export CONTENT_SEARCH_TEST_DATABASE="$SEARCH_DATABASE"
 export CONTENT_SEARCH_TEST_DB_USERNAME=root
 export CONTENT_SEARCH_TEST_DB_PASSWORD="$MYSQL_ROOT_PASSWORD"

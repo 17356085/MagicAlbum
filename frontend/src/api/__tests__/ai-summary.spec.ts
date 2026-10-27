@@ -15,6 +15,7 @@ vi.mock('../client', () => ({
   },
   handleCurrentTokenUnauthorized: vi.fn(),
   captureAuthGeneration: vi.fn(() => 0),
+  assertAutomaticRequestOwnsCurrentSession: vi.fn(),
 }))
 
 const completeSummary = {

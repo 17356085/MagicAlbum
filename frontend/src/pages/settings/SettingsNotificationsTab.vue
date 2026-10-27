@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { listNotifications, markNotificationRead } from '@/api/notifications'
-import { getMyNotificationSettings, updateMyNotificationSettings } from '@/api/settings'
+import { listNotifications, markNotificationRead, NotificationReadAcknowledgementError } from '@/api/notifications'
+import { getMyNotificationSettings, NotificationSettingsResponseError, updateMyNotificationSettings } from '@/api/notificationSettings'
 import { formatAbsoluteTime, formatRelativeTime } from '@/composables/time'
 import type { NotificationItem, NotificationSettings, PageResult } from '@/types'
-import { getStoredAccessToken } from '@/utils/authStorage'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { subscribeNotificationChanges } from '@/composables/notificationSignals'
 
 interface NotificationQuery {
@@ -13,11 +13,6 @@ interface NotificationQuery {
   unread: boolean
   page: number
   size: number
-}
-
-interface NotificationSettingsResponse {
-  inApp?: Partial<NotificationSettings['inApp']>
-  email?: Partial<NotificationSettings['email']>
 }
 
 const notifQuery = ref<NotificationQuery>({ type: '', unread: false, page: 1, size: 20 })
@@ -35,14 +30,43 @@ const savedPreferenceSnapshot = ref('')
 const router = useRouter()
 let notificationRequestSeq = 0
 let settingsRequestSeq = 0
-let notificationActionSeq = 0
+let notificationActionEpoch = 0
+let notificationActionSerial = 0
+const pendingReads = new Map<string, number>()
+interface NotificationReadContext {
+  token: string
+  queryKey: string
+  refreshPending: boolean
+}
+
+let notificationReadContext: NotificationReadContext | undefined
 let disposed = false
 const stopLiveUpdates = subscribeNotificationChanges(signal => {
+  if (disposed) return
   if (signal === 'session') {
-    notificationRequestSeq += 1; settingsRequestSeq += 1; notificationActionSeq += 1
+    notificationRequestSeq += 1; settingsRequestSeq += 1; notificationActionEpoch += 1
+    notificationReadContext = undefined
+    pendingReads.clear()
     notifList.value = { items: [], page: 1, size: 20, total: 0 }
+    notifLoading.value = false
+    notifError.value = ''
+    notifActionError.value = ''
+    settingsLoading.value = false
+    settingsLoaded.value = false
+    settingsError.value = ''
+    settingsSaving.value = false
+    settingsMessage.value = ''
+    settingsMessageError.value = false
+    savedPreferenceSnapshot.value = ''
+    notifSettings.value = defaultNotificationSettings()
+    return
   }
-  if (!disposed) void loadNotifications()
+  const token = getStoredAccessToken()
+  if (!hasRealToken(token) || document.visibilityState === 'hidden') return
+  requestNotificationRefresh()
+  if (signal === 'resync' && !settingsLoaded.value && !settingsLoading.value && !settingsSaving.value) {
+    void loadNotificationSettings()
+  }
 })
 const emit = defineEmits<{
   (event: 'dirty-change', dirty: boolean): void
@@ -62,22 +86,6 @@ function defaultNotificationSettings(): NotificationSettings {
   }
 }
 
-function normalizeNotificationSettings(value: NotificationSettingsResponse | null | undefined): NotificationSettings {
-  return {
-    inApp: {
-      reply: value?.inApp?.reply ?? true,
-      mention: value?.inApp?.mention ?? true,
-      like: value?.inApp?.like ?? true,
-      follow: value?.inApp?.follow ?? true,
-      system: true,
-    },
-    email: {
-      enabled: false,
-      frequency: value?.email?.frequency || 'instant',
-    },
-  }
-}
-
 const notifSettings = ref<NotificationSettings>(defaultNotificationSettings())
 
 function preferenceSnapshot(settings: NotificationSettings): string {
@@ -91,29 +99,76 @@ const canSaveSettings = computed(() => (
   settingsLoaded.value && !settingsLoading.value && !settingsError.value && !settingsSaving.value
 ))
 
+function notificationQueryKey(query: NotificationQuery): string {
+  return JSON.stringify([query.type, query.unread, query.page, query.size])
+}
+
+function requestNotificationRefresh(): void {
+  if (disposed) return
+  const token = getStoredAccessToken()
+  if (!hasRealToken(token) || document.visibilityState === 'hidden') return
+  const queryKey = notificationQueryKey(notifQuery.value)
+  const currentContext = notificationReadContext
+  if (currentContext && currentContext.token === token && currentContext.queryKey === queryKey) {
+    currentContext.refreshPending = true
+    return
+  }
+  void loadNotifications()
+}
+
 watch(settingsDirty, (dirty) => {
   emit('dirty-change', dirty)
 }, { immediate: true })
 
+watch(
+  () => [notifQuery.value.type, notifQuery.value.unread],
+  () => {
+    if (!disposed) void loadNotifications()
+  },
+)
+
 async function loadNotifications(): Promise<void> {
+  if (disposed) return
   const token = getStoredAccessToken()
+  const query = { ...notifQuery.value }
+  const querySnapshot = notificationQueryKey(query)
+  const readContext: NotificationReadContext = { token, queryKey: querySnapshot, refreshPending: false }
+  notificationReadContext = readContext
   const requestSeq = ++notificationRequestSeq
   notifLoading.value = true
   notifError.value = ''
   notifActionError.value = ''
+  const isCurrent = () => token === getStoredAccessToken()
+    && !disposed
+    && requestSeq === notificationRequestSeq
+    && querySnapshot === notificationQueryKey(notifQuery.value)
+    && notificationReadContext === readContext
   try {
     const data = await listNotifications({
-      type: notifQuery.value.type || undefined,
-      unread: notifQuery.value.unread,
-      page: notifQuery.value.page,
-      size: notifQuery.value.size,
+      type: query.type || undefined,
+      unread: query.unread,
+      page: query.page,
+      size: query.size,
     })
-    if (token !== getStoredAccessToken() || disposed || requestSeq !== notificationRequestSeq) return
+    if (!isCurrent() || readContext.refreshPending) return
     notifList.value = data
   } catch (_) {
-    if (token === getStoredAccessToken() && !disposed && requestSeq === notificationRequestSeq) notifError.value = '加载通知失败，请重试。'
+    if (isCurrent() && !readContext.refreshPending) notifError.value = '加载通知失败，请重试。'
   } finally {
-    if (token === getStoredAccessToken() && !disposed && requestSeq === notificationRequestSeq) notifLoading.value = false
+    if (isCurrent()) {
+      notifLoading.value = false
+      notificationReadContext = undefined
+      if (
+        readContext.refreshPending
+        && !disposed
+        && token === getStoredAccessToken()
+        && hasRealToken(token)
+        && document.visibilityState !== 'hidden'
+        && querySnapshot === notificationQueryKey(notifQuery.value)
+      ) {
+        void loadNotifications()
+      }
+    }
   }
 }
 
@@ -127,9 +182,8 @@ async function loadNotificationSettings(): Promise<void> {
   try {
     const data = await getMyNotificationSettings()
     if (token !== getStoredAccessToken() || disposed || requestSeq !== settingsRequestSeq) return
-    const normalized = normalizeNotificationSettings(data)
-    notifSettings.value = normalized
-    savedPreferenceSnapshot.value = preferenceSnapshot(normalized)
+    notifSettings.value = { inApp: { ...data.inApp }, email: { ...data.email } }
+    savedPreferenceSnapshot.value = preferenceSnapshot(data)
     settingsLoaded.value = true
   } catch (_) {
     if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) settingsError.value = '通知偏好加载失败，暂时无法编辑或保存。'
@@ -162,34 +216,56 @@ async function saveNotificationSettings(): Promise<void> {
   try {
     const data = await updateMyNotificationSettings(payload)
     if (token !== getStoredAccessToken() || disposed || requestSeq !== settingsRequestSeq) return
-    const normalized = normalizeNotificationSettings(data)
-    notifSettings.value = normalized
-    savedPreferenceSnapshot.value = preferenceSnapshot(normalized)
+    savedPreferenceSnapshot.value = preferenceSnapshot(data)
+    const currentInApp = notifSettings.value.inApp
+    const mergedInApp = { ...data.inApp }
+    notificationPreferences.forEach(({ key }) => {
+      if (currentInApp[key] !== payload.inApp[key]) mergedInApp[key] = currentInApp[key]
+    })
+    notifSettings.value = { ...data, inApp: mergedInApp }
     settingsMessage.value = '保存成功'
   } catch (_) {
     if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) {
       settingsMessageError.value = true
-      settingsMessage.value = '保存失败，请稍后重试。'
+      settingsMessage.value = _ instanceof NotificationSettingsResponseError
+        ? '保存结果暂未确认，请重试。'
+        : '保存失败，请稍后重试。'
     }
   } finally {
     if (token === getStoredAccessToken() && !disposed && requestSeq === settingsRequestSeq) settingsSaving.value = false
   }
 }
 
-async function setNotificationRead(id: NotificationItem['id']): Promise<void> {
+async function setNotificationRead(id: NotificationItem['id'], reportError = true): Promise<void> {
+  const key = String(id)
+  if (pendingReads.has(key)) return
   const token = getStoredAccessToken()
-  const actionSeq = ++notificationActionSeq
+  const actionEpoch = notificationActionEpoch
+  const actionSerial = ++notificationActionSerial
+  if (disposed) return
+  pendingReads.set(key, actionSerial)
+  const isCurrent = () => token === getStoredAccessToken() && !disposed
+    && actionEpoch === notificationActionEpoch && pendingReads.get(key) === actionSerial
   notifActionError.value = ''
   try {
     await markNotificationRead(id)
-    if (token !== getStoredAccessToken() || disposed || actionSeq !== notificationActionSeq) return
+    if (!isCurrent()) return
+    notifList.value = {
+      ...notifList.value,
+      items: notifList.value.items.map(item => item.id === id ? { ...item, read: true } : item),
+    }
+    // The new request also invalidates list snapshots started before this write committed.
     await loadNotifications()
   } catch (_) {
-    if (token === getStoredAccessToken() && !disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
+    if (reportError && isCurrent()) notifActionError.value = _ instanceof NotificationReadAcknowledgementError
+      ? '已读结果暂未确认，请重试'
+      : '标记已读失败，请稍后重试。'
+  } finally {
+    if (pendingReads.get(key) === actionSerial) pendingReads.delete(key)
   }
 }
 
-function notificationTypeLabel(type: NotificationItem['type']): string {
+function notificationTypeLabel(type: NotificationItem['type'] | null): string {
   if (type === 'reply') return '回复通知'
   if (type === 'mention') return '提及通知'
   if (type === 'like') return '点赞通知'
@@ -239,17 +315,8 @@ async function openNotification(item: NotificationItem): Promise<void> {
     return
   }
   const token = getStoredAccessToken()
-  const actionSeq = ++notificationActionSeq
-  if (!item.read) {
-    try {
-      await markNotificationRead(item.id)
-      if (token !== getStoredAccessToken() || disposed || actionSeq !== notificationActionSeq) return
-      item.read = true
-    } catch (_) {
-      if (token === getStoredAccessToken() && !disposed && actionSeq === notificationActionSeq) notifActionError.value = '标记已读失败，请稍后重试。'
-    }
-  }
-  if (token !== getStoredAccessToken() || disposed || actionSeq !== notificationActionSeq) return
+  if (!item.read) void setNotificationRead(item.id, false)
+  if (token !== getStoredAccessToken() || disposed) return
   await router.push(link)
 }
 
@@ -261,8 +328,10 @@ onUnmounted(() => {
   stopLiveUpdates()
   disposed = true
   notificationRequestSeq += 1
+  notificationReadContext = undefined
   settingsRequestSeq += 1
-  notificationActionSeq += 1
+  notificationActionEpoch += 1
+  pendingReads.clear()
 })
 </script>
 

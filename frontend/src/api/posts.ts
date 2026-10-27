@@ -1,5 +1,7 @@
 import api from './client'
+import { decodePostLikeResponse } from './interactionState'
 import { decodePageResponse } from './pagination'
+import { decodePostCreationResponse, rethrowPostCreationFailure } from './postCreationResponse'
 import type { CreatePostPayload, Id, PageResult, Post, PostLikeState, UpdatePostPayload } from '@/types'
 
 interface ListPostsQuery {
@@ -18,8 +20,9 @@ export async function listPosts(
 }
 
 export async function createPost(threadId: Id, payload: CreatePostPayload): Promise<Post> {
-  const { data } = await api.post(`/threads/${threadId}/posts`, payload)
-  return data
+  const context = { threadId, replyToPostId: payload.replyToPostId }
+  const { data } = await api.post<unknown>(`/threads/${threadId}/posts`, payload).catch(rethrowPostCreationFailure)
+  return decodePostCreationResponse(data, context)
 }
 
 export async function updatePost(id: Id, payload: UpdatePostPayload): Promise<Post> {
@@ -33,15 +36,15 @@ export async function deletePost(id: Id): Promise<void> {
 
 export async function getPostLikeState(id: Id): Promise<PostLikeState> {
   const { data } = await api.get(`/posts/${id}/like`)
-  return data
+  return decodePostLikeResponse(data, id, `/posts/${id}/like`)
 }
 
 export async function likePost(id: Id): Promise<PostLikeState> {
   const { data } = await api.post(`/posts/${id}/like`)
-  return data
+  return decodePostLikeResponse(data, id, `/posts/${id}/like`)
 }
 
 export async function unlikePost(id: Id): Promise<PostLikeState> {
   const { data } = await api.delete(`/posts/${id}/like`)
-  return data
+  return decodePostLikeResponse(data, id, `/posts/${id}/like`)
 }

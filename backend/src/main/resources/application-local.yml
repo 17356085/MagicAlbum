@@ -12,7 +12,7 @@ spring:
       repositories:
         enabled: false
   datasource:
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:MagicAlbum}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:MagicAlbum}?useSSL=false&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${DB_USER:}
     password: ${DB_PASSWORD:}

@@ -83,7 +83,7 @@ class NotificationOutboxDispatcherTest {
         when(userSettingsService.shouldDeliver(101L, "reply")).thenReturn(true);
         when(notificationService.create(
                 101L, "reply", "Title", "Content", 7L, 8L, "post", UUID.fromString(delivery.eventId())))
-                .thenReturn(new NotificationDto(900L, "reply", "Title", "Content", false, Instant.now()));
+                .thenReturn(new NotificationDto(900L, "reply", "Title", "Content", false, Instant.now(), 7L, 8L, "post"));
 
         dispatcher.dispatch();
 
@@ -140,7 +140,7 @@ class NotificationOutboxDispatcherTest {
                 anyLong(), anyString(), anyString(), anyString(), any(), any(), anyString(), any(UUID.class)))
                 .thenAnswer(invocation -> {
                     observedRequestIds.add(MDC.get("requestId"));
-                    return new NotificationDto(900L, "reply", "Title", "Content", false, Instant.now());
+                    return new NotificationDto(900L, "reply", "Title", "Content", false, Instant.now(), 7L, 8L, "post");
                 });
 
         dispatcher.dispatch();

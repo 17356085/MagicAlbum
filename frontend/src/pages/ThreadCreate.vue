@@ -3,10 +3,12 @@ import { isAxiosError } from 'axios'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { WatchStopHandle } from 'vue'
 import { listSections } from '@/api/sections'
-import { createThread } from '@/api/threads'
+import { createThread } from '@/api/threadWrites'
+import { isThreadWriteUnconfirmedError } from '@/api/threadWriteResponse'
 import { uploadImage } from '@/api/uploads'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import type { Id, Section } from '@/types'
@@ -17,7 +19,9 @@ const submitting = ref(false)
 const error = ref('')
 const success = ref('')
 const createdThreadId = ref<Id | null>(null)
+const creationUnconfirmed = ref(false)
 const sections = ref<Section[]>([])
+const sectionsError = ref('')
 const authStore = useAuthStore()
 const { isLoggedIn, token } = storeToRefs(authStore)
 
@@ -72,6 +76,8 @@ const draftKey = computed(() => {
   return userIdentity.value ? `${DRAFT_KEY}:${userIdentity.value}` : ''
 })
 const draftMessage = ref('')
+const identityRefreshPending = ref(false)
+const identityRefreshError = ref('')
 // 通用草稿：面向整个 form 对象，防抖自动保存
 const { draftHasData, saveDraft, flushAutoSave, restoreDraft, clearDraft, refreshDraft, startAutoSave, stopAutoSave } = useDraft(draftKey, {
   sourceRef: form,
@@ -90,6 +96,8 @@ const { draftHasData, saveDraft, flushAutoSave, restoreDraft, clearDraft, refres
 let stopAuthWatch: WatchStopHandle | null = null
 let draftMessageTimer: ReturnType<typeof setTimeout> | null = null
 let mounted = false
+let sectionsRequestSeq = 0
+let identityRefreshSequence = 0
 let submissionSequence = 0
 let activeSubmissionId: number | null = null
 let editorOperationSequence = 0
@@ -128,6 +136,39 @@ function clearDraftMessageTimer(): void {
   }
 }
 
+function resetIdentityRefreshState(): void {
+  identityRefreshSequence += 1
+  identityRefreshPending.value = false
+  identityRefreshError.value = ''
+}
+
+function isCurrentIdentityRefresh(requestToken: string, requestId: number): boolean {
+  return mounted && identityRefreshSequence === requestId &&
+    isLoggedIn.value && token.value === requestToken
+}
+
+async function retryAccountInfo(): Promise<void> {
+  if (!mounted || !isLoggedIn.value || userIdentity.value || identityRefreshPending.value) return
+  const requestToken = token.value
+  if (!requestToken) return
+  const requestId = ++identityRefreshSequence
+  identityRefreshPending.value = true
+  identityRefreshError.value = ''
+  try {
+    const refreshed = await authStore.refreshCurrentUser()
+    if (!isCurrentIdentityRefresh(requestToken, requestId)) return
+    if (!refreshed || !userIdentity.value) {
+      identityRefreshError.value = '账号信息加载失败，请重试'
+    }
+  } catch (_) {
+    if (isCurrentIdentityRefresh(requestToken, requestId)) {
+      identityRefreshError.value = '账号信息加载失败，请重试'
+    }
+  } finally {
+    if (isCurrentIdentityRefresh(requestToken, requestId)) identityRefreshPending.value = false
+  }
+}
+
 function isCurrentSubmission(submissionId: number, context: AuthContextSnapshot): boolean {
   const current = getAuthContextSnapshot()
   return mounted && activeSubmissionId === submissionId &&
@@ -162,10 +203,15 @@ function restoreActiveDraft(): void {
   }
 }
 
-function switchDraftContext(): void {
+function hasNonEmptyForm(): boolean {
+  return Object.values(form.value).some((value) => String(value || '').trim() !== '')
+}
+
+function switchDraftContext({ preserveForm = false }: { preserveForm?: boolean } = {}): void {
   // Stop the old watcher before clearing the form; otherwise the reset itself
   // would be scheduled as the previous account's draft.
   stopAutoSave({ flush: true })
+  resetIdentityRefreshState()
   activeSubmissionId = null
   submissionSequence += 1
   editorOperationSequence += 1
@@ -175,13 +221,15 @@ function switchDraftContext(): void {
   isUploading.value = false
   uploadProgress.value = 0
   beautifying.value = false
-  form.value = emptyForm()
+  if (!preserveForm) form.value = emptyForm()
   error.value = ''
   success.value = ''
+  creationUnconfirmed.value = false
   createdThreadId.value = null
   clearDraftMessageTimer()
   draftMessage.value = ''
   restoreActiveDraft()
+  if (preserveForm && hasNonEmptyForm()) saveDraft()
   startAutoSave()
 }
 
@@ -196,13 +244,22 @@ async function uploadThreadImage(file: File): Promise<string> {
     if (mounted && (submitting.value || beautifying.value)) error.value = '请等待当前编辑操作完成'
     return ''
   }
+  const uploadToken = token.value
+  if (!hasRealToken(uploadToken)) {
+    error.value = '请先登录后上传图片'
+    return ''
+  }
+  if (uploadToken !== getStoredAccessToken()) {
+    error.value = '登录状态已变化，请刷新后重试'
+    return ''
+  }
   const context = getAuthContextSnapshot()
   const uploadId = ++editorOperationSequence
   activeUploadId = uploadId
   try {
     isUploading.value = true
     uploadProgress.value = 0
-    const { url, path } = await uploadImage(file, token.value, (p) => {
+    const { url, path } = await uploadImage(file, uploadToken, (p) => {
       if (isCurrentUpload(uploadId, context)) uploadProgress.value = p
     })
     if (!isCurrentUpload(uploadId, context)) return ''
@@ -220,14 +277,19 @@ async function uploadThreadImage(file: File): Promise<string> {
 }
 
 async function loadSections(): Promise<void> {
+  if (!mounted) return
+  const requestSeq = ++sectionsRequestSeq
   loading.value = true
+  sectionsError.value = ''
   try {
     const data = await listSections({ size: 100 })
+    if (!mounted || requestSeq !== sectionsRequestSeq) return
     sections.value = data.items
   } catch (_) {
-    // 保持空列表即可
+    if (!mounted || requestSeq !== sectionsRequestSeq) return
+    sectionsError.value = '分区加载失败，请重试'
   } finally {
-    loading.value = false
+    if (mounted && requestSeq === sectionsRequestSeq) loading.value = false
   }
 }
 
@@ -239,7 +301,12 @@ async function submit(): Promise<void> {
   }
   error.value = ''
   success.value = ''
+  creationUnconfirmed.value = false
   createdThreadId.value = null
+  if (isLoggedIn.value && !userIdentity.value) {
+    error.value = '账号信息确认后才能发布，请先重试账号信息'
+    return
+  }
   if (!form.value.sectionId || !form.value.title || !form.value.content) {
     error.value = '请完整填写分区、标题与内容'
     return
@@ -287,7 +354,10 @@ async function submit(): Promise<void> {
     startAutoSave()
   } catch (e: unknown) {
     if (!isCurrentSubmission(submissionId, submissionContext)) return
-    error.value = errorMessage(e, '发布失败，请稍后重试')
+    creationUnconfirmed.value = isThreadWriteUnconfirmedError(e)
+    error.value = creationUnconfirmed.value
+      ? '发布结果暂未确认，当前内容已保留。请先核对我的帖子，避免重复发布。'
+      : errorMessage(e, '发布失败，请稍后重试')
   } finally {
     if (activeSubmissionId === submissionId) {
       activeSubmissionId = null
@@ -311,6 +381,10 @@ function parseTags(raw: string): string[] {
 function onSaveDraft(): void {
   if (editorBusy.value) {
     showDraftMessage('请等待当前编辑操作完成')
+    return
+  }
+  if (isLoggedIn.value && !userIdentity.value) {
+    showDraftMessage('账号信息尚未确认，当前输入不会保存为草稿，请稍后重试')
     return
   }
   showDraftMessage(saveDraft() ? '草稿已保存到本机浏览器' : '草稿保存失败，请稍后重试')
@@ -367,17 +441,23 @@ onMounted(() => {
     () => getAuthContextSnapshot(),
     (next, previous) => {
       const identityChanged = next.draftKey !== previous.draftKey || next.loggedIn !== previous.loggedIn
-      const unknownIdentityTokenChanged = !next.identity && !previous.identity && next.token !== previous.token
-      if (identityChanged || unknownIdentityTokenChanged) switchDraftContext()
+      const tokenChanged = next.token !== previous.token
+      const preservingIdentityHydration = next.token === previous.token &&
+        previous.loggedIn && !previous.identity && !!next.identity
+      if (identityChanged || tokenChanged) switchDraftContext({ preserveForm: preservingIdentityHydration })
     },
   )
 })
 
 onUnmounted(() => {
   mounted = false
+  sectionsRequestSeq += 1
   activeSubmissionId = null
   submissionSequence += 1
   editorOperationSequence += 1
+  identityRefreshSequence += 1
+  identityRefreshPending.value = false
+  identityRefreshError.value = ''
   activeUploadId = null
   activeBeautifyId = null
   isUploading.value = false
@@ -410,15 +490,31 @@ onUnmounted(() => {
       <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 lg:hidden">
         <button type="button" class="ui-button min-h-11 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="onSaveDraft">保存草稿</button>
         <button type="button" class="ui-button-primary min-h-12 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="submit">
-          {{ submitting ? '发布中...' : '发布' }}
+          {{ submitting ? '发布中...' : creationUnconfirmed ? '再次发布' : '发布' }}
         </button>
       </div>
-      <span v-if="error" class="ui-error col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="alert" aria-live="assertive">{{ error }}</span>
+      <span v-if="error" class="ui-error col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="alert" aria-live="assertive">
+        {{ error }}
+        <router-link v-if="creationUnconfirmed" data-testid="unconfirmed-create-link" to="/my/threads" target="_blank" rel="noopener noreferrer" class="ml-1 text-[var(--ui-accent)] underline">在新标签页核对我的帖子</router-link>
+      </span>
       <span v-else-if="success" class="col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300 lg:hidden" role="status" aria-live="polite">{{ success }}</span>
       <span v-else-if="draftMessage" class="ui-muted col-span-2 min-w-0 whitespace-normal break-words px-2 py-1 text-xs lg:hidden" role="status" aria-live="polite">{{ draftMessage }}</span>
     </header>
 
     <div class="ui-panel p-4 lg:p-6">
+      <div
+        v-if="isLoggedIn && !userIdentity"
+        data-testid="thread-create-identity-warning"
+        class="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+        role="status"
+        aria-live="polite"
+      >
+        <span>账号信息正在加载，草稿暂时无法保存，请保持页面打开。</span>
+        <button type="button" class="ui-button min-h-9 px-3 py-1 text-sm" :disabled="identityRefreshPending" @click="retryAccountInfo">
+          {{ identityRefreshPending ? '正在获取账号信息...' : '重试账号信息' }}
+        </button>
+        <span v-if="identityRefreshError" class="basis-full text-sm" role="alert" aria-live="assertive">{{ identityRefreshError }}</span>
+      </div>
 
       <div class="space-y-4">
         <div>
@@ -428,6 +524,11 @@ onUnmounted(() => {
             <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
           <p v-if="loading" class="ui-muted mt-1 text-xs" role="status" aria-live="polite">正在加载分区...</p>
+          <div v-else-if="sectionsError" class="ui-error mt-2 flex flex-wrap items-center gap-2 text-sm" role="alert" aria-live="assertive">
+            <span>{{ sectionsError }}</span>
+            <button type="button" class="ui-button min-h-9 px-3 py-1 text-sm" @click="loadSections">重试</button>
+          </div>
+          <p v-else-if="sections.length === 0" class="ui-muted mt-2 text-sm" role="status">暂无可用分区</p>
         </div>
 
         <div>
@@ -478,7 +579,7 @@ onUnmounted(() => {
           <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="editorBusy" @click="onSaveDraft">保存到本机</button>
           <button type="button" class="ui-button min-h-11 px-3 py-2 text-sm" :disabled="editorBusy" @click="beautifyContent">{{ beautifying ? '美化中...' : '美化内容' }}</button>
           <button type="button" :disabled="editorBusy" class="ui-button-primary min-h-12 px-3 py-2 text-sm hidden lg:inline-flex" @click="submit">
-            {{ submitting ? '发布中...' : '发布' }}
+            {{ submitting ? '发布中...' : creationUnconfirmed ? '再次发布' : '发布' }}
           </button>
           <div v-if="!isLoggedIn" class="flex flex-wrap items-center gap-2 text-sm ui-muted">
             <span>请先登录后再发帖</span>
@@ -498,7 +599,10 @@ onUnmounted(() => {
           >
             查看帖子
           </router-link>
-          <span v-if="error" class="ui-error hidden py-2 text-sm lg:inline" role="alert" aria-live="assertive">{{ error }}</span>
+          <span v-if="error" class="ui-error hidden py-2 text-sm lg:inline" role="alert" aria-live="assertive">
+            {{ error }}
+            <router-link v-if="creationUnconfirmed" data-testid="unconfirmed-create-link" to="/my/threads" target="_blank" rel="noopener noreferrer" class="ml-1 text-[var(--ui-accent)] underline">在新标签页核对我的帖子</router-link>
+          </span>
           <span v-if="draftMessage" class="ui-muted hidden text-xs lg:inline" role="status" aria-live="polite">{{ draftMessage }}</span>
           <button v-if="draftHasData" type="button" class="ui-button min-h-11 px-3 py-2 text-sm" @click="onClearDraft">清除草稿</button>
         </div>

@@ -25,7 +25,8 @@ vi.mock('@/api/followingFeed', () => ({
 vi.mock('@/api/users', () => ({
   getCurrentUser: mocks.getCurrentUser,
 }))
-vi.mock('@/composables/useRecentVisits', () => ({
+vi.mock('@/composables/useRecentVisits', async () => ({
+  ...(await vi.importActual<typeof import('@/composables/useRecentVisits')>('@/composables/useRecentVisits')),
   getRecentVisits: mocks.getRecentVisits,
 }))
 vi.mock('@/composables/time', () => ({
@@ -58,6 +59,7 @@ describe('sidebar data panels', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    setActivePinia(createPinia())
     mocks.listPopularTags.mockResolvedValue([{ id: 1, name: 'Vue', threadCount: 3 }])
     mocks.listTags.mockResolvedValue({ items: [], page: 1, size: 18, total: 0 })
     mocks.listFollowingFeed.mockResolvedValue({ items: [{ id: 9, title: '动态', authorUsername: 'reviewer' }], page: 1, size: 4, total: 1 })
@@ -186,5 +188,26 @@ describe('sidebar data panels', () => {
     expect(wrapper.text()).not.toContain('账号 B 浏览')
 
     wrapper.unmount()
+  })
+
+  it('refreshes recent visits when the current token gains its confirmed owner identity', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-seven', user: null })
+    mocks.getRecentVisits.mockImplementation(() => auth.user?.id === 7
+      ? [{ path: '/threads/7', title: '确认身份后的历史', ts: Date.now() }]
+      : [])
+    const router = await createRouterForPanel()
+    const wrapper = mount(RecentVisitsPanel, { global: { plugins: [router], stubs: { RouterLink: RouterLinkStub } } })
+    try {
+      expect(wrapper.text()).not.toContain('确认身份后的历史')
+      auth.hydrateCurrentUser({ id: 7, username: 'seven' }, 'token-seven')
+      await flushPromises()
+      expect(wrapper.text()).toContain('确认身份后的历史')
+      const calls = mocks.getRecentVisits.mock.calls.length
+      wrapper.unmount()
+      auth.updateCurrentUser({ nickname: 'Seven' })
+      await flushPromises()
+      expect(mocks.getRecentVisits).toHaveBeenCalledTimes(calls)
+    } finally { if (wrapper.exists()) wrapper.unmount() }
   })
 })

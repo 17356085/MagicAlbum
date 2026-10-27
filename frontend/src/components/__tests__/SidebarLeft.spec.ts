@@ -21,7 +21,10 @@ vi.mock('@/api/followingFeed', () => ({ listFollowingFeed: mocks.listFollowingFe
 vi.mock('@/api/users', () => ({ getCurrentUser: mocks.getCurrentUser }))
 vi.mock('@/utils/image', () => ({ normalizeImageUrl: (url: string | undefined) => url || '' }))
 vi.mock('@/composables/time', () => ({ formatRelativeTime: () => '' }))
-vi.mock('@/composables/useRecentVisits', () => ({ getRecentVisits: () => [] }))
+vi.mock('@/composables/useRecentVisits', async () => ({
+  ...(await vi.importActual<typeof import('@/composables/useRecentVisits')>('@/composables/useRecentVisits')),
+  getRecentVisits: () => [],
+}))
 
 const RouterLinkStub = {
   props: ['to'],

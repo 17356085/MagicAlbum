@@ -2,7 +2,7 @@
 import { computed, ref, type PropType } from 'vue'
 import { formatRelativeTime } from '@/composables/time'
 import { normalizeImageUrl } from '@/utils/image'
-import { createMarkdownRenderer, renderMarkdown } from '@/utils/markdown'
+import CommentBody from '@/components/comments/CommentBody.vue'
 import CommentsComposer from '@/components/comments/CommentsComposer.vue'
 import ReportDialog from '@/components/ReportDialog.vue'
 import type { Id } from '@/types'
@@ -17,6 +17,7 @@ const props = defineProps({
   hasPagination: { type: Boolean, required: true },
   highlightedPostId: { type: [String, Number] as PropType<Id | null>, default: null },
   isLoggedIn: { type: Boolean, required: true },
+  isSubmitting: { type: Boolean, default: false },
   isUploading: { type: Boolean, default: false },
   loading: { type: Boolean, required: true },
   modelValue: { type: String, required: true },
@@ -56,8 +57,6 @@ const emit = defineEmits<{
   'upload-image': [event: Event]
 }>()
 
-const markdownRenderer = createMarkdownRenderer({ katex: true, normalizeImages: true })
-const renderCommentMarkdownHtml = (text: string | undefined) => renderMarkdown(markdownRenderer, text)
 const composerWidthClass = computed(() => 'w-full max-w-3xl')
 const isHighlighted = (id: Id | null | undefined) => String(props.highlightedPostId || '') === String(id || '')
 const reportDialogOpen = ref(false)
@@ -169,17 +168,18 @@ function updateReportDialogVisibility(open: boolean): void {
                 <span class="ui-muted">{{ group.root.floorLabel }} · {{ formatRelativeTime(group.root.createdAt) }}</span>
               </div>
             </div>
-            <div class="prose prose-base mt-3 max-w-3xl leading-6 dark:prose-invert" v-html="renderCommentMarkdownHtml(group.root.content)" />
+            <CommentBody :content="group.root.content" />
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
               <button
                 type="button"
                 class="ui-button min-h-11 px-3 py-2 text-xs"
                 :class="{ 'text-rose-600 dark:text-rose-300': group.root.liked }"
+                :disabled="Boolean(group.root._optimistic)"
                 @click="emit('toggle-like', group.root)"
               >
                 {{ group.root.liked ? '♥ 已赞' : '♡ 点赞' }} {{ Number(group.root.likeCount || 0) }}
               </button>
-              <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs" @click="emit('reply', group.root.id)">回复</button>
+              <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs" :disabled="isSubmitting || isUploading || Boolean(group.root._optimistic)" @click="emit('reply', group.root.id)">回复</button>
               <button
                 v-if="!group.root._optimistic"
                 type="button"
@@ -195,7 +195,8 @@ function updateReportDialogVisibility(open: boolean): void {
             <div v-if="replyToPostId === group.root.id" class="mt-2">
               <CommentsComposer
                 :is-logged-in="isLoggedIn"
-                 :is-uploading="isUploading"
+                :is-submitting="isSubmitting"
+                :is-uploading="isUploading"
                 :model-value="modelValue"
                 :preview-mode="previewMode"
                 :reply-to-post-id="replyToPostId"
@@ -236,17 +237,18 @@ function updateReportDialogVisibility(open: boolean): void {
               <div v-if="comment.replyToPostId" class="ui-muted mt-2 text-xs">
                 回复 <a :href="`#post-${comment.replyToPostId}`" class="text-[var(--ui-accent)] hover:underline">@{{ comment.parentAuthorNickname || comment.parentAuthorUsername }}</a>
               </div>
-              <div class="prose prose-base mt-3 max-w-3xl leading-6 dark:prose-invert" v-html="renderCommentMarkdownHtml(comment.content)" />
+              <CommentBody :content="comment.content" />
               <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
                 <button
                   type="button"
                   class="ui-button min-h-11 px-3 py-2 text-xs"
                   :class="{ 'text-rose-600 dark:text-rose-300': comment.liked }"
+                  :disabled="Boolean(comment._optimistic)"
                   @click="emit('toggle-like', comment)"
                 >
                   {{ comment.liked ? '♥ 已赞' : '♡ 点赞' }} {{ Number(comment.likeCount || 0) }}
                 </button>
-                <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs" @click="emit('reply', comment.id, group.root.id)">回复</button>
+                <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs" :disabled="isSubmitting || isUploading || Boolean(comment._optimistic)" @click="emit('reply', comment.id, group.root.id)">回复</button>
                 <button
                   v-if="!comment._optimistic"
                   type="button"
@@ -259,7 +261,8 @@ function updateReportDialogVisibility(open: boolean): void {
               <div v-if="replyToPostId === comment.id" class="mt-2">
                 <CommentsComposer
                   :is-logged-in="isLoggedIn"
-                   :is-uploading="isUploading"
+                  :is-submitting="isSubmitting"
+                  :is-uploading="isUploading"
                   :model-value="modelValue"
                   :preview-mode="previewMode"
                   :reply-to-post-id="replyToPostId"

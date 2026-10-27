@@ -71,6 +71,116 @@ describe('MarkdownTextareaEditor preview defaults', () => {
     expect(upload).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  it('keeps intermediate IME input raw without refocusing or renumbering lists', async () => {
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '1. 第一项\n2. ' } })
+    const textarea = wrapper.get('textarea')
+    textarea.element.value = '1. 第一项\n9. 拼'
+    textarea.element.setSelectionRange(textarea.element.value.length, textarea.element.value.length)
+    const focus = vi.spyOn(textarea.element, 'focus')
+    const setSelectionRange = vi.spyOn(textarea.element, 'setSelectionRange')
+
+    await textarea.trigger('compositionstart')
+    await textarea.trigger('input', { isComposing: true })
+
+    expect(wrapper.emitted('update:modelValue')?.slice(-1)[0]?.[0]).toBe('1. 第一项\n9. 拼')
+    expect(focus).not.toHaveBeenCalled()
+    expect(setSelectionRange).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('normalizes the final composed value and preserves its cursor', async () => {
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '1. 第一项\n2. ' } })
+    const textarea = wrapper.get('textarea')
+    const rawValue = '1. 第一项\n9. 拼'
+    textarea.element.value = rawValue
+    textarea.element.setSelectionRange(rawValue.length, rawValue.length)
+
+    await textarea.trigger('compositionstart')
+    await textarea.trigger('input', { isComposing: true })
+    await wrapper.setProps({ modelValue: rawValue })
+    textarea.element.setSelectionRange(rawValue.length, rawValue.length)
+    await textarea.trigger('compositionend')
+    await flushPromises()
+
+    expect(wrapper.emitted('update:modelValue')?.slice(-1)[0]?.[0]).toBe('1. 第一项\n2. 拼')
+    expect(textarea.element.selectionStart).toBe(rawValue.length)
+    expect(textarea.element.selectionEnd).toBe(rawValue.length)
+    wrapper.unmount()
+  })
+
+  it('does not steal focus when composition ends after the user leaves the editor', async () => {
+    const wrapper = mount(MarkdownTextareaEditor, {
+      props: { modelValue: '1. 第一项\n2. ' }, attachTo: document.body,
+    })
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    const textarea = wrapper.get('textarea')
+    textarea.element.focus()
+    textarea.element.value = '1. 第一项\n9. 中文'
+    await textarea.trigger('compositionstart')
+    await textarea.trigger('input', { isComposing: true })
+    outside.focus()
+    const focus = vi.spyOn(textarea.element, 'focus')
+    const selection = vi.spyOn(textarea.element, 'setSelectionRange')
+
+    await textarea.trigger('compositionend')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(outside)
+    expect(focus).not.toHaveBeenCalled()
+    expect(selection).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:modelValue')?.slice(-1)[0]?.[0]).toBe('1. 第一项\n2. 中文')
+    wrapper.unmount()
+    outside.remove()
+  })
+
+  it('does not refocus ordinary input when list normalization is unnecessary', async () => {
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '普通文本' } })
+    const textarea = wrapper.get('textarea')
+    textarea.element.value = '普通文本继续'
+    textarea.element.selectionStart = textarea.element.value.length
+    textarea.element.selectionEnd = textarea.element.value.length
+    const focus = vi.spyOn(textarea.element, 'focus')
+    const setSelectionRange = vi.spyOn(textarea.element, 'setSelectionRange')
+
+    await textarea.trigger('input')
+
+    expect(wrapper.emitted('update:modelValue')?.slice(-1)[0]?.[0]).toBe('普通文本继续')
+    expect(focus).not.toHaveBeenCalled()
+    expect(setSelectionRange).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps ordinary ordered-list Enter behavior', async () => {
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '1. 第一项' } })
+    const textarea = wrapper.get('textarea')
+    textarea.element.setSelectionRange(textarea.element.value.length, textarea.element.value.length)
+
+    await textarea.trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('update:modelValue')?.slice(-1)[0]?.[0]).toBe('1. 第一项\n2. ')
+    wrapper.unmount()
+  })
+
+  it.each([
+    { label: 'composition flag', isComposing: true, keyCode: 0 },
+    { label: 'IME key code', isComposing: false, keyCode: 229 },
+  ])('skips list shortcuts for a composing Enter ($label)', ({ isComposing, keyCode }) => {
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '1. 第一项' } })
+    const textarea = wrapper.get('textarea')
+    textarea.element.setSelectionRange(textarea.element.value.length, textarea.element.value.length)
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter' })
+    Object.defineProperty(event, 'isComposing', { configurable: true, value: isComposing })
+    Object.defineProperty(event, 'keyCode', { configurable: true, value: keyCode })
+
+    textarea.element.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('keeps the existing open preview default for other editor instances', () => {
     const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '# 内容' } })
 

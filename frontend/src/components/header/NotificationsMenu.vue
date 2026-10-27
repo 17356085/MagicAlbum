@@ -30,29 +30,32 @@
       </div>
       <div v-if="notificationLoading" class="px-3 py-4 text-xs text-gray-500">正在加载...</div>
       <div v-else-if="notificationError" class="px-3 py-4 text-xs text-red-600">{{ notificationError }}</div>
-      <ul v-else class="ui-scroll max-h-[calc(100vh-10rem)] overflow-auto lg:max-h-96">
-        <li
-          v-for="item in headerNotifications"
-          :key="item.id"
-          class="border-t border-gray-100 px-3 py-2 text-xs dark:border-gray-700"
-          :class="notificationCanNavigate(item) ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/60' : ''"
-          @click="openNotification(item)"
-        >
-          <div class="flex items-start gap-2">
-            <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="item.read ? 'bg-gray-300 dark:bg-gray-600' : 'bg-brandDay-600 dark:bg-brandNight-400'"></span>
-            <div class="min-w-0 flex-1">
-              <div class="truncate font-medium text-gray-900 dark:text-gray-50">{{ item.title || notificationTypeLabel(item.type) }}</div>
-              <div class="mt-1 max-h-8 overflow-hidden text-gray-600 dark:text-gray-300">{{ item.content }}</div>
-              <div class="mt-1 text-[11px] text-gray-400">{{ item.createdAt ? formatRelativeTime(item.createdAt) : '' }}</div>
+      <template v-else>
+        <div v-if="notificationActionError" class="px-3 py-2 text-xs text-red-600" role="alert">{{ notificationActionError }}</div>
+        <ul class="ui-scroll max-h-[calc(100vh-10rem)] overflow-auto lg:max-h-96">
+          <li
+            v-for="item in headerNotifications"
+            :key="item.id"
+            class="border-t border-gray-100 px-3 py-2 text-xs dark:border-gray-700"
+            :class="notificationCanNavigate(item) ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/60' : ''"
+            @click="openNotification(item)"
+          >
+            <div class="flex items-start gap-2">
+              <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="item.read ? 'bg-gray-300 dark:bg-gray-600' : 'bg-brandDay-600 dark:bg-brandNight-400'"></span>
+              <div class="min-w-0 flex-1">
+                <div class="truncate font-medium text-gray-900 dark:text-gray-50">{{ item.title || notificationTypeLabel(item.type) }}</div>
+                <div class="mt-1 max-h-8 overflow-hidden text-gray-600 dark:text-gray-300">{{ item.content }}</div>
+                <div class="mt-1 text-[11px] text-gray-400">{{ item.createdAt ? formatRelativeTime(item.createdAt) : '' }}</div>
+              </div>
+              <div class="flex shrink-0 flex-col gap-1">
+                <button v-if="notificationCanNavigate(item)" class="inline-flex min-h-11 items-center justify-center rounded border border-brandDay-200 px-3 py-1 text-[11px] text-brandDay-700 hover:bg-brandDay-50 dark:border-brandNight-700 dark:text-brandNight-200 dark:hover:bg-brandNight-900/30 lg:min-h-0" @click.stop="openNotification(item)">查看</button>
+                <button v-if="!item.read" class="inline-flex min-h-11 items-center justify-center rounded border border-gray-200 px-3 py-1 text-[11px] hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700 lg:min-h-0" @click.stop="setHeaderNotificationRead(item.id)">已读</button>
+              </div>
             </div>
-            <div class="flex shrink-0 flex-col gap-1">
-              <button v-if="notificationCanNavigate(item)" class="inline-flex min-h-11 items-center justify-center rounded border border-brandDay-200 px-3 py-1 text-[11px] text-brandDay-700 hover:bg-brandDay-50 dark:border-brandNight-700 dark:text-brandNight-200 dark:hover:bg-brandNight-900/30 lg:min-h-0" @click.stop="openNotification(item)">查看</button>
-              <button v-if="!item.read" class="inline-flex min-h-11 items-center justify-center rounded border border-gray-200 px-3 py-1 text-[11px] hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700 lg:min-h-0" @click.stop="setHeaderNotificationRead(item.id)">已读</button>
-            </div>
-          </div>
-        </li>
-        <li v-if="!headerNotifications.length" class="border-t border-gray-100 px-3 py-5 text-center text-xs text-gray-500 dark:border-gray-700">暂无通知</li>
-      </ul>
+          </li>
+          <li v-if="!headerNotifications.length" class="border-t border-gray-100 px-3 py-5 text-center text-xs text-gray-500 dark:border-gray-700">暂无通知</li>
+        </ul>
+      </template>
     </div>
   </div>
 </template>
@@ -60,7 +63,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { listNotifications, markNotificationRead } from '@/api/notifications'
+import { listNotifications, markNotificationRead, NotificationReadAcknowledgementError } from '@/api/notifications'
 import { formatRelativeTime } from '@/composables/time'
 import type { Id, NotificationItem } from '@/types'
 import { subscribeNotificationChanges } from '@/composables/notificationSignals'
@@ -81,23 +84,52 @@ const notificationContainer = ref<HTMLElement | null>(null)
 const notificationButton = ref<HTMLButtonElement | null>(null)
 const notificationLoading = ref(false)
 const notificationError = ref('')
+const notificationActionError = ref('')
 const headerNotifications = ref<NotificationItem[]>([])
 const unreadNotificationCount = ref(0)
 let requestSeq = 0
 let badgeRequestSeq = 0
-let readRequestSeq = 0
+let readEpoch = 0
+let readSerial = 0
+let readRevision = 0
+const pendingReads = new Map<string, number>()
+let disposed = false
+let refreshQueued = false
+let refreshQueueGeneration = 0
+
+function cancelQueuedRefresh(): void {
+  refreshQueueGeneration += 1
+  refreshQueued = false
+}
+
+function scheduleNotificationRefresh(): void {
+  if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden' || refreshQueued) return
+  refreshQueued = true
+  const currentQueueGeneration = refreshQueueGeneration
+  queueMicrotask(() => {
+    if (currentQueueGeneration !== refreshQueueGeneration) return
+    refreshQueued = false
+    if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden') return
+    if (notificationOpen.value) void loadHeaderNotifications()
+    else void refreshNotificationBadge().catch(() => {})
+  })
+}
+
 const stopLiveUpdates = subscribeNotificationChanges(signal => {
+  if (disposed) return
   if (signal === 'session') {
-    requestSeq += 1; badgeRequestSeq += 1; readRequestSeq += 1
+    cancelQueuedRefresh()
+    requestSeq += 1; badgeRequestSeq += 1; readEpoch += 1
+    pendingReads.clear()
     headerNotifications.value = []; unreadNotificationCount.value = 0
-    notificationLoading.value = false; notificationError.value = ''
+    notificationLoading.value = false; notificationError.value = ''; notificationActionError.value = ''
+    return
   }
   if (!props.isLoggedIn) return
-  if (notificationOpen.value) void loadHeaderNotifications()
-  else void refreshNotificationBadge().catch(() => {})
+  scheduleNotificationRefresh()
 })
 
-function notificationTypeLabel(type: string | undefined): string {
+function notificationTypeLabel(type: string | null | undefined): string {
   if (type === 'reply') return '回复通知'
   if (type === 'mention') return '提及通知'
   if (type === 'like') return '点赞通知'
@@ -109,9 +141,11 @@ function notificationTypeLabel(type: string | undefined): string {
 async function refreshNotificationBadge(): Promise<void> {
   const currentRequest = ++badgeRequestSeq
   const ownerToken = getStoredAccessToken()
-  if (!props.isLoggedIn) {
-    unreadNotificationCount.value = 0
-    headerNotifications.value = []
+  if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden') {
+    if (!props.isLoggedIn) {
+      headerNotifications.value = []
+      unreadNotificationCount.value = 0
+    }
     return
   }
   const data = await listNotifications({ unread: true, page: 1, size: 1 })
@@ -121,22 +155,32 @@ async function refreshNotificationBadge(): Promise<void> {
 
 async function loadHeaderNotifications(): Promise<void> {
   const currentRequest = ++requestSeq
+  const currentBadgeRequest = ++badgeRequestSeq
+  const currentReadRevision = readRevision
   const ownerToken = getStoredAccessToken()
-  if (!props.isLoggedIn) {
-    headerNotifications.value = []
-    unreadNotificationCount.value = 0
+  if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden') {
+    if (!props.isLoggedIn) {
+      headerNotifications.value = []
+      unreadNotificationCount.value = 0
+    }
     return
   }
   notificationLoading.value = true
   notificationError.value = ''
+  notificationActionError.value = ''
   try {
     const [recent, unread] = await Promise.all([
       listNotifications({ page: 1, size: 8 }),
       listNotifications({ unread: true, page: 1, size: 1 }),
     ])
     if (currentRequest !== requestSeq || getStoredAccessToken() !== ownerToken) return
+    // A list requested before a read commits can still contain its unread snapshot.
+    if (currentReadRevision !== readRevision) {
+      if (notificationOpen.value) scheduleNotificationRefresh()
+      return
+    }
     headerNotifications.value = recent.items
-    unreadNotificationCount.value = unread.total
+    if (currentBadgeRequest === badgeRequestSeq) unreadNotificationCount.value = unread.total
   } catch (_) {
     if (currentRequest === requestSeq && getStoredAccessToken() === ownerToken) notificationError.value = '通知加载失败'
   } finally {
@@ -161,22 +205,38 @@ function toggleNotifications(): void {
     closeNotifications()
     return
   }
+  cancelQueuedRefresh()
   notificationOpen.value = true
   void loadHeaderNotifications()
 }
 
-async function setHeaderNotificationRead(id: Id): Promise<void> {
-  const currentRequest = ++readRequestSeq
+async function setHeaderNotificationRead(id: Id, reportError = true): Promise<void> {
+  const key = String(id)
+  if (pendingReads.has(key)) return
+  const currentEpoch = readEpoch
+  const currentSerial = ++readSerial
   const ownerToken = getStoredAccessToken()
+  if (disposed || !props.isLoggedIn) return
+  if (reportError) notificationActionError.value = ''
+  pendingReads.set(key, currentSerial)
+  const isCurrent = () => !disposed && props.isLoggedIn && currentEpoch === readEpoch
+    && pendingReads.get(key) === currentSerial && getStoredAccessToken() === ownerToken
   try {
-    const updated = await markNotificationRead(id)
-    if (currentRequest !== readRequestSeq || getStoredAccessToken() !== ownerToken) return
+    await markNotificationRead(id)
+    if (!isCurrent()) return
+    readRevision += 1
     headerNotifications.value = headerNotifications.value.map(item => (
-      item.id === id ? { ...item, read: true, ...(updated as Partial<NotificationItem>) } : item
+      item.id === id ? { ...item, read: true } : item
     ))
-    await refreshNotificationBadge()
+    await refreshNotificationBadge().catch(() => {})
   } catch (_) {
-    if (currentRequest === readRequestSeq && getStoredAccessToken() === ownerToken) notificationError.value = '标记已读失败'
+    if (reportError && isCurrent()) {
+      notificationActionError.value = _ instanceof NotificationReadAcknowledgementError
+        ? '已读结果暂未确认，请重试'
+        : '标记已读失败'
+    }
+  } finally {
+    if (pendingReads.get(key) === currentSerial) pendingReads.delete(key)
   }
 }
 
@@ -189,18 +249,8 @@ async function openNotification(item: NotificationItem): Promise<void> {
   const link = notificationLink(item)
   if (!link) return
   closeNotifications()
-  if (!item.read) {
-    const currentRequest = ++readRequestSeq
-    try {
-      await markNotificationRead(item.id)
-      if (currentRequest !== readRequestSeq || getStoredAccessToken() !== ownerToken) return
-      headerNotifications.value = headerNotifications.value.map((next) => (
-        next.id === item.id ? { ...next, read: true } : next
-      ))
-      void refreshNotificationBadge().catch(() => {})
-    } catch (_) {}
-  }
-  if (getStoredAccessToken() === ownerToken) await router.push(link)
+  if (!item.read) void setHeaderNotificationRead(item.id, false)
+  if (!disposed && props.isLoggedIn && getStoredAccessToken() === ownerToken) await router.push(link)
 }
 
 function notificationLink(item: NotificationItem): string {
@@ -230,27 +280,33 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   stopLiveUpdates()
+  cancelQueuedRefresh()
   requestSeq += 1
   badgeRequestSeq += 1
-  readRequestSeq += 1
+  readEpoch += 1
+  pendingReads.clear()
   document.removeEventListener('click', onDocumentClick)
   document.removeEventListener('keydown', onGlobalKeydown)
 })
 
 watch(() => props.isLoggedIn, (loggedIn) => {
+  cancelQueuedRefresh()
   requestSeq += 1
   badgeRequestSeq += 1
-  readRequestSeq += 1
+  readEpoch += 1
+  pendingReads.clear()
   if (!loggedIn) {
     closeNotifications()
     headerNotifications.value = []
     unreadNotificationCount.value = 0
     notificationLoading.value = false
     notificationError.value = ''
+    notificationActionError.value = ''
     return
   }
-  void refreshNotificationBadge().catch(() => {})
+  scheduleNotificationRefresh()
 }, { immediate: true })
 
 watch(() => route.fullPath, () => closeNotifications())

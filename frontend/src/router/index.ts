@@ -1,7 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw, RouterScrollBehavior } from 'vue-router'
-import ThreadCreate from '@/pages/ThreadCreate.vue'
-import ThreadDetail from '@/pages/ThreadDetail.vue'
 import { getStoredAccessToken, hasRealToken, setPendingAuthRedirect } from '@/utils/authStorage'
 import { formatPageTitle } from '@/config/brand'
 
@@ -13,14 +11,14 @@ const routes: RouteRecordRaw[] = [
   { path: '/ranking', name: 'ranking', component: () => import('@/pages/Ranking.vue') },
   { path: '/me', name: 'me', component: () => import('@/pages/MobileMe.vue') },
   { path: '/users', name: 'users', component: () => import('@/pages/UsersSearch.vue') },
-  { path: '/users/:id/following', name: 'user-following', component: () => import('@/pages/UserRelations.vue') },
-  { path: '/users/:id/followers', name: 'user-followers', component: () => import('@/pages/UserRelations.vue') },
-  { path: '/users/:id', name: 'user-profile', component: () => import('@/pages/UserProfile.vue') },
+  { path: '/users/:id/following', name: 'user-following', component: () => import('@/pages/UserRelations.vue'), meta: { publicViewKey: 'user-relations' } },
+  { path: '/users/:id/followers', name: 'user-followers', component: () => import('@/pages/UserRelations.vue'), meta: { publicViewKey: 'user-relations' } },
+  { path: '/users/:id', name: 'user-profile', component: () => import('@/pages/UserProfile.vue'), meta: { publicViewKey: 'user-profile' } },
   { path: '/auth/oauth/callback', name: 'auth-oauth-callback', component: () => import('@/pages/AuthOAuthCallback.vue') },
   { path: '/auth/qr/confirm', name: 'auth-qr-confirm', component: () => import('@/pages/AuthQrConfirm.vue') },
-  { path: '/threads/new', name: 'thread-create', component: ThreadCreate, meta: { requiresAuth: true } },
+  { path: '/threads/new', name: 'thread-create', component: () => import('@/pages/ThreadCreate.vue'), meta: { requiresAuth: true } },
   { path: '/threads/:id/edit', name: 'thread-edit', component: () => import('@/pages/ThreadEdit.vue'), meta: { requiresAuth: true } },
-  { path: '/threads/:id', name: 'thread-detail', component: ThreadDetail },
+  { path: '/threads/:id', name: 'thread-detail', component: () => import('@/pages/ThreadDetail.vue') },
   { path: '/settings', name: 'settings', component: () => import('@/pages/Settings.vue'), meta: { requiresAuth: true } },
   { path: '/settings/account', redirect: { path: '/settings', query: { tab: 'account' } } },
   { path: '/my/threads', name: 'my-threads', component: () => import('@/pages/MyThreads.vue'), meta: { requiresAuth: true } },

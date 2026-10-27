@@ -1,5 +1,5 @@
 <template>
-  <form class="space-y-4 p-4 sm:p-5" @submit.prevent="onSubmitLogin">
+  <form class="space-y-4 p-4 sm:p-5" :aria-busy="submitting || sendingCode" @submit.prevent="onSubmitLogin">
     <div class="ui-muted flex items-center gap-2.5 text-[10px] uppercase tracking-[0.18em]">
       <span class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
       <span>{{ modeLabel }}</span>
@@ -13,9 +13,11 @@
         id="auth-login-phone"
         type="tel"
         placeholder="请输入手机号"
+        :aria-invalid="Boolean(errors.phone)"
+        :aria-describedby="errors.phone ? 'auth-login-phone-error' : undefined"
         class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
       />
-      <p v-if="errors.phone" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
+      <p v-if="errors.phone" id="auth-login-phone-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
     </div>
 
     <div v-else-if="mode === 'email-password' || mode === 'email-code'">
@@ -25,9 +27,11 @@
         id="auth-login-email"
         type="email"
         placeholder="name@example.com"
+        :aria-invalid="Boolean(errors.email)"
+        :aria-describedby="errors.email ? 'auth-login-email-error' : undefined"
         class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
       />
-      <p v-if="errors.email" class="mt-1 text-xs text-red-600">{{ errors.email }}</p>
+      <p v-if="errors.email" id="auth-login-email-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.email }}</p>
     </div>
 
     <div v-else>
@@ -37,9 +41,11 @@
         id="auth-login-phone-code"
         type="tel"
         placeholder="请输入手机号"
+        :aria-invalid="Boolean(errors.phone)"
+        :aria-describedby="errors.phone ? 'auth-login-phone-error' : undefined"
         class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
       />
-      <p v-if="errors.phone" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
+      <p v-if="errors.phone" id="auth-login-phone-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
     </div>
 
     <div v-if="mode === 'phone-password' || mode === 'email-password'">
@@ -50,9 +56,11 @@
         type="password"
         autocomplete="current-password"
         placeholder="请输入密码"
+        :aria-invalid="Boolean(errors.password)"
+        :aria-describedby="errors.password ? 'auth-login-password-error' : undefined"
         class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
       />
-      <p v-if="errors.password" class="mt-1 text-xs text-red-600">{{ errors.password }}</p>
+      <p v-if="errors.password" id="auth-login-password-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.password }}</p>
     </div>
 
     <div v-else class="space-y-2">
@@ -65,19 +73,21 @@
             type="text"
             inputmode="numeric"
             :placeholder="mode === 'email-code' ? '请输入邮箱验证码' : '请输入手机验证码'"
+            :aria-invalid="Boolean(errors.code)"
+            :aria-describedby="errors.code ? 'auth-login-code-error' : undefined"
             class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
           />
         </div>
         <button
           type="button"
           class="ui-button h-auto shrink-0 px-3 py-2 text-xs disabled:cursor-not-allowed"
-          :disabled="sendingCode || codeCountdown > 0"
+          :disabled="sendingCode || submitting || codeCountdown > 0"
           @click="mode === 'email-code' ? onSendEmailCode() : onSendPhoneCode()"
         >
           {{ codeButtonLabel }}
         </button>
       </div>
-      <p v-if="errors.code" class="text-xs text-red-600">{{ errors.code }}</p>
+      <p v-if="errors.code" id="auth-login-code-error" role="alert" class="text-xs text-red-600">{{ errors.code }}</p>
       <p v-if="codeSession.maskedAddress" class="text-[11px] text-gray-500 dark:text-gray-400">
         验证码已发送至 {{ codeSession.maskedAddress }}
       </p>
@@ -132,7 +142,7 @@
       <button
         type="submit"
         class="ui-button-primary disabled:opacity-60"
-        :disabled="submitting"
+        :disabled="submitting || sendingCode"
       >
         {{ submitting ? '登录中…' : '登录' }}
       </button>
@@ -148,6 +158,7 @@ import { isAuthVerifyEnabled, toVerifyPayload } from '@/services/authVerify'
 import { startEmailCodeLogin, startPhoneCodeLogin } from '@/api/auth'
 import type { ApiError } from '@/types'
 import type { AuthVerifyResult } from '@/services/authVerify'
+import { getStoredAccessToken } from '@/utils/authStorage'
 
 type LoginMode = 'phone-password' | 'email-password' | 'email-code' | 'phone-code'
 
@@ -164,6 +175,41 @@ interface LoginErrors {
   password: string
   code: string
 }
+
+type OperationKind = 'password' | 'send-code' | 'finish-code'
+
+type LoginSnapshot = Readonly<{
+  kind: OperationKind
+  mode: LoginMode
+  channel: 'email' | 'phone'
+  address: string
+  password?: string
+  code?: string
+  session?: string
+  sessionBoundary?: AuthBoundary
+}>
+
+type LoginOperation = Readonly<{
+  id: number
+  snapshot: LoginSnapshot
+}>
+
+type VerifyBlockHandle = {
+  ensureVerified: () => Promise<AuthVerifyResult | null>
+  reset: () => void
+  resetIfMatches: (expected: AuthVerifyResult) => boolean
+}
+
+type VerificationSubmission = Readonly<{
+  block: VerifyBlockHandle | null
+  result: AuthVerifyResult | null
+}>
+
+type AuthBoundary = Readonly<{
+  generation: number
+  memoryToken: string
+  persistedToken: string
+}>
 
 const props = withDefaults(defineProps<{
   initialPhone?: string
@@ -187,10 +233,7 @@ const showVerify = ref(false)
 const codeCountdown = ref(0)
 const countdownTimer = ref<number | null>(null)
 const verifyEnabled = isAuthVerifyEnabled()
-const verifyBlockRef = ref<{
-  ensureVerified: () => Promise<AuthVerifyResult | null>
-  reset: () => void
-} | null>(null)
+const verifyBlockRef = ref<VerifyBlockHandle | null>(null)
 const form = reactive<LoginForm>({
   phone: props.initialPhone,
   email: props.initialEmail,
@@ -198,11 +241,28 @@ const form = reactive<LoginForm>({
   code: '',
 })
 const errors = reactive<LoginErrors>({ phone: '', email: '', password: '', code: '' })
-const codeSession = reactive<{ session: string; maskedAddress: string }>({
+const codeSession = reactive<{
+  channel: 'email' | 'phone' | ''
+  address: string
+  session: string
+  maskedAddress: string
+  authBoundary: AuthBoundary | null
+}>({
+  channel: '',
+  address: '',
   session: '',
   maskedAddress: '',
+  authBoundary: null,
 })
 let authStoreInstance: ReturnType<typeof useAuthStore> | null = null
+let isMounted = true
+let operationSequence = 0
+let activeOperation: LoginOperation | null = null
+let ownIssuedAuth: {
+  operationId: number
+  store: ReturnType<typeof useAuthStore>
+  generation: number
+} | null = null
 
 function getAuthStore(): ReturnType<typeof useAuthStore> {
   return authStoreInstance || (authStoreInstance = useAuthStore())
@@ -222,17 +282,23 @@ const codeButtonLabel = computed(() => {
 })
 
 watch(() => props.initialPhone, (value) => {
-  if (value) {
-    form.phone = value
-    mode.value = 'phone-password'
-  }
-})
+  cancelForContextChange()
+  form.phone = value
+  if (value) mode.value = 'phone-password'
+}, { flush: 'sync' })
 
 watch(() => props.initialEmail, (value) => {
-  if (value) {
-    form.email = value
-  }
-})
+  cancelForContextChange()
+  form.email = value
+}, { flush: 'sync' })
+
+watch(() => form.phone, (value, previous) => {
+  if (value !== previous) cancelForContextChange()
+}, { flush: 'sync' })
+
+watch(() => form.email, (value, previous) => {
+  if (value !== previous) cancelForContextChange()
+}, { flush: 'sync' })
 
 function resetErrors(): void {
   errors.phone = ''
@@ -241,12 +307,13 @@ function resetErrors(): void {
   errors.code = ''
 }
 
-function validatePhone(): boolean {
-  if (!form.phone) {
+function validatePhone(phone = form.phone): boolean {
+  const normalizedPhone = phone.trim()
+  if (!normalizedPhone) {
     errors.phone = '请输入手机号'
     return false
   }
-  if (!/^1\d{10}$/.test(form.phone)) {
+  if (!/^1\d{10}$/.test(normalizedPhone)) {
     errors.phone = '手机号格式不正确'
     return false
   }
@@ -254,12 +321,13 @@ function validatePhone(): boolean {
   return true
 }
 
-function validateEmail(): boolean {
-  if (!form.email) {
+function validateEmail(email = form.email): boolean {
+  const normalizedEmail = email.trim().toLowerCase()
+  if (!normalizedEmail) {
     errors.email = '请输入邮箱'
     return false
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     errors.email = '邮箱格式不正确'
     return false
   }
@@ -280,12 +348,13 @@ function validatePassword(): boolean {
   return true
 }
 
-function validateCode(): boolean {
-  if (!form.code) {
+function validateCode(code = form.code): boolean {
+  const normalizedCode = code.trim()
+  if (!normalizedCode) {
     errors.code = mode.value === 'email-code' ? '请输入邮箱验证码' : '请输入手机验证码'
     return false
   }
-  if (!/^\d{4,8}$/.test(form.code)) {
+  if (!/^\d{4,8}$/.test(normalizedCode)) {
     errors.code = '验证码格式不正确'
     return false
   }
@@ -299,165 +368,371 @@ function getLoginErrorMessage(error: unknown): string {
     e?.response?.data?.message ||
     String((e?.response?.data as { detail?: string } | undefined)?.detail || '') ||
     e?.message ||
-    '登录失败，请稍后再试'
+    ''
   )
 }
 
-async function onSubmitLogin(): Promise<void> {
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+function normalizePhone(phone: string): string {
+  return phone.trim()
+}
+
+function normalizeAddress(channel: 'email' | 'phone', value: string): string {
+  return channel === 'email' ? normalizeEmail(value) : normalizePhone(value)
+}
+
+function addressForMode(nextMode: LoginMode): { channel: 'email' | 'phone'; address: string } {
+  const channel = nextMode === 'email-password' || nextMode === 'email-code' ? 'email' : 'phone'
+  return { channel, address: normalizeAddress(channel, channel === 'email' ? form.email : form.phone) }
+}
+
+function captureAuthBoundary(store: ReturnType<typeof useAuthStore>): AuthBoundary {
+  return {
+    generation: store.getAuthGeneration(),
+    memoryToken: store.token,
+    persistedToken: getStoredAccessToken(),
+  }
+}
+
+function isAuthBoundaryCurrent(store: ReturnType<typeof useAuthStore>, boundary: AuthBoundary): boolean {
+  if (!store.isAuthGenerationCurrent(boundary.generation)) return false
+  if (store.token !== boundary.memoryToken) return false
+  return getStoredAccessToken() === boundary.persistedToken
+}
+
+function authBoundariesEqual(left: AuthBoundary | null | undefined, right: AuthBoundary | null | undefined): boolean {
+  return !!left
+    && !!right
+    && left.generation === right.generation
+    && left.memoryToken === right.memoryToken
+    && left.persistedToken === right.persistedToken
+}
+
+function beginOperation(snapshot: LoginSnapshot): LoginOperation | null {
+  if (!isMounted || activeOperation !== null) return null
+  const operation = Object.freeze({
+    id: ++operationSequence,
+    snapshot,
+  })
+  activeOperation = operation
+  if (snapshot.kind === 'send-code') sendingCode.value = true
+  else submitting.value = true
+  return operation
+}
+
+function isOperationActive(operation: LoginOperation): boolean {
+  return isMounted && activeOperation?.id === operation.id
+}
+
+function isOperationContextCurrent(operation: LoginOperation): boolean {
+  if (!isOperationActive(operation)) return false
+  const current = addressForMode(operation.snapshot.mode)
+  return mode.value === operation.snapshot.mode
+    && current.channel === operation.snapshot.channel
+    && current.address === operation.snapshot.address
+}
+
+function releaseOperation(operation: LoginOperation): void {
+  if (activeOperation?.id !== operation.id) return
+  activeOperation = null
+  submitting.value = false
+  sendingCode.value = false
+}
+
+function invalidateOwnIssuedAuth(operation: LoginOperation | null): void {
+  const issued = ownIssuedAuth
+  if (!issued || (operation && issued.operationId !== operation.id)) return
+  if (issued.store.isAuthGenerationCurrent(issued.generation)) {
+    issued.store.invalidateAuthOperations()
+  }
+  ownIssuedAuth = null
+}
+
+function cancelActiveOperation(): void {
+  const operation = activeOperation
+  invalidateOwnIssuedAuth(operation)
+  if (!operation) return
+  activeOperation = null
+  submitting.value = false
+  sendingCode.value = false
+}
+
+function clearCodeSession(): void {
+  codeSession.channel = ''
+  codeSession.address = ''
+  codeSession.session = ''
+  codeSession.maskedAddress = ''
+  codeSession.authBoundary = null
+  form.code = ''
+  clearCountdown()
+}
+
+function cancelForContextChange(): void {
+  if (!isMounted) return
+  cancelActiveOperation()
+  clearCodeSession()
   resetErrors()
-  const okUser = mode.value === 'phone-password' || mode.value === 'phone-code' ? validatePhone() : validateEmail()
-  const okPwd = mode.value === 'email-code' || mode.value === 'phone-code' ? true : validatePassword()
-  const okCode = mode.value === 'email-code' || mode.value === 'phone-code' ? validateCode() : true
+  verifyBlockRef.value?.reset()
+  showVerify.value = false
+}
+
+async function ensureVerification(
+  operation: LoginOperation,
+  store: ReturnType<typeof useAuthStore>,
+  boundary: AuthBoundary,
+): Promise<VerificationSubmission | null> {
+  if (!verifyEnabled) return { block: null, result: null }
+  if (!showVerify.value) {
+    showVerify.value = true
+    await nextTick()
+    if (!isOperationContextCurrent(operation)) return null
+  }
+
+  const block = verifyBlockRef.value
+  if (!block) return { block: null, result: null }
+  let result: AuthVerifyResult | null = null
+  try {
+    result = await block.ensureVerified()
+  } catch {
+    result = null
+  }
+  if (!isOperationContextCurrent(operation) || !isAuthBoundaryCurrent(store, boundary)) return null
+  return { block, result }
+}
+
+function settleConsumedVerification(operation: LoginOperation, submission: VerificationSubmission | null): boolean {
+  if (!submission?.block || !submission.result || !isOperationContextCurrent(operation)) return false
+  if (verifyBlockRef.value !== submission.block) return false
+  let reset = false
+  try {
+    reset = submission.block.resetIfMatches(submission.result)
+  } catch {
+    reset = false
+  }
+  if (reset && isOperationContextCurrent(operation)) showVerify.value = false
+  return reset
+}
+
+async function onSubmitLogin(): Promise<void> {
+  if (!isMounted || activeOperation !== null) return
+  resetErrors()
+  const snapshotMode = mode.value
+  const { channel, address } = addressForMode(snapshotMode)
+  const okUser = channel === 'phone' ? validatePhone(address) : validateEmail(address)
+  const okPwd = snapshotMode === 'email-code' || snapshotMode === 'phone-code' ? true : validatePassword()
+  const okCode = snapshotMode === 'email-code' || snapshotMode === 'phone-code' ? validateCode(form.code) : true
   if (!okUser || !okPwd || !okCode) {
     emit('notify', '请完成必填项并修正错误')
     return
   }
 
-  let verifyResult: AuthVerifyResult | null | undefined
-  if (verifyEnabled) {
-    if (!showVerify.value) {
-      showVerify.value = true
-      await nextTick()
+  if (snapshotMode === 'email-code' || snapshotMode === 'phone-code') {
+    if (!codeSession.session || codeSession.channel !== channel || codeSession.address !== address) {
+      emit('notify', channel === 'email' ? '请先获取邮箱验证码' : '请先获取手机验证码')
+      return
     }
-
-    verifyResult = await verifyBlockRef.value?.ensureVerified()
-    if (!verifyResult) {
-      emit('notify', '请先完成人工验证')
+    const authStore = getAuthStore()
+    if (!codeSession.authBoundary || !isAuthBoundaryCurrent(authStore, codeSession.authBoundary)) {
+      clearCodeSession()
+      emit('notify', '验证码会话已失效，请重新获取验证码')
       return
     }
   }
 
-  submitting.value = true
+  const snapshot = Object.freeze({
+    kind: snapshotMode === 'email-code' || snapshotMode === 'phone-code' ? 'finish-code' : 'password',
+    mode: snapshotMode,
+    channel,
+    address,
+    ...(snapshotMode === 'email-code' || snapshotMode === 'phone-code'
+      ? { code: form.code.trim(), session: codeSession.session, sessionBoundary: codeSession.authBoundary || undefined }
+      : { password: form.password }),
+  }) as LoginSnapshot
+  const operation = beginOperation(snapshot)
+  if (!operation) return
+  await runOperation(operation)
+}
+
+async function runPasswordLogin(operation: LoginOperation): Promise<void> {
+  const snapshot = operation.snapshot
+  const authStore = getAuthStore()
+  const boundary = captureAuthBoundary(authStore)
+  let submission: VerificationSubmission | null = null
+  let requestIssued = false
+  let issuedGeneration: number | null = null
   try {
-    const authStore = getAuthStore()
-    if (mode.value === 'email-code') {
-      if (!codeSession.session) {
-        emit('notify', '请先获取邮箱验证码')
-        return
-      }
-      await authStore.loginWithEmailCode({
-        channel: 'email',
-        address: form.email,
-        code: form.code,
-        session: codeSession.session,
-      })
-    } else if (mode.value === 'phone-code') {
-      if (!codeSession.session) {
-        emit('notify', '请先获取手机验证码')
-        return
-      }
-      await authStore.loginWithPhoneCode({
-        channel: 'phone',
-        address: form.phone,
-        code: form.code,
-        session: codeSession.session,
-      })
-    } else {
-      const verifyPayload = toVerifyPayload(verifyResult)
-      if (mode.value === 'phone-password') {
-        await authStore.loginWithPhonePassword({ phone: form.phone, password: form.password, ...verifyPayload })
-      } else {
-        await authStore.loginWithEmailPassword({ email: form.email, password: form.password, ...verifyPayload })
-      }
+    submission = await ensureVerification(operation, authStore, boundary)
+    if (!isOperationContextCurrent(operation)) return
+    if (!submission) return
+    if (verifyEnabled && !submission.result) {
+      emit('notify', '请先完成人工验证')
+      return
     }
+    if (!isAuthBoundaryCurrent(authStore, boundary)) return
+
+    requestIssued = true
+    const request = snapshot.mode === 'phone-password'
+      ? authStore.loginWithPhonePassword({ phone: snapshot.address, password: snapshot.password || '', ...toVerifyPayload(submission?.result) })
+      : authStore.loginWithEmailPassword({ email: snapshot.address, password: snapshot.password || '', ...toVerifyPayload(submission?.result) })
+    issuedGeneration = authStore.getAuthGeneration()
+    ownIssuedAuth = { operationId: operation.id, store: authStore, generation: issuedGeneration }
+    await request
+    if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
+
+    if (!isOperationContextCurrent(operation)) return
+    settleConsumedVerification(operation, submission)
+    if (issuedGeneration === null || !authStore.isAuthGenerationCurrent(issuedGeneration)) return
+    if (!isOperationContextCurrent(operation)) return
     emit('notify', '登录成功')
+    if (!isOperationActive(operation)) return
     emit('success')
-    verifyBlockRef.value?.reset()
-    showVerify.value = false
   } catch (error: unknown) {
-    if (!isAuthOperationSuperseded(error)) emit('notify', getLoginErrorMessage(error))
+    if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
+    if (!isOperationContextCurrent(operation)) return
+    if (requestIssued) settleConsumedVerification(operation, submission)
+    if (issuedGeneration !== null && !authStore.isAuthGenerationCurrent(issuedGeneration)) return
+    if (!isAuthOperationSuperseded(error)) emit('notify', getLoginErrorMessage(error) || '登录失败，请稍后再试')
   } finally {
-    submitting.value = false
+    if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
+  }
+}
+
+async function runCodeFinish(operation: LoginOperation): Promise<void> {
+  const snapshot = operation.snapshot
+  const authStore = getAuthStore()
+  const boundary = snapshot.sessionBoundary
+  let issuedGeneration: number | null = null
+  try {
+    if (!boundary || !isOperationContextCurrent(operation) || !isAuthBoundaryCurrent(authStore, boundary)) {
+      if (isOperationContextCurrent(operation)) {
+        clearCodeSession()
+        emit('notify', '验证码会话已失效，请重新获取验证码')
+      }
+      return
+    }
+    const request = snapshot.channel === 'email'
+      ? authStore.loginWithEmailCode({ channel: 'email', address: snapshot.address, code: snapshot.code || '', session: snapshot.session || '' })
+      : authStore.loginWithPhoneCode({ channel: 'phone', address: snapshot.address, code: snapshot.code || '', session: snapshot.session || '' })
+    issuedGeneration = authStore.getAuthGeneration()
+    ownIssuedAuth = { operationId: operation.id, store: authStore, generation: issuedGeneration }
+    if (isOperationContextCurrent(operation)
+      && codeSession.channel === snapshot.channel
+      && codeSession.address === snapshot.address
+      && codeSession.session === snapshot.session
+      && authBoundariesEqual(codeSession.authBoundary, boundary)) {
+      codeSession.authBoundary = Object.freeze({ ...boundary, generation: issuedGeneration })
+    }
+    await request
+    if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
+    if (!isOperationContextCurrent(operation)) return
+    if (issuedGeneration === null || !authStore.isAuthGenerationCurrent(issuedGeneration)) return
+    emit('notify', '登录成功')
+    if (!isOperationActive(operation)) return
+    emit('success')
+  } catch (error: unknown) {
+    if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
+    if (!isOperationContextCurrent(operation)) return
+    if (issuedGeneration !== null && !authStore.isAuthGenerationCurrent(issuedGeneration)) {
+      clearCodeSession()
+      return
+    }
+    if (!isAuthOperationSuperseded(error)) emit('notify', getLoginErrorMessage(error) || '登录失败，请稍后再试')
+  } finally {
+    if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
+  }
+}
+
+async function runCodeStart(operation: LoginOperation): Promise<void> {
+  const snapshot = operation.snapshot
+  const authStore = getAuthStore()
+  const boundary = captureAuthBoundary(authStore)
+  let submission: VerificationSubmission | null = null
+  let requestIssued = false
+  try {
+    submission = await ensureVerification(operation, authStore, boundary)
+    if (!isOperationContextCurrent(operation)) return
+    if (!submission) return
+    if (verifyEnabled && !submission.result) {
+      emit('notify', '请先完成人工验证')
+      return
+    }
+    if (!isAuthBoundaryCurrent(authStore, boundary)) return
+
+    requestIssued = true
+    const verifyPayload = toVerifyPayload(submission?.result)
+    const response = snapshot.channel === 'email'
+      ? await startEmailCodeLogin({ channel: 'email', address: snapshot.address, ...verifyPayload })
+      : await startPhoneCodeLogin({ channel: 'phone', address: snapshot.address, ...verifyPayload })
+    if (!isOperationContextCurrent(operation)) return
+    settleConsumedVerification(operation, submission)
+    if (response.channel !== snapshot.channel) return
+    if (!isAuthBoundaryCurrent(authStore, boundary)) return
+    if (!isOperationContextCurrent(operation)) return
+    codeSession.channel = snapshot.channel
+    codeSession.address = snapshot.address
+    codeSession.session = response.session
+    codeSession.maskedAddress = response.maskedAddress
+    codeSession.authBoundary = boundary
+    form.code = ''
+    startCountdown(response.cooldownSeconds || 60)
+    emit('notify', snapshot.channel === 'email' ? '验证码已发送，请查收邮件' : '验证码已发送，请查收短信')
+  } catch (error: unknown) {
+    if (!isOperationActive(operation)) return
+    if (requestIssued) settleConsumedVerification(operation, submission)
+    if (!isAuthBoundaryCurrent(authStore, boundary)) return
+    emit('notify', getLoginErrorMessage(error) || '验证码发送失败')
+  } finally {
+    if (activeOperation?.id === operation.id) sendingCode.value = false
+  }
+}
+
+async function runOperation(operation: LoginOperation): Promise<void> {
+  try {
+    if (operation.snapshot.kind === 'send-code') await runCodeStart(operation)
+    else if (operation.snapshot.kind === 'finish-code') await runCodeFinish(operation)
+    else await runPasswordLogin(operation)
+  } finally {
+    releaseOperation(operation)
   }
 }
 
 async function onSendEmailCode(): Promise<void> {
+  if (!isMounted || activeOperation !== null || codeCountdown.value > 0) return
   resetErrors()
-  if (!validateEmail()) {
+  const address = normalizeEmail(form.email)
+  if (!validateEmail(address)) {
     emit('notify', '请先输入正确的邮箱')
     return
   }
-
-  let verifyResult: AuthVerifyResult | null | undefined
-  if (verifyEnabled) {
-    if (!showVerify.value) {
-      showVerify.value = true
-      await nextTick()
-    }
-    verifyResult = await verifyBlockRef.value?.ensureVerified()
-    if (!verifyResult) {
-      emit('notify', '请先完成人工验证')
-      return
-    }
-  }
-
-  sendingCode.value = true
-  try {
-    const verifyPayload = toVerifyPayload(verifyResult)
-    const response = await startEmailCodeLogin({
-      channel: 'email',
-      address: form.email,
-      ...verifyPayload,
-    })
-    codeSession.session = response.session
-    codeSession.maskedAddress = response.maskedAddress
-    form.code = ''
-    startCountdown(response.cooldownSeconds || 60)
-    emit('notify', '验证码已生成，开发环境请查看后端日志中的邮箱验证码')
-  } catch (error: unknown) {
-    emit('notify', getLoginErrorMessage(error) || '验证码发送失败')
-  } finally {
-    sendingCode.value = false
-  }
+  const operation = beginOperation(Object.freeze({ kind: 'send-code', mode: 'email-code', channel: 'email', address }))
+  if (!operation) return
+  await runOperation(operation)
 }
 
 async function onSendPhoneCode(): Promise<void> {
+  if (!isMounted || activeOperation !== null || codeCountdown.value > 0) return
   resetErrors()
-  if (!validatePhone()) {
+  const address = normalizePhone(form.phone)
+  if (!validatePhone(address)) {
     emit('notify', '请先输入正确的手机号')
     return
   }
-
-  let verifyResult: AuthVerifyResult | null | undefined
-  if (verifyEnabled) {
-    if (!showVerify.value) {
-      showVerify.value = true
-      await nextTick()
-    }
-    verifyResult = await verifyBlockRef.value?.ensureVerified()
-    if (!verifyResult) {
-      emit('notify', '请先完成人工验证')
-      return
-    }
-  }
-
-  sendingCode.value = true
-  try {
-    const verifyPayload = toVerifyPayload(verifyResult)
-    const response = await startPhoneCodeLogin({
-      channel: 'phone',
-      address: form.phone,
-      ...verifyPayload,
-    })
-    codeSession.session = response.session
-    codeSession.maskedAddress = response.maskedAddress
-    form.code = ''
-    startCountdown(response.cooldownSeconds || 60)
-    emit('notify', '验证码已发送，请查收短信')
-  } catch (error: unknown) {
-    emit('notify', getLoginErrorMessage(error) || '验证码发送失败')
-  } finally {
-    sendingCode.value = false
-  }
+  const operation = beginOperation(Object.freeze({ kind: 'send-code', mode: 'phone-code', channel: 'phone', address }))
+  if (!operation) return
+  await runOperation(operation)
 }
 
 function switchMode(nextMode: LoginMode): void {
+  if (!isMounted) return
+  cancelActiveOperation()
   mode.value = nextMode
   resetErrors()
-  codeSession.session = ''
-  codeSession.maskedAddress = ''
-  form.code = ''
-  clearCountdown()
+  clearCodeSession()
+  verifyBlockRef.value?.reset()
+  showVerify.value = false
 }
 
 function startCountdown(seconds: number): void {
@@ -481,7 +756,8 @@ function clearCountdown(): void {
 }
 
 onBeforeUnmount(() => {
+  isMounted = false
+  cancelActiveOperation()
   clearCountdown()
-  authStoreInstance?.invalidateAuthOperations()
 })
 </script>

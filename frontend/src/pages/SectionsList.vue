@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { listSections } from '@/api/sections'
-import { listThreads } from '@/api/threads'
-import { renderInlineMarkdown, createMarkdownRenderer } from '@/utils/markdown'
+import { listSectionPreviews } from '@/api/sectionPreviews'
+import type { SectionPreviewItem } from '@/api/sectionPreviews'
+import { renderInlineMarkdown, createBaseMarkdownRenderer } from '@/utils/markdownBase'
 import { normalizeImageUrl } from '@/utils/image'
-import type { Section, Thread } from '@/types'
+import type { Section } from '@/types'
 
 const loading = ref(false)
 const error = ref('')
 const sections = ref<Section[]>([])
-const previews = ref<Record<string, Thread[]>>({})
+const previews = ref<Record<string, SectionPreviewItem[]>>({})
 const totals = ref<Record<string, number>>({})
 const previewErrors = ref<Record<string, string>>({})
 const previewLoading = ref<Record<string, boolean>>({})
 const previewRequestSequence = new Map<string, number>()
-const titleRenderer = createMarkdownRenderer({ html: false, breaks: false, highlight: false })
+let loadRequestSequence = 0
+let disposed = false
+const titleRenderer = createBaseMarkdownRenderer({ html: false, breaks: false })
 const sectionEmojiMap: Record<string, string> = {
   reading: '📚',
   tech: '💻',
@@ -28,7 +31,7 @@ const sectionEmojiMap: Record<string, string> = {
 }
 
 function sectionKey(section: Section): string {
-  return String(section.id)
+  return String(section.id).replace(/^0+/, '') || '0'
 }
 
 function sectionLink(section: Section) {
@@ -55,15 +58,6 @@ function sectionEmoji(section: Section): string {
   return '✨'
 }
 
-function firstImageUrl(thread: Thread): string {
-  const text = String(thread.content || thread.contentMd || '')
-  const markdown = text.match(/!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/)
-  if (markdown?.[1]) return normalizeImageUrl(markdown[1])
-  const html = text.match(/<img[^>]+src=["']([^"']+)["']/i)
-  if (html?.[1]) return normalizeImageUrl(html[1])
-  return ''
-}
-
 function formatTime(raw: string | undefined): string {
   if (!raw) return ''
   const time = new Date(raw)
@@ -71,52 +65,108 @@ function formatTime(raw: string | undefined): string {
   return time.toLocaleDateString()
 }
 
-async function loadPreview(section: Section): Promise<void> {
+function previewImageUrl(item: SectionPreviewItem): string {
+  return normalizeImageUrl(item.coverUrl)
+}
+
+function isCurrentLoad(requestId: number): boolean {
+  return !disposed && requestId === loadRequestSequence
+}
+
+async function loadPreview(section: Section, loadRequestId: number): Promise<void> {
+  if (!isCurrentLoad(loadRequestId)) return
   const key = sectionKey(section)
+  if (previewLoading.value[key]) return
   const requestId = (previewRequestSequence.get(key) || 0) + 1
   previewRequestSequence.set(key, requestId)
   previewLoading.value[key] = true
   previewErrors.value[key] = ''
   try {
-    const data = await listThreads({ sectionId: section.id, page: 1, size: 4 })
-    if (previewRequestSequence.get(key) !== requestId) return
-    previews.value[key] = data.items
-    totals.value[key] = data.total
+    const data = await listSectionPreviews([section.id])
+    if (!isCurrentLoad(loadRequestId) || previewRequestSequence.get(key) !== requestId) return
+    const preview = data[0]
+    if (!preview) throw new Error('分区预览响应缺少目标分区')
+    previews.value[key] = preview.items
+    totals.value[key] = preview.total
   } catch (_) {
-    if (previewRequestSequence.get(key) !== requestId) return
+    if (!isCurrentLoad(loadRequestId) || previewRequestSequence.get(key) !== requestId) return
     delete previews.value[key]
     delete totals.value[key]
     previewErrors.value[key] = '该分区帖子加载失败，请点击重试'
   } finally {
-    if (previewRequestSequence.get(key) === requestId) {
+    if (isCurrentLoad(loadRequestId) && previewRequestSequence.get(key) === requestId) {
       previewLoading.value[key] = false
     }
   }
 }
 
 function retryPreview(section: Section): void {
-  void loadPreview(section)
+  if (previewLoading.value[sectionKey(section)]) return
+  void loadPreview(section, loadRequestSequence)
+}
+
+async function loadPreviews(sectionsToLoad: Section[], loadRequestId: number): Promise<void> {
+  if (!isCurrentLoad(loadRequestId) || sectionsToLoad.length === 0) return
+
+  const batchRequestIds = new Map<string, number>()
+  sectionsToLoad.forEach((section) => {
+    const key = sectionKey(section)
+    const requestId = (previewRequestSequence.get(key) || 0) + 1
+    previewRequestSequence.set(key, requestId)
+    batchRequestIds.set(key, requestId)
+    previewLoading.value[key] = true
+    previewErrors.value[key] = ''
+  })
+
+  try {
+    const data = await listSectionPreviews(sectionsToLoad.map((section) => section.id))
+    if (!isCurrentLoad(loadRequestId)) return
+    data.forEach((preview) => {
+      const key = String(preview.sectionId)
+      if (previewRequestSequence.get(key) !== batchRequestIds.get(key)) return
+      previews.value[key] = preview.items
+      totals.value[key] = preview.total
+      previewLoading.value[key] = false
+    })
+  } catch (_) {
+    if (!isCurrentLoad(loadRequestId)) return
+    batchRequestIds.forEach((requestId, key) => {
+      if (previewRequestSequence.get(key) !== requestId) return
+      delete previews.value[key]
+      delete totals.value[key]
+      previewErrors.value[key] = '该分区帖子加载失败，请点击重试'
+      previewLoading.value[key] = false
+    })
+  }
 }
 
 async function load(): Promise<void> {
+  const requestId = ++loadRequestSequence
   loading.value = true
   error.value = ''
   previews.value = {}
   totals.value = {}
   previewErrors.value = {}
   previewLoading.value = {}
+  previewRequestSequence.clear()
   try {
     const data = await listSections({})
+    if (!isCurrentLoad(requestId)) return
     sections.value = data.items
-    await Promise.all(data.items.map((section) => loadPreview(section)))
+    void loadPreviews(data.items, requestId)
   } catch (_) {
-    error.value = '加载分区失败'
+    if (isCurrentLoad(requestId)) error.value = '加载分区失败'
   } finally {
-    loading.value = false
+    if (isCurrentLoad(requestId)) loading.value = false
   }
 }
 
 onMounted(load)
+onUnmounted(() => {
+  disposed = true
+  loadRequestSequence += 1
+  previewRequestSequence.clear()
+})
 </script>
 
 <template>
@@ -129,7 +179,10 @@ onMounted(load)
     </header>
 
     <div v-if="loading" class="ui-panel ui-empty" role="status">正在加载...</div>
-    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
+    <div v-else-if="error" class="ui-error" role="alert">
+      <p>{{ error }}</p>
+      <button type="button" class="ui-button mt-3" @click="load">重试</button>
+    </div>
     <div v-else-if="sections.length === 0" class="ui-panel ui-empty" role="status">
       <h2>暂无分区</h2>
       <p>稍后再来看看新的讨论空间。</p>
@@ -156,8 +209,9 @@ onMounted(load)
               {{ section.description || '暂无分区简介' }}
             </p>
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--ui-muted)]">
-              <span v-if="previewErrors[sectionKey(section)]">帖子数暂不可用</span>
-              <span v-else>{{ totals[sectionKey(section)] || 0 }} 篇帖子</span>
+              <span v-if="previewLoading[sectionKey(section)]">帖子数加载中...</span>
+              <span v-else-if="previewErrors[sectionKey(section)]">帖子数暂不可用</span>
+              <span v-else-if="totals[sectionKey(section)] !== undefined">{{ totals[sectionKey(section)] }} 篇帖子</span>
               <router-link
                 :to="sectionLink(section)"
                 class="ui-button"
@@ -190,11 +244,11 @@ onMounted(load)
                   class="group flex min-w-0 items-center gap-3 px-2 py-3 hover:bg-[var(--ui-subtle)] sm:px-3 sm:py-2"
                 >
                   <div
-                    v-if="firstImageUrl(thread)"
+                    v-if="previewImageUrl(thread)"
                     class="relative h-11 w-14 shrink-0 overflow-hidden rounded border border-[var(--ui-border)] bg-[var(--ui-subtle)]"
                   >
-                    <img :src="firstImageUrl(thread)" alt="" class="absolute inset-0 h-full w-full object-cover opacity-40 blur-sm scale-110" />
-                    <img :src="firstImageUrl(thread)" alt="封面" loading="lazy" class="relative z-10 h-full w-full object-contain" />
+                    <img :src="previewImageUrl(thread)" alt="" class="absolute inset-0 h-full w-full object-cover opacity-40 blur-sm scale-110" />
+                    <img :src="previewImageUrl(thread)" alt="封面" loading="lazy" class="relative z-10 h-full w-full object-contain" />
                   </div>
                   <div class="min-w-0 flex-1">
                      <div class="block truncate text-sm font-medium leading-5 text-[var(--ui-ink)] group-hover:text-[var(--ui-accent)]" v-html="renderTitle(thread.title)" />

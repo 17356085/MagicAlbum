@@ -21,6 +21,7 @@ public class RegisterRequest {
 
     @NotBlank
     @Size(min = 8, message = "密码不少于 8 位")
+    @Size(max = 72, message = "密码过长，请减少字符数量")
     private String password;
 
     private String verifyToken;

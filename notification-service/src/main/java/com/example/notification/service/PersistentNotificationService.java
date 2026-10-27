@@ -59,8 +59,10 @@ public class PersistentNotificationService implements NotificationService {
     public NotificationDto markRead(Long userId, Long id) {
         return notificationRepository.findByIdAndUserId(id, userId)
                 .map(notification -> {
-                    notificationRepository.markRead(id, userId);
-                    if (!notification.isRead() && events != null) events.append(userId, id, "read");
+                    if (!notification.isRead()) {
+                        boolean changed = notificationRepository.markRead(id, userId);
+                        if (changed && events != null) events.append(userId, id, "read");
+                    }
                     notification.setRead(true);
                     return toDto(notification);
                 })

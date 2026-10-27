@@ -21,6 +21,7 @@ public interface TagRepository extends JpaRepository<Tag, Long> {
             JOIN thread_tags tt ON tt.tag_id = tg.id
             JOIN threads th ON th.id = tt.thread_id
             WHERE th.status = 'NORMAL'
+              AND tg.type = 'thread'
               AND (:sectionId IS NULL OR th.section_id = :sectionId)
             GROUP BY tg.id, tg.name, tg.type
             ORDER BY threadCount DESC, tg.name ASC

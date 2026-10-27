@@ -15,12 +15,23 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class UserService {
+    private static final int MAX_PASSWORD_UTF8_BYTES = 72;
+    private static final Set<String> PUBLIC_SEARCH_FIELDS = Set.of("username", "nickname");
+
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
     private final PasswordEncoder passwordEncoder;
@@ -43,6 +54,7 @@ public class UserService {
     }
 
     public UserDto register(RegisterRequest req) {
+        validatePasswordUtf8Length(req.getPassword());
         authVerifyService.verify(req.getVerifyToken(), req.getVerifyProvider(), req.getVerifyScene(), "register");
         // 唯一性校验
         if (userRepository.existsByUsername(req.getUsername())) {
@@ -81,10 +93,37 @@ public class UserService {
     public Page<UserSummaryDto> list(String q, int page, int size, String fields) {
         PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 20));
         String keyword = (q == null || q.isBlank()) ? null : q.trim();
-        boolean includeNickname = fields != null && fields.toLowerCase().contains("nickname");
-        Page<User> p = includeNickname ? userRepository.searchWithNickname(keyword, pr)
-                                       : userRepository.search(keyword, pr);
-        return p.map(this::toSummaryDto);
+        Set<String> selectedFields = resolvePublicSearchFields(fields);
+        Page<User> p = userRepository.searchPublic(keyword, selectedFields.contains("username"),
+                selectedFields.contains("nickname"), pr);
+        List<Long> userIds = p.getContent().stream()
+                .map(User::getId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (userIds.isEmpty()) {
+            return p.map(user -> toSummaryDto(user, null));
+        }
+        Map<Long, UserProfile> profilesByUserId = new HashMap<>();
+        for (UserProfile profile : userProfileRepository.findByUserIdIn(userIds)) {
+            if (profile != null && profile.getUserId() != null) {
+                profilesByUserId.put(profile.getUserId(), profile);
+            }
+        }
+        return p.map(user -> toSummaryDto(user, profilesByUserId.get(user.getId())));
+    }
+
+    private static Set<String> resolvePublicSearchFields(String fields) {
+        if (fields == null || fields.isBlank()) return PUBLIC_SEARCH_FIELDS;
+        Set<String> selected = new HashSet<>();
+        for (String field : fields.split(",", -1)) {
+            String normalized = field.trim().toLowerCase(Locale.ROOT);
+            if (!PUBLIC_SEARCH_FIELDS.contains(normalized)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "搜索字段仅支持 username、nickname");
+            }
+            selected.add(normalized);
+        }
+        return selected;
     }
 
     private UserDto toDto(User u) {
@@ -97,13 +136,12 @@ public class UserService {
         return dto;
     }
 
-    private UserSummaryDto toSummaryDto(User user) {
+    private UserSummaryDto toSummaryDto(User user, UserProfile profile) {
         UserSummaryDto dto = new UserSummaryDto();
         dto.setId(user.getId());
         dto.setUsername(user.getUsername());
         dto.setCreatedAt(user.getCreatedAt());
 
-        UserProfile profile = userProfileRepository.findById(user.getId()).orElse(null);
         if (profile != null) {
             dto.setNickname(profile.getNickname());
             dto.setAvatarUrl(profile.getAvatarUrl());
@@ -116,8 +154,10 @@ public class UserService {
         return toDto(u);
     }
 
+    @Transactional
     public UserDto updateBasicInfo(Long userId, BasicInfoUpdateRequest req) {
-        User u = userRepository.findById(userId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+        User u = userRepository.findByIdForAccountUpdate(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
         String nextUsername = (req.getUsername() == null) ? u.getUsername() : req.getUsername().trim();
         String nextEmail = (req.getEmail() == null) ? u.getEmail() : req.getEmail().trim();
         String nextPhone = (req.getPhone() == null) ? u.getPhone() : req.getPhone().trim();
@@ -150,17 +190,26 @@ public class UserService {
         return toDto(saved);
     }
 
+    @Transactional
     public void changePassword(Long userId, ChangePasswordRequest req) {
-        User u = userRepository.findById(userId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+        User u = userRepository.findByIdForAccountUpdate(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
         String current = (req.getCurrentPassword() == null) ? "" : req.getCurrentPassword();
         String next = (req.getNewPassword() == null) ? "" : req.getNewPassword();
         if (current.isBlank() || next.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "密码不能为空");
-        if (!passwordEncoder.matches(current, u.getPasswordHash())) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前密码不正确");
+        if (!passwordEncoder.matches(current, u.getPasswordHash())) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前密码不正确");
         if (next.length() < 8) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新密码长度至少8位");
         if (!next.matches("^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新密码需包含大小写字母和数字");
         }
+        validatePasswordUtf8Length(next);
         u.setPasswordHash(passwordEncoder.encode(next));
         userRepository.save(u);
+    }
+
+    private void validatePasswordUtf8Length(String password) {
+        if (password != null && password.getBytes(StandardCharsets.UTF_8).length > MAX_PASSWORD_UTF8_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "密码过长，请减少字符数量");
+        }
     }
 }

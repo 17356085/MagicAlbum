@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listUsers } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
@@ -21,20 +21,53 @@ const totalPages = computed(() => Math.max(1, Math.ceil((Number(total.value) || 
 let loadRequestSeq = 0
 let disposed = false
 
+type RouteTarget = {
+  q: string
+  page: number
+  key: string
+}
+
+type LoadRecord = {
+  requestSeq: number
+  target: RouteTarget
+  promise: Promise<void>
+}
+
+type NavigationAttempt = {
+  routeKey: string
+  fromPage: number
+  targetPage: number
+}
+
+let activeLoad: LoadRecord | null = null
+let pendingNavigation: NavigationAttempt | null = null
+
 function isCurrentLoad(requestSeq: number): boolean {
   return !disposed && requestSeq === loadRequestSeq
 }
 
-async function load(): Promise<void> {
-  const requestSeq = ++loadRequestSeq
+function readRouteTarget(): RouteTarget {
+  const rq = route.query.q == null ? '' : getSingleQueryValue(route.query.q)
+  const rawPage = route.query.page == null ? 1 : Number(getSingleQueryValue(route.query.page))
+  const normalizedPage = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1
+  return {
+    q: rq,
+    page: normalizedPage,
+    key: JSON.stringify([rq, normalizedPage]),
+  }
+}
+
+function sameLoadTarget(left: RouteTarget, right: RouteTarget): boolean {
+  return left.key === right.key
+}
+
+async function executeLoad(target: RouteTarget, requestSeq: number): Promise<void> {
   loading.value = true
   error.value = ''
+  q.value = target.q
+  page.value = target.page
   try {
-    const rq = route.query.q ? getSingleQueryValue(route.query.q) : ''
-    const rp = route.query.page ? Number(getSingleQueryValue(route.query.page)) : 1
-    page.value = isNaN(rp) ? 1 : rp
-    q.value = rq
-    const data = await listUsers({ q: rq, page: page.value, size: size.value })
+    const data = await listUsers({ q: target.q, page: target.page, size: size.value, fields: 'username,nickname' })
     if (!isCurrentLoad(requestSeq)) return
     items.value = data.items
     total.value = data.total
@@ -44,24 +77,73 @@ async function load(): Promise<void> {
     if (isCurrentLoad(requestSeq)) error.value = '加载用户失败'
   } finally {
     if (isCurrentLoad(requestSeq)) loading.value = false
+    if (activeLoad?.requestSeq === requestSeq) activeLoad = null
   }
 }
 
-const filteredItems = computed(() => {
-  const kw = String(q.value || '').trim().toLowerCase()
-  const src = items.value
-  if (!kw) return src
-  return src.filter(u => {
-    const nameOk = String(u.username || '').toLowerCase().includes(kw)
-    const nickOk = String(u.nickname || '').toLowerCase().includes(kw)
-    return nameOk || nickOk
-  })
-})
+function load(): Promise<void> {
+  if (disposed) return Promise.resolve()
+  const target = readRouteTarget()
+  if (loading.value && activeLoad && sameLoadTarget(activeLoad.target, target)) {
+    return activeLoad.promise
+  }
+
+  const requestSeq = ++loadRequestSeq
+  const record: LoadRecord = {
+    requestSeq,
+    target,
+    promise: Promise.resolve(),
+  }
+  activeLoad = record
+  record.promise = executeLoad(target, requestSeq)
+  return record.promise
+}
+
+const showPagination = computed(() => !loading.value && !error.value && (items.value.length > 0 || page.value > 1))
 
 function setPage(p: number) {
+  if (disposed || loading.value || !Number.isSafeInteger(p) || p <= 0) return
+
+  const routeTarget = readRouteTarget()
+  const currentPage = Number.isSafeInteger(page.value) && page.value > 0 ? page.value : routeTarget.page
   const next = Math.min(Math.max(1, p), totalPages.value)
-  page.value = next
-  router.push({ name: 'users', query: { ...route.query, page: next } })
+  if (!Number.isSafeInteger(next) || next === currentPage) return
+
+  if (
+    pendingNavigation
+    && pendingNavigation.routeKey === routeTarget.key
+    && pendingNavigation.fromPage === currentPage
+  ) return
+
+  const attempt: NavigationAttempt = {
+    routeKey: routeTarget.key,
+    fromPage: currentPage,
+    targetPage: next,
+  }
+  pendingNavigation = attempt
+
+  let pushResult: unknown
+  try {
+    pushResult = router.push({ name: 'users', query: { ...route.query, page: next } })
+  } catch (_) {
+    if (pendingNavigation === attempt) pendingNavigation = null
+    return
+  }
+
+  void Promise.resolve(pushResult).then(
+    (result) => {
+      if (pendingNavigation !== attempt) return
+      // A successful push is confirmed by the route watcher. A resolved
+      // navigation failure must release the pending target so it can be retried.
+      if (result !== undefined) {
+        pendingNavigation = null
+      }
+    },
+    () => {
+      if (pendingNavigation !== attempt) return
+      pendingNavigation = null
+    },
+  )
 }
 
 function prevPage() {
@@ -73,24 +155,35 @@ function nextPage() {
 }
 
 function goToInputPage(): void {
+  if (disposed || loading.value) return
   const raw = String(inputPage.value || '').trim()
   if (!raw || !/^\d+$/.test(raw)) {
     inputPage.value = String(page.value || 1)
     return
   }
-  setPage(Math.min(Math.max(1, Number(raw)), totalPages.value))
+  const parsed = Number(raw)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    inputPage.value = String(page.value || 1)
+    return
+  }
+  setPage(Math.min(Math.max(1, parsed), totalPages.value))
 }
 
-onMounted(load)
 onUnmounted(() => {
   disposed = true
   loadRequestSeq += 1
+  activeLoad = null
+  pendingNavigation = null
 })
-watch(() => route.query.page, load)
-watch(() => route.query.q, () => {
-  page.value = 1
-  load()
-})
+// A search navigation updates both query and page. Observe them together so
+// Vue batches that navigation into one request.
+watch([() => route.query.q, () => route.query.page], () => {
+  const target = readRouteTarget()
+  if (pendingNavigation && (target.key !== pendingNavigation.routeKey || target.page === pendingNavigation.targetPage)) {
+    pendingNavigation = null
+  }
+  void load()
+}, { immediate: true })
 watch(page, (val) => {
   inputPage.value = String(val || 1)
 }, { immediate: true })
@@ -103,7 +196,7 @@ watch(page, (val) => {
         <h1 class="ui-title">搜索用户</h1>
         <p class="ui-description">按昵称或用户名找到社区里的成员。</p>
       </div>
-      <span v-if="total" class="ui-tag">共 {{ total }} 位用户</span>
+      <span v-if="!loading && !error && total" class="ui-tag">共 {{ total }} 位用户</span>
     </header>
 
     <div v-if="q" class="ui-toolbar mb-4 rounded-lg border border-[var(--ui-border)]">
@@ -117,18 +210,21 @@ watch(page, (val) => {
     </div>
 
     <div v-else>
-      <div v-if="error" class="ui-error" role="alert">{{ error }}</div>
+      <div v-if="error" class="ui-error flex items-center justify-between gap-3" role="alert">
+        <span>{{ error }}</span>
+        <button type="button" class="ui-button" @click="load">重试</button>
+      </div>
       
-      <div v-else-if="filteredItems.length === 0" class="ui-panel ui-empty" role="status">
+      <div v-else-if="items.length === 0" class="ui-panel ui-empty" role="status">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-4 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
         </svg>
-        <h2>暂无匹配用户</h2>
-        <p>换个关键词试试。</p>
+        <h2>{{ page > 1 ? '当前页暂无用户' : '暂无匹配用户' }}</h2>
+        <p>{{ page > 1 ? '可返回上一页查看。' : '换个关键词试试。' }}</p>
       </div>
       
       <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <div v-for="u in filteredItems" :key="u.id" 
+        <div v-for="u in items" :key="u.id"
              class="ui-panel group relative flex flex-col items-center p-6">
           
           <router-link :to="'/users/' + u.id" class="absolute inset-0 z-10" :aria-label="`查看 ${u.nickname || u.username || '用户'} 的主页`"></router-link>
@@ -166,7 +262,7 @@ watch(page, (val) => {
       </div>
       
       <!-- Pagination -->
-      <div v-if="filteredItems.length > 0" class="mt-6 flex flex-col gap-3 border-t border-[var(--ui-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <div v-if="showPagination" class="mt-6 flex flex-col gap-3 border-t border-[var(--ui-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
         <div class="flex flex-wrap items-center gap-2">
         <button 

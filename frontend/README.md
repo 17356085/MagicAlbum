@@ -74,6 +74,12 @@ frontend-only check.
 
 ## Frontend validation
 
+`pnpm build` also checks the generated build manifest: the application shell,
+Discover and Sections list must keep mathematical typesetting and syntax
+highlighting outside their static dependencies, while the create/detail routes
+remain lazy. It prints JavaScript byte and gzip totals for these entry points;
+these totals describe build artifacts, not measured load times or Core Web Vitals.
+
 Run these commands from `frontend/`:
 
 ```sh

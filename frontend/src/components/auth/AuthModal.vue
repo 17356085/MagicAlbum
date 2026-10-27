@@ -160,7 +160,8 @@ function onRegistered(payload: { phone: string; email: string }): void {
 
 function onLoginSuccess(): void {
   emit('success')
-  onClose()
+  oauthRequestId += 1
+  emit('close')
 }
 
 function onClose(): void {

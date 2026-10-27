@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"mime"
 	"strings"
 	"sync"
 	"time"
@@ -332,7 +333,8 @@ func (h *Handler) execute(ctx context.Context, envelope wire.Envelope, claim cor
 	if int64(len(input.Bytes)) != claim.ByteSize || int64(len(input.Bytes)) > h.MaxInputBytes {
 		return h.permanentFailure(ctx, envelope.JobID, claim, "INPUT_MISMATCH", lease)
 	}
-	if strings.SplitN(input.ContentType, ";", 2)[0] != claim.ContentType {
+	contentType, _, parseErr := mime.ParseMediaType(input.ContentType)
+	if parseErr != nil || contentType != claim.ContentType {
 		return h.permanentFailure(ctx, envelope.JobID, claim, "INPUT_MISMATCH", lease)
 	}
 	digest := sha256.Sum256(input.Bytes)

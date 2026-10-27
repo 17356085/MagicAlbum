@@ -8,8 +8,8 @@ const authState = vi.hoisted(() => ({
   handleUnauthorized: vi.fn(),
 }))
 
-vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ handleUnauthorized: authState.handleUnauthorized, getAuthGeneration: () => authState.generation }),
+vi.mock('@/stores/authSession', () => ({
+  useAuthSessionStore: () => ({ handleUnauthorized: authState.handleUnauthorized, getAuthGeneration: () => authState.generation }),
 }))
 vi.mock('@/utils/authStorage', () => ({
   getStoredAccessToken: () => authState.currentToken,

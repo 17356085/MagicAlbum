@@ -70,6 +70,38 @@ describe('OAuth callback lifecycle', () => {
     expect(mocks.replace).not.toHaveBeenCalled()
   })
 
+  it('announces processing without showing a failure while the exchange is pending', async () => {
+    const request = deferred()
+    mocks.exchange.mockReturnValueOnce(request.promise)
+    const wrapper = mount(AuthOAuthCallback)
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toContain('正在登录')
+    expect(wrapper.text()).not.toContain('第三方登录未完成')
+    request.resolve({ accessToken: 'oauth-token', user: { id: 1, username: 'alice' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('登录成功')
+    expect(wrapper.text()).not.toContain('收口')
+    wrapper.unmount()
+  })
+
+  it('does not announce or navigate when an auth event replaces the just-committed session', async () => {
+    vi.useFakeTimers()
+    mocks.exchange.mockResolvedValueOnce({ accessToken: 'oauth-token', user: { id: 1 } })
+    const auth = useAuthStore()
+    const replaceSession = () => {
+      window.removeEventListener('auth-state-changed', replaceSession)
+      auth.applyAuthState({ accessToken: 'reentrant-token', user: { id: 2, username: 'bob' } })
+    }
+    window.addEventListener('auth-state-changed', replaceSession)
+    const wrapper = mount(AuthOAuthCallback)
+    await flushPromises()
+    vi.advanceTimersByTime(500)
+    expect(auth.token).toBe('reentrant-token')
+    expect(wrapper.text()).not.toContain('登录成功')
+    expect(mocks.replace).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('keeps the browser proof after a retryable exchange failure and supports manual retry', async () => {
     vi.useFakeTimers()
     mocks.exchange
@@ -86,6 +118,71 @@ describe('OAuth callback lifecycle', () => {
     expect(mocks.exchange).toHaveBeenCalledTimes(2)
     expect(useAuthStore().token).toBe('oauth-token')
     expect(sessionStorage.getItem('oauthBrowserProof')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('stops before exchanging when the persisted owner changes during URL cleanup', async () => {
+    const historySpy = vi.spyOn(window.history, 'replaceState')
+    historySpy.mockImplementation(() => {
+      localStorage.setItem('accessToken', 'storage-owner')
+    })
+
+    const wrapper = mount(AuthOAuthCallback)
+    await flushPromises()
+
+    expect(mocks.exchange).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="oauth-retry"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('登录状态已更新')
+    historySpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('stops a pending exchange when the persisted owner changes before its reply', async () => {
+    const request = deferred()
+    mocks.exchange.mockReturnValueOnce(request.promise)
+    const wrapper = mount(AuthOAuthCallback)
+    const auth = useAuthStore()
+    await flushPromises()
+    localStorage.setItem('accessToken', 'storage-owner')
+    request.resolve({ accessToken: 'old-oauth-token', user: { id: 1, username: 'old-user' } })
+    await flushPromises()
+
+    expect(auth.token).toBe('')
+    expect(mocks.exchange).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem('oauthBrowserProof')).toContain('"verifier":"' + 'v'.repeat(43))
+    expect(wrapper.find('[data-test="oauth-retry"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('登录状态已更新')
+    wrapper.unmount()
+  })
+
+  it('does not retry after a persisted owner change invalidates a retryable exchange', async () => {
+    mocks.exchange.mockRejectedValueOnce(new Error('network unavailable'))
+    const wrapper = mount(AuthOAuthCallback)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="oauth-retry"]').exists()).toBe(true)
+    localStorage.setItem('accessToken', 'storage-owner')
+    await wrapper.get('[data-test="oauth-retry"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.exchange).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test="oauth-retry"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('登录状态已更新')
+    wrapper.unmount()
+  })
+
+  it('does not navigate from a committed callback after the persisted owner changes', async () => {
+    vi.useFakeTimers()
+    mocks.exchange.mockResolvedValueOnce({ accessToken: 'oauth-token', user: { id: 1 } })
+    const wrapper = mount(AuthOAuthCallback)
+    await flushPromises()
+
+    localStorage.setItem('accessToken', 'storage-owner')
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    expect(mocks.replace).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('登录状态已更新')
     wrapper.unmount()
   })
 

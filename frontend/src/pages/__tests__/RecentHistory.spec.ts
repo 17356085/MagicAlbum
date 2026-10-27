@@ -37,6 +37,23 @@ describe('RecentHistory auth isolation', () => {
     listSectionsMock.mockResolvedValue({ items: [], page: 1, size: 200, total: 0 })
   })
 
+  it('shows owner history when a token-only session is confirmed without a new login event', async () => {
+    localStorage.setItem('recent_visits_v1:7', JSON.stringify([
+      { path: '/threads/seven', title: '确认身份后恢复的记录', ts: Date.now() },
+    ]))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-seven', user: null })
+    const router = await createHistoryRouter()
+    const wrapper = mount(RecentHistory, { global: { plugins: [router], stubs: { RouterLink: RouterLinkStub } } })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('确认身份后恢复的记录')
+      expect(auth.hydrateCurrentUser({ id: 7, username: 'seven' }, 'token-seven')).toBe(true)
+      await flushPromises()
+      expect(wrapper.text()).toContain('确认身份后恢复的记录')
+    } finally { wrapper.unmount() }
+  })
+
   it('reloads the current account history on auth changes and clears it on logout', async () => {
     localStorage.setItem('recent_visits_v1:1', JSON.stringify([
       { path: '/threads/a', title: '账号 A 记录', ts: Date.now() },

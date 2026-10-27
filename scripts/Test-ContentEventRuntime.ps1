@@ -396,8 +396,8 @@ try {
     Check ((Invoke-SqlScalar '' 'SELECT VERSION();') -match '^8\.') 'Temporary database reports MySQL 8'
     Invoke-SqlScalar '' "CREATE DATABASE $runtimeDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE $upgradeDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" | Out-Null
 
-    $runtimeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$runtimeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8"
-    $upgradeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$upgradeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8"
+    $runtimeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$runtimeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
+    $upgradeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$upgradeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
     Set-ProcessEnvironment @{
         CONTENT_EVENT_TEST_DATASOURCE_URL = $runtimeUrl
         CONTENT_EVENT_TEST_DATASOURCE_DRIVER = 'com.mysql.cj.jdbc.Driver'

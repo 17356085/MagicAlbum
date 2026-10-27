@@ -18,7 +18,9 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,13 +28,45 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PostServiceCacheTest {
+
+    @Test
+    void anonymous_pages_reuse_the_effective_page_cache_without_skipping_thread_visibility_checks() {
+        PostRepository posts = mock(PostRepository.class);
+        ThreadRepository threads = mock(ThreadRepository.class);
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        Map<String, String> entries = new HashMap<>();
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get(anyString())).thenAnswer(call -> entries.get(call.getArgument(0)));
+        doAnswer(call -> {
+            entries.put(call.getArgument(0), call.getArgument(1));
+            return null;
+        }).when(values).set(anyString(), anyString(), any(java.time.Duration.class));
+        when(threads.findById(7L)).thenReturn(Optional.of(normalThread()));
+        PageRequest page = PageRequest.of(0, 20);
+        when(posts.findByThreadAscView(7L, page)).thenReturn(new PageImpl<>(List.of(), page, 0));
+        PostService service = new PostService(posts, threads, mock(UserRepository.class), redis, null);
+
+        for (int requestedPage : new int[]{0, -1, 1}) {
+            var result = service.listByThread(7L, requestedPage, 20);
+            assertThat(result.getContent()).isEmpty();
+            assertThat(result.getNumber()).isZero();
+            assertThat(result.getSize()).isEqualTo(20);
+        }
+
+        assertThat(entries).hasSize(1).containsKey("cache:posts:thread:7:time:1:20");
+        verify(posts, times(1)).findByThreadAscView(7L, page);
+        verify(threads, times(3)).findById(7L);
+    }
 
     private static com.example.demo.threads.entity.Thread normalThread() {
         com.example.demo.threads.entity.Thread thread = new com.example.demo.threads.entity.Thread();
@@ -126,14 +160,38 @@ class PostServiceCacheTest {
         when(view.getContent()).thenReturn("Current");
         when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 20), 1));
-        when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(true);
+        when(postLikeRepository.findPostIdsLikedByUser(99L, List.of(1L))).thenReturn(List.of(1L));
 
         PostService service = new PostService(postRepository, postLikeRepository, threadRepository,
                 userRepository, redisTemplate, null, null);
 
         assertThat(service.listByThread(7L, 99L, "time", 1, 20).getContent().get(0).isLiked()).isTrue();
         verify(valueOperations, never()).get(anyString());
-        verify(postLikeRepository).existsByPostIdAndUserId(1L, 99L);
+        verify(valueOperations, never()).set(anyString(), anyString(), any());
+        verify(postLikeRepository).findPostIdsLikedByUser(99L, List.of(1L));
+        verify(postLikeRepository, never()).existsByPostIdAndUserId(anyLong(), anyLong());
+    }
+
+    @Test
+    void anonymous_cache_uses_effective_one_based_page() {
+        PostRepository postRepository = mock(PostRepository.class);
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                redisTemplate, null);
+
+        service.listByThread(7L, 0, 20);
+
+        verify(valueOperations).get("cache:posts:thread:7:time:1:20");
+        verify(valueOperations).set(eq("cache:posts:thread:7:time:1:20"), anyString(), any());
     }
 
     @Test

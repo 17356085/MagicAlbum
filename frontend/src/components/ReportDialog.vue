@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { createReport, type ReportReason, type ReportTargetType } from '@/api/reports'
+import { useAuthStore } from '@/stores/auth'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 
 const props = defineProps<{
   modelValue: boolean
@@ -20,7 +22,39 @@ const isSubmitting = ref(false)
 const submitted = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const panelClosed = ref(false)
+const auth = useAuthStore()
+let disposed = false
+let epoch = 0
+let ownerToken = ''
+let ownerId: number | null = null
+let openTargetId = 0
+let openTargetType: ReportTargetType
 let previousActiveElement: HTMLElement | null = null
+
+function currentOwnerId(): number | null {
+  const id = Number(auth.user?.id ?? auth.user?.userId)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
+function ownsSession(): boolean {
+  const id = currentOwnerId()
+  return hasRealToken(ownerToken) && auth.token === ownerToken
+    && getStoredAccessToken() === ownerToken
+    && (ownerId === null || id === ownerId)
+}
+
+function isCurrent(requestEpoch: number): boolean {
+  return !disposed && props.modelValue && !panelClosed.value && requestEpoch === epoch
+    && props.targetId === openTargetId && props.targetType === openTargetType
+    && props.isLoggedIn && ownsSession()
+}
+
+function acceptResponse(requestEpoch: number): boolean {
+  if (isCurrent(requestEpoch)) return true
+  if (!disposed && epoch === requestEpoch) close()
+  return false
+}
 
 function getErrorMessage(cause: unknown): string {
   const failure = cause as {
@@ -40,7 +74,13 @@ function getErrorMessage(cause: unknown): string {
     : '提交举报失败，请稍后重试'
 }
 
+function isReportAcknowledgementError(cause: unknown): boolean {
+  return typeof cause === 'object' && cause !== null
+    && (cause as { code?: unknown }).code === 'REPORT_ACK_UNCONFIRMED'
+}
+
 function resetForm(): void {
+  isSubmitting.value = false
   reason.value = 'SPAM'
   detail.value = ''
   submitted.value = false
@@ -57,20 +97,61 @@ function restoreFocus(): void {
 }
 
 function close(): void {
+  if (disposed || panelClosed.value || !props.modelValue) return
+  panelClosed.value = true
+  epoch += 1
+  resetForm()
+  window.removeEventListener('keydown', onKeydown)
+  restoreFocus()
   emit('update:modelValue', false)
 }
 
+function onAuthChange(): void {
+  close()
+}
+
+function onStorage(event: StorageEvent): void {
+  if (event.key === null || event.key === 'accessToken') close()
+}
+
 function onKeydown(event: KeyboardEvent): void {
+  if (disposed || panelClosed.value || !props.modelValue) return
   if (event.key === 'Escape') {
     event.preventDefault()
     close()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const panel = dialogRef.value
+  if (!panel) return
+  const controls = panel.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), textarea:not(:disabled)')
+  const first = controls[0]
+  const last = controls[controls.length - 1]
+  if (!first) {
+    event.preventDefault()
+    panel.focus()
+  } else if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+    event.preventDefault()
+    last?.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  } else if (!panel.contains(document.activeElement)) {
+    event.preventDefault()
+    first.focus()
   }
 }
 
 async function submit(): Promise<void> {
-  if (isSubmitting.value || submitted.value) return
+  if (disposed || panelClosed.value || !props.modelValue || isSubmitting.value || submitted.value) return
   if (!props.isLoggedIn) {
     errorMessage.value = '请先登录后再举报'
+    successMessage.value = ''
+    return
+  }
+
+  if (!ownsSession()) {
+    errorMessage.value = '账号状态已变更，请关闭后重新打开举报窗口'
     successMessage.value = ''
     return
   }
@@ -86,6 +167,7 @@ async function submit(): Promise<void> {
   errorMessage.value = ''
   successMessage.value = ''
   const normalizedDetail = detail.value.trim()
+  const requestEpoch = epoch
   try {
     await createReport({
       targetType: props.targetType,
@@ -93,12 +175,16 @@ async function submit(): Promise<void> {
       reason: reason.value,
       ...(normalizedDetail ? { detail: normalizedDetail } : {}),
     })
+    if (!acceptResponse(requestEpoch)) return
     submitted.value = true
     successMessage.value = '举报已提交，感谢你的反馈'
   } catch (cause: unknown) {
-    errorMessage.value = getErrorMessage(cause)
+    if (!acceptResponse(requestEpoch)) return
+    errorMessage.value = isReportAcknowledgementError(cause)
+      ? '举报提交结果暂未确认，请重试'
+      : getErrorMessage(cause)
   } finally {
-    isSubmitting.value = false
+    if (isCurrent(requestEpoch)) isSubmitting.value = false
   }
 }
 
@@ -107,21 +193,53 @@ watch(
   (open, wasOpen) => {
     if (open) {
       if (!wasOpen) {
+        epoch += 1
+        panelClosed.value = false
+        ownerToken = auth.token
+        ownerId = currentOwnerId()
+        openTargetId = props.targetId
+        openTargetType = props.targetType
         previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
         resetForm()
       }
       window.addEventListener('keydown', onKeydown)
-      void nextTick(() => dialogRef.value?.focus())
+      const focusEpoch = epoch
+      void nextTick(() => {
+        if (!disposed && props.modelValue && !panelClosed.value && focusEpoch === epoch) dialogRef.value?.focus()
+      })
       return
     }
 
     window.removeEventListener('keydown', onKeydown)
+    epoch += 1
+    resetForm()
     if (wasOpen) restoreFocus()
   },
   { immediate: true },
 )
 
+watch(
+  () => [auth.token, currentOwnerId(), props.targetId, props.targetType, props.isLoggedIn] as const,
+  () => {
+    if (!props.modelValue || panelClosed.value) return
+    if (auth.token !== ownerToken || (ownerId !== null && currentOwnerId() !== ownerId)
+      || props.targetId !== openTargetId || props.targetType !== openTargetType || !props.isLoggedIn) {
+      close()
+    } else if (ownerId === null) {
+      ownerId = currentOwnerId()
+    }
+  },
+  { flush: 'sync' },
+)
+
+window.addEventListener('auth-state-changed', onAuthChange)
+window.addEventListener('storage', onStorage)
+
 onBeforeUnmount(() => {
+  disposed = true
+  epoch += 1
+  window.removeEventListener('auth-state-changed', onAuthChange)
+  window.removeEventListener('storage', onStorage)
   window.removeEventListener('keydown', onKeydown)
   restoreFocus()
 })
@@ -130,7 +248,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <div
-      v-if="modelValue"
+      v-if="modelValue && !panelClosed"
       class="ui-dialog-layer fixed inset-0 flex items-center justify-center bg-black/40 p-4"
       data-report-dialog-backdrop
       @click.self="close"

@@ -1,4 +1,4 @@
-import client, { captureAuthGeneration, handleCurrentTokenUnauthorized } from './client'
+import client, { assertAutomaticRequestOwnsCurrentSession, captureAuthGeneration, handleCurrentTokenUnauthorized } from './client'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { Id } from '@/types'
 
@@ -276,10 +276,39 @@ export function createChatStream(
 ): ChatStreamHandle {
   const apiBase = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '')
   const controller = new AbortController()
+  // Capture the request payload before the asynchronous stream starts. The
+  // chat widget owns its history, so a later route/session reset must not
+  // mutate the body of a request that is already in flight.
+  const requestMessages = messages.map(message => ({ role: message.role, content: message.content }))
   let cancelled = false
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  let responseBody: ReadableStream<Uint8Array> | null = null
+
+  const disposeStream = (): void => {
+    const activeReader = reader
+    const body = responseBody
+    reader = null
+    responseBody = null
+    // Cleanup must not delay completion or replace the original stream error.
+    void (async () => {
+      try {
+        if (activeReader) {
+          try {
+            await activeReader.cancel()
+          } finally {
+            activeReader.releaseLock?.()
+          }
+        } else {
+          await body?.cancel()
+        }
+      } catch (_) {
+        // The transport may already have aborted or closed the reader.
+      }
+    })()
+  }
 
   const dispatchEvent = (event: SseEvent): boolean => {
+    if (cancelled) return false
     if (event.data.trim() === '[DONE]') return true
     if (event.event === 'error') {
       throw new Error('AI 服务暂不可用')
@@ -294,6 +323,7 @@ export function createChatStream(
     if (!isRecord(data) || typeof data.content !== 'string') {
       throw new Error('流式响应格式错误')
     }
+    if (cancelled) return false
     onMessage?.(data)
     return false
   }
@@ -310,6 +340,7 @@ export function createChatStream(
     try {
       const token = getStoredAccessToken()
       const generation = captureAuthGeneration()
+      assertAutomaticRequestOwnsCurrentSession(token)
       if (hasRealToken(token)) {
         headers.Authorization = `Bearer ${token}`
       }
@@ -317,9 +348,11 @@ export function createChatStream(
       const response = await fetch(apiBase + '/ai/chat/stream', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ messages: requestMessages }),
         signal: controller.signal,
       })
+      responseBody = response.body
+      if (cancelled) return
       if (!response.ok) {
         if (response.status === 401) handleCurrentTokenUnauthorized(token, generation)
         throw new Error('AI 请求失败')
@@ -334,17 +367,22 @@ export function createChatStream(
       if (!reader) {
         throw new Error('流式响应不可用')
       }
+      const activeReader = reader
       const decoder = new TextDecoder()
       let buffer = ''
 
       const consumeEventBlock = (block: string): void => {
+        if (cancelled) return
         const event = parseSseEventBlock(block)
         if (!event) return
         sawDoneMarker = dispatchEvent(event) || sawDoneMarker
       }
 
       while (!cancelled) {
-        const result = await reader.read()
+        const result = await activeReader.read()
+        // Abort/cancel may resolve read() with a chunk that was already
+        // queued. Check again before decoding or dispatching that chunk.
+        if (cancelled) break
         if (result.done) break
         buffer += decoder.decode(result.value, { stream: true })
         let separator: RegExpMatchArray | null
@@ -357,6 +395,7 @@ export function createChatStream(
         }
         if (sawDoneMarker) break
       }
+      if (cancelled) return
       buffer += decoder.decode()
       if (!sawDoneMarker && buffer.trim()) consumeEventBlock(buffer)
       if (!cancelled && !completed) {
@@ -367,16 +406,17 @@ export function createChatStream(
       if (!cancelled && !controller.signal.aborted) {
         onError?.(error instanceof Error ? error : new Error('AI 服务暂不可用'))
       }
+    } finally {
+      disposeStream()
     }
   })()
 
   return {
     cancel: () => {
+      if (cancelled) return
       cancelled = true
       controller.abort()
-      if (reader) {
-        void reader.cancel().catch(() => undefined)
-      }
+      disposeStream()
     },
     done,
   }

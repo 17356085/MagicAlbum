@@ -31,6 +31,7 @@ export function useMarkdownTextareaState(
 ) {
   const textareaRef = ref<HTMLTextAreaElement | null>(null)
   const rootRef = ref<HTMLElement | null>(null)
+  const isComposing = ref(false)
   const showPreview = ref(!props.previewDefaultCollapsed)
   const markdownRenderer = createMarkdownRenderer({ katex: true, normalizeImages: true })
 
@@ -46,10 +47,11 @@ export function useMarkdownTextareaState(
     emit('update:modelValue', value)
   }
 
-  function focusTextarea(start?: number, end?: number): void {
+  function focusTextarea(start?: number, end?: number, preserveFocus = false): void {
     nextTick(() => {
       const element = textareaRef.value
-      if (!element) return
+      if (!element || isComposing.value) return
+      if (preserveFocus && document.activeElement !== element) return
       element.focus()
       if (typeof start === 'number' && typeof end === 'number') {
         element.setSelectionRange(start, end)
@@ -180,18 +182,45 @@ export function useMarkdownTextareaState(
     }
   }
 
-  function onTextareaInput(event: Event): void {
+  function syncTextareaValue(target: HTMLTextAreaElement, shouldNormalize: boolean): void {
     if (isDisabled()) return
+    const rawValue = target.value ?? ''
+    const cursor = target.selectionStart ?? rawValue.length
+    const normalized = shouldNormalize
+      ? normalizeAllOrderedLists(rawValue, cursor)
+      : { value: rawValue, cursor }
+    const currentValue = String(props.modelValue || '')
+    if (normalized.value !== currentValue) updateValue(normalized.value)
+    if (shouldNormalize && (normalized.value !== rawValue || normalized.cursor !== cursor)) {
+      focusTextarea(normalized.cursor, normalized.cursor, true)
+    }
+  }
+
+  function onTextareaCompositionStart(): void {
+    if (isDisabled()) return
+    isComposing.value = true
+  }
+
+  function onTextareaCompositionEnd(event: CompositionEvent): void {
+    isComposing.value = false
     const target = event.target as HTMLTextAreaElement | null
-    const rawValue = target?.value ?? ''
-    const cursor = target?.selectionStart ?? rawValue.length
-    const normalized = normalizeAllOrderedLists(rawValue, cursor)
-    updateValue(normalized.value)
-    focusTextarea(normalized.cursor, normalized.cursor)
+    if (target) syncTextareaValue(target, true)
+  }
+
+  function onTextareaBlur(): void {
+    isComposing.value = false
+  }
+
+  function onTextareaInput(event: Event): void {
+    const target = event.target as HTMLTextAreaElement | null
+    if (!target) return
+    const inputEvent = event as InputEvent
+    syncTextareaValue(target, !(isComposing.value || inputEvent.isComposing))
   }
 
   function onTextareaKeydown(event: KeyboardEvent): void {
     if (isDisabled()) return
+    if (isComposing.value) return
     handleMarkdownKeydown(event, {
       value: String(props.modelValue || ''),
       selection: getSelection(),
@@ -242,6 +271,9 @@ export function useMarkdownTextareaState(
     linkTextInputRef,
     linkUrl,
     onSelectImage,
+    onTextareaBlur,
+    onTextareaCompositionEnd,
+    onTextareaCompositionStart,
     onTextareaInput,
     onTextareaKeydown,
     previewHtml,

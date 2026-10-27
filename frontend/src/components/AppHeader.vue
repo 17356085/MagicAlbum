@@ -51,7 +51,7 @@
 
     </div>
   </header>
-  <AuthModal v-if="showLogin" @close="showLogin = false" @success="onLoginSuccess" />
+  <DeferredAuthModal v-if="showLogin" @close="onLoginModalClose" @success="onLoginSuccess" />
 
   <!-- 登出确认弹窗 -->
   <div v-if="showLogoutConfirm" class="ui-dialog-layer fixed inset-0 flex items-center justify-center p-4">
@@ -75,24 +75,24 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
-import AuthModal from '@/components/auth/AuthModal.vue'
+import DeferredAuthModal from '@/components/auth/DeferredAuthModal.vue'
 import AuthEntry from '@/components/header/AuthEntry.vue'
 import BrandBar from '@/components/header/BrandBar.vue'
 import NotificationsMenu from '@/components/header/NotificationsMenu.vue'
 import SearchBox from '@/components/header/SearchBox.vue'
 import UserMenu from '@/components/header/UserMenu.vue'
-import { suggestUsers, getUserProfile } from '@/api/users'
+import { suggestUsers } from '@/api/users'
 import { clearPendingAuthRedirect, getPendingAuthRedirect, setPendingAuthRedirect } from '@/utils/authStorage'
 import { useHeaderIdentity } from '@/components/header/useHeaderIdentity'
 import { useHeaderTheme } from '@/components/header/useHeaderTheme'
-import type { Id, User, UserProfile } from '@/types'
+import type { User, UserProfile } from '@/types'
 import { safeBack } from '@/utils/router'
 
 const showLogin = ref(false)
 const showLogoutConfirm = ref(false)
 const authStore = useAuthStore()
-const { isLoggedIn, user } = storeToRefs(authStore)
-const { logout, updateCurrentUser } = authStore
+const { isLoggedIn, token, user } = storeToRefs(authStore)
+const { logout, updateCurrentUser, hydrateCurrentUser } = authStore
 const router = useRouter()
 const route = useRoute()
 const isMobileChildRoute = computed(() => !['/', '/discover', '/sections', '/feed', '/ranking', '/me'].includes(route.path))
@@ -111,7 +111,12 @@ let suggestTimer: ReturnType<typeof setTimeout> | null = null
 let blurTimer: ReturnType<typeof setTimeout> | null = null
 let suggestRequestSeq = 0
 let suggestionsDisposed = false
-const suggestProfiles = ref<Record<string, SuggestProfile>>({})
+let sessionHydrationScheduled = false
+// The list response already carries public profile fields; keep them tied to
+// the current results instead of fetching and caching every user's profile.
+const suggestProfiles = computed<Record<string, SuggestProfile>>(() => Object.fromEntries(
+  suggestions.value.map((u) => [String(u.id), { avatarUrl: u.avatarUrl || '', nickname: u.nickname || '' }]),
+))
 const activeIndex = ref(-1)
 const keyword = computed(() => String(searchQuery.value || '').trim().toLowerCase())
 
@@ -141,9 +146,7 @@ const visibleSuggestions = computed<User[]>(() => {
   if (!kw) return []
   return (Array.isArray(suggestions.value) ? suggestions.value : []).filter(u => {
     if (includesI(u?.username, kw)) return true
-    const p = suggestProfiles.value[String(u?.id)]
-    if (p && includesI(p.nickname, kw)) return true
-    return false
+    return includesI(u?.nickname, kw)
   })
 })
 const {
@@ -155,12 +158,17 @@ const {
   refreshMyProfile,
   resetIdentity,
   onProfileUpdated,
-} = useHeaderIdentity({ isLoggedIn, user, updateCurrentUser })
+} = useHeaderIdentity({ isLoggedIn, token, user, updateCurrentUser, hydrateCurrentUser })
 const { isDark, themeLabel, toggleTheme } = useHeaderTheme()
 
 // 事件处理定义在 setup 顶层，便于在卸载时正确移除
 const onOpenLoginModal = (): void => {
   showLogin.value = true
+}
+
+function onLoginModalClose(): void {
+  showLogin.value = false
+  clearPendingAuthRedirect()
 }
 
 const onAuthStateChanged = (): void => {
@@ -169,13 +177,18 @@ const onAuthStateChanged = (): void => {
   void router.replace({ name: 'discover' })
 }
 
+function scheduleSessionHydration(): void {
+  if (sessionHydrationScheduled) return
+  sessionHydrationScheduled = true
+  queueMicrotask(() => {
+    sessionHydrationScheduled = false
+    if (suggestionsDisposed || !isLoggedIn.value) return
+    refreshMyProfile(true).catch(() => {})
+  })
+}
+
 onMounted((): void => {
   applyUserIdentity()
-  if (needsProfileHydration()) {
-    refreshMyProfile().catch(() => {})
-  } else {
-    profileHydrated.value = true
-  }
   window.addEventListener('profile-updated', onProfileUpdated)
   window.addEventListener('open-login-modal', onOpenLoginModal)
   window.addEventListener('auth-state-changed', onAuthStateChanged)
@@ -205,10 +218,6 @@ onBeforeUnmount(() => {
 
 function onLoginSuccess(): void {
   applyUserIdentity()
-  profileHydrated.value = false
-  if (needsProfileHydration()) {
-    refreshMyProfile().catch(() => {})
-  }
   const redirect = getPendingAuthRedirect()
   if (redirect) {
     clearPendingAuthRedirect()
@@ -217,10 +226,21 @@ function onLoginSuccess(): void {
 }
 
 watch(
-  () => [isLoggedIn.value, user.value?.id] as const,
-  ([loggedIn, userId], previousValue) => {
-    const previousUserId = previousValue?.[1]
-    if (userId !== previousUserId) {
+  [
+    () => isLoggedIn.value,
+    () => token.value,
+    () => user.value?.id ?? user.value?.userId,
+  ],
+  ([loggedIn, accessToken, userId], previousValue) => {
+    const previousToken = previousValue?.[1]
+    const previousUserId = previousValue?.[2]
+    const previousKnownId = previousUserId !== undefined && previousUserId !== null && String(previousUserId).trim() !== ''
+    const knownId = userId !== undefined && userId !== null && String(userId).trim() !== ''
+    const tokenChanged = previousValue !== undefined && previousToken !== undefined && accessToken !== previousToken
+    const knownIdChanged = previousKnownId && knownId && String(userId) !== String(previousUserId)
+    const lostKnownId = previousKnownId && !knownId
+    const sessionChanged = tokenChanged || knownIdChanged || lostKnownId
+    if (sessionChanged) {
       profileHydrated.value = false
     }
     if (!loggedIn) {
@@ -228,6 +248,10 @@ watch(
       return
     }
     applyUserIdentity()
+    if (sessionChanged) {
+      scheduleSessionHydration()
+      return
+    }
     if (!profileHydrated.value && needsProfileHydration()) {
       refreshMyProfile().catch(() => {})
       return
@@ -288,9 +312,6 @@ async function fetchSuggestions(keyword: string, requestSeq: number, requestedAc
     suggestions.value = base.slice(0, 5)
     // 取消默认选中联想建议：仅在用户用方向键选择后才有选中项
     activeIndex.value = -1
-    // 异步预取头像/昵称，提升建议项信息密度
-    const ids = suggestions.value.map((u) => u.id).filter(Boolean) as Id[]
-    void prefetchSuggestionProfiles(ids, requestSeq, requestedAccount, keyword)
   } catch (_) {
     if (!isActiveSuggestionRequest(requestSeq, keyword, requestedAccount)) return
     suggestError.value = '加载建议失败'
@@ -372,20 +393,6 @@ function onInputKeydown(e: KeyboardEvent): void {
   }
 }
 
-async function prefetchSuggestionProfiles(ids: Id[], requestSeq: number, requestedAccount: string, requestedKeyword: string): Promise<void> {
-  for (const id of ids) {
-    const key = String(id)
-    if (suggestProfiles.value[key]) continue
-    try {
-      const p = await getUserProfile(id)
-      if (!isActiveSuggestionRequest(requestSeq, requestedKeyword, requestedAccount)) return
-      suggestProfiles.value[key] = { avatarUrl: p?.avatarUrl || '', nickname: p?.nickname || '' }
-    } catch (_) {
-      if (!isActiveSuggestionRequest(requestSeq, requestedKeyword, requestedAccount)) return
-      suggestProfiles.value[key] = { avatarUrl: '', nickname: '' }
-    }
-  }
-}
 </script>
 
 <style scoped>

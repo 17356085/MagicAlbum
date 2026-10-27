@@ -2,6 +2,10 @@ package com.example.demo.notifications.service.remote;
 
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -18,6 +22,13 @@ class RemoteNotificationServiceTimeoutTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch received = new CountDownLatch(1);
+        server.createContext("/ready", exchange -> {
+            try {
+                exchange.sendResponseHeaders(204, -1);
+            } finally {
+                exchange.close();
+            }
+        });
         server.createContext("/api/v1/notifications", exchange -> {
             received.countDown();
             try {
@@ -32,6 +43,18 @@ class RemoteNotificationServiceTimeoutTest {
         try {
             var client = new RemoteNotificationService("http://127.0.0.1:" + server.getAddress().getPort(),
                     "test-credential-0123456789abcdefghijklmnop", 500, 200);
+            try (var warmupClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(2))
+                    .build()) {
+                var warmupResponse = warmupClient.send(
+                        HttpRequest.newBuilder()
+                                .uri(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/ready"))
+                                .timeout(Duration.ofSeconds(2))
+                                .GET()
+                                .build(),
+                        HttpResponse.BodyHandlers.discarding());
+                assertThat(warmupResponse.statusCode()).isEqualTo(204);
+            }
             long start = System.nanoTime();
             assertThatThrownBy(() -> client.list(1L, "Bearer test", null, null, 1, 10))
                     .isInstanceOfSatisfying(ResponseStatusException.class,

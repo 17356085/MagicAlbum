@@ -4,7 +4,7 @@
       <div class="space-y-2">
         <div class="ui-muted text-xs font-semibold uppercase tracking-[0.18em]">QR Confirm</div>
         <h1 class="ui-title">移动端确认登录</h1>
-        <p class="ui-description mt-1">确认设备信息后，再完成一次登录确认。</p>
+        <p class="ui-description mt-1">先扫码，再确认将当前账号用于桌面端登录。</p>
       </div>
 
       <div class="ui-toolbar mt-5 flex-col items-stretch border border-gray-200 bg-[var(--ui-subtle)] p-4 text-sm dark:border-gray-700 sm:flex-row sm:items-center">
@@ -33,7 +33,7 @@
 
       <div v-else class="mt-5 space-y-4">
         <div class="border-t border-gray-200 pt-5 dark:border-gray-700">
-          <div class="text-sm font-medium">设备确认</div>
+          <div class="text-sm font-medium">扫码确认</div>
           <p class="ui-muted mt-1 text-sm">确认后，桌面端会收到当前账号的扫码状态。</p>
           <div class="mt-4 flex flex-wrap gap-2">
             <button
@@ -42,7 +42,7 @@
               :disabled="scanning || confirming || status === 'SCANNED' || status === 'CONFIRMED' || status === 'EXPIRED' || status === 'CANCELLED'"
               @click="handleScan"
             >
-              {{ scanning ? '处理中…' : '确认本设备并扫码' }}
+              {{ scanning ? '处理中…' : '扫码并继续' }}
             </button>
             <button
               type="button"
@@ -56,7 +56,7 @@
         </div>
 
         <div v-if="status === 'CONFIRMED'" class="mt-4 border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300" role="status" aria-live="polite">
-          当前账号已完成确认，桌面端将自动进入登录态。
+          已确认将当前账号用于桌面端登录，请返回发起登录的页面继续。
         </div>
       </div>
     </div>
@@ -64,13 +64,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, type AuthOperationContext } from '@/stores/auth'
 import { confirmQrLoginSession, scanQrLoginSession } from '@/api/auth'
-import { setPendingAuthRedirect } from '@/utils/authStorage'
-import type { QrLoginStatus } from '@/types'
+import { hasRealToken, setPendingAuthRedirect } from '@/utils/authStorage'
+import type { QrLoginStatus, QrLoginStatusResponse } from '@/types'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -87,8 +87,49 @@ const message = ref('')
 const expiresAt = ref('')
 const scanning = ref(false)
 const confirming = ref(false)
-  let countdownTimer: ReturnType<typeof setInterval> | null = null
+let countdownTimer: ReturnType<typeof setInterval> | null = null
 const now = ref(Date.now())
+
+type OperationKind = 'scan' | 'confirm'
+type OperationSnapshot = Readonly<{
+  generation: number
+  qrId: string
+  context: AuthOperationContext
+  kind: OperationKind
+}>
+
+let lifecycleGeneration = 0
+let activeOperation: OperationSnapshot | null = null
+let activeQrId = qrId.value
+let disposed = false
+let mounted = false
+
+function isValidOwnerId(value: unknown): value is number | string {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0
+  return typeof value === 'string' && /^[1-9]\d*$/.test(value)
+}
+
+const ownerKey = computed(() => {
+  const currentUser = authStore.user
+  if (!currentUser) return ''
+  const ownerId = currentUser.id ?? currentUser.userId
+  if (isValidOwnerId(ownerId)) return `id:${String(ownerId)}`
+  return ''
+})
+
+function isValidExpiry(value: string): number | null {
+  if (!value) return null
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+function statusMessage(nextStatus: QrLoginStatus, kind: OperationKind): string {
+  if (nextStatus === 'SCANNED') return '已扫码，请确认登录'
+  if (nextStatus === 'CONFIRMED') return kind === 'confirm' ? '已确认登录' : '当前账号已完成确认'
+  if (nextStatus === 'EXPIRED') return '二维码已过期，请重新扫码'
+  if (nextStatus === 'CANCELLED') return '二维码已取消'
+  return kind === 'confirm' ? '二维码仍待确认' : '二维码等待扫码'
+}
 
 const statusLabel = computed(() => {
   if (status.value === 'SCANNED') return '已扫码'
@@ -113,8 +154,10 @@ const messageClass = computed(() => {
 })
 
 const countdownLabel = computed(() => {
-  if (!expiresAt.value || status.value === 'CONFIRMED' || status.value === 'CANCELLED') return ''
-  const remaining = Math.max(0, Math.ceil((new Date(expiresAt.value).getTime() - now.value) / 1000))
+  if (!expiresAt.value || status.value === 'CONFIRMED' || status.value === 'CANCELLED' || status.value === 'EXPIRED') return ''
+  const expiry = isValidExpiry(expiresAt.value)
+  if (expiry === null) return ''
+  const remaining = Math.max(0, Math.ceil((expiry - now.value) / 1000))
   return remaining > 0 ? `${remaining}s 后过期` : '即将过期'
 })
 
@@ -126,40 +169,150 @@ function clearTimers(): void {
 }
 
 function startCountdown(): void {
-  if (countdownTimer) clearInterval(countdownTimer)
+  clearTimers()
+  if (!mounted || !qrId.value) return
   countdownTimer = setInterval(() => {
     now.value = Date.now()
+    expireIfNeeded()
   }, 1000)
 }
 
-async function handleScan(): Promise<void> {
-  if (!qrId.value) return
-  scanning.value = true
-  try {
-    const response = await scanQrLoginSession(qrId.value)
-    status.value = response.status
-    message.value = response.message || '已扫码，请确认登录'
-    expiresAt.value = response.expiresAt || expiresAt.value
-  } catch {
-    message.value = '扫码失败，请稍后再试'
-  } finally {
-    scanning.value = false
+function isCurrentLifecycle(operation: OperationSnapshot): boolean {
+  return !disposed
+    && operation.generation === lifecycleGeneration
+    && operation.qrId === qrId.value
+    && operation.qrId === activeQrId
+}
+
+function isCurrentAuthContext(context: AuthOperationContext): boolean {
+  return hasRealToken(context.memoryToken)
+    && context.memoryToken === context.persistedToken
+    && authStore.isAuthOperationContextCurrent(context)
+}
+
+function isCurrentOperation(operation: OperationSnapshot): boolean {
+  return isCurrentLifecycle(operation) && isCurrentAuthContext(operation.context)
+}
+
+function captureOwnedAuthContext(): AuthOperationContext | null {
+  const context = authStore.captureAuthOperationContext()
+  if (!isCurrentAuthContext(context)) return null
+  return context
+}
+
+function resetSession(nextMessage = ''): void {
+  lifecycleGeneration += 1
+  activeOperation = null
+  scanning.value = false
+  confirming.value = false
+  status.value = 'PENDING'
+  message.value = nextMessage
+  expiresAt.value = ''
+  now.value = Date.now()
+  if (mounted) startCountdown()
+}
+
+function expireIfNeeded(): void {
+  if (status.value === 'CONFIRMED' || status.value === 'EXPIRED' || status.value === 'CANCELLED') return
+  const expiry = isValidExpiry(expiresAt.value)
+  if (expiry === null || expiry > now.value) return
+
+  lifecycleGeneration += 1
+  activeOperation = null
+  scanning.value = false
+  confirming.value = false
+  status.value = 'EXPIRED'
+  message.value = '二维码已过期，请重新扫码'
+  clearTimers()
+}
+
+function beginOperation(kind: OperationKind): OperationSnapshot | null {
+  if (disposed || !qrId.value || qrId.value !== activeQrId || scanning.value || confirming.value) return null
+  if (kind === 'scan' && status.value !== 'PENDING') return null
+  if (kind === 'confirm' && status.value !== 'SCANNED') return null
+  now.value = Date.now()
+  expireIfNeeded()
+  if (status.value === 'EXPIRED') return null
+
+  const context = captureOwnedAuthContext()
+  if (!context) {
+    resetSession('账号状态已变化，请刷新页面后重试')
+    return null
+  }
+
+  const operation: OperationSnapshot = {
+    generation: ++lifecycleGeneration,
+    qrId: qrId.value,
+    context,
+    kind,
+  }
+  activeOperation = operation
+  if (kind === 'scan') scanning.value = true
+  else confirming.value = true
+  return operation
+}
+
+function finishOperation(operation: OperationSnapshot): void {
+  if (!isCurrentOperation(operation)) return
+  if (operation.kind === 'scan') scanning.value = false
+  else confirming.value = false
+  if (activeOperation?.generation === operation.generation) activeOperation = null
+}
+
+function handleStaleOperation(operation: OperationSnapshot): void {
+  // Storage can change without a storage event in the same tab. Clear only
+  // when this operation still owns the current lifecycle; never touch a newer
+  // route/account operation from an older callback.
+  if (isCurrentLifecycle(operation) && !isCurrentAuthContext(operation.context)) {
+    resetSession('账号状态已变化，请刷新页面后重试')
   }
 }
 
-async function handleConfirm(): Promise<void> {
-  if (!qrId.value) return
-  confirming.value = true
-  try {
-    const response = await confirmQrLoginSession(qrId.value)
-    status.value = response.status
-    message.value = response.message || '已确认登录'
-    expiresAt.value = response.expiresAt || expiresAt.value
-  } catch {
-    message.value = '确认失败，请稍后再试'
-  } finally {
-    confirming.value = false
+function applyResponse(operation: OperationSnapshot, response: QrLoginStatusResponse): boolean {
+  if (!isCurrentOperation(operation)) {
+    handleStaleOperation(operation)
+    return false
   }
+  if (response.qrId !== operation.qrId) {
+    message.value = '二维码会话不匹配，请重试'
+    return isCurrentOperation(operation)
+  }
+  status.value = response.status
+  message.value = response.message || statusMessage(response.status, operation.kind)
+  if (response.expiresAt) expiresAt.value = response.expiresAt
+  now.value = Date.now()
+  expireIfNeeded()
+  if (status.value === 'CONFIRMED' || status.value === 'EXPIRED' || status.value === 'CANCELLED') clearTimers()
+  return isCurrentOperation(operation)
+}
+
+async function runOperation(
+  kind: OperationKind,
+  request: (qrId: string) => Promise<QrLoginStatusResponse>,
+  failureMessage: string,
+): Promise<void> {
+  const operation = beginOperation(kind)
+  if (!operation) return
+  try {
+    const response = await request(operation.qrId)
+    applyResponse(operation, response)
+  } catch {
+    if (!isCurrentOperation(operation)) {
+      handleStaleOperation(operation)
+      return
+    }
+    message.value = failureMessage
+  } finally {
+    if (isCurrentOperation(operation)) finishOperation(operation)
+  }
+}
+
+function handleScan(): Promise<void> {
+  return runOperation('scan', scanQrLoginSession, '扫码失败，请稍后再试')
+}
+
+function handleConfirm(): Promise<void> {
+  return runOperation('confirm', confirmQrLoginSession, '确认失败，请稍后再试')
 }
 
 function openLogin(): void {
@@ -169,7 +322,29 @@ function openLogin(): void {
   } catch (_) {}
 }
 
+function handleAuthStateChanged(): void {
+  if (disposed) return
+  resetSession()
+}
+
+watch(qrId, (nextQrId, previousQrId) => {
+  if (disposed || nextQrId === previousQrId) return
+  activeQrId = nextQrId
+  resetSession()
+  if (!nextQrId) message.value = '当前链接缺少二维码会话参数'
+}, { flush: 'sync' })
+
+watch([() => authStore.token, ownerKey], ([nextToken, nextOwner], [previousToken, previousOwner]) => {
+  if (disposed) return
+  const tokenChanged = nextToken !== previousToken
+  const ownerChanged = nextOwner !== previousOwner
+  const sameTokenHydration = !tokenChanged && previousOwner === '' && nextOwner !== ''
+  if (tokenChanged || (ownerChanged && !sameTokenHydration)) resetSession()
+}, { flush: 'sync' })
+
 onMounted(() => {
+  mounted = true
+  window.addEventListener('auth-state-changed', handleAuthStateChanged)
   if (!qrId.value) {
     message.value = '当前链接缺少二维码会话参数'
     return
@@ -178,6 +353,12 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  lifecycleGeneration += 1
+  activeOperation = null
+  scanning.value = false
+  confirming.value = false
+  window.removeEventListener('auth-state-changed', handleAuthStateChanged)
   clearTimers()
 })
 </script>

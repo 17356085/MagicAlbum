@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getMyBasicInfo, updateMyBasicInfo, updateMyPassword } from '@/api/settings'
+import { useAuthStore } from '@/stores/auth'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { isValidUsername, isValidPhone, isValidEmail, isStrongPassword, getPasswordError } from '@/utils/validators'
-import type { ApiError, BasicInfoPayload } from '@/types'
+import type { ApiError, BasicInfoPayload, Id } from '@/types'
 
 interface PasswordForm {
   current: string
@@ -19,7 +22,22 @@ interface AccountErrors {
   confirmPassword: string
 }
 
-const profile = reactive<BasicInfoPayload>({ username: '', phone: '', email: '' })
+interface AccountForm {
+  username: string
+  phone: string
+  email: string
+}
+
+interface SessionContext {
+  token: string
+  epoch: number
+  ownerId: Id | null
+}
+
+const EMPTY_ACCOUNT: AccountForm = { username: '', phone: '', email: '' }
+const authStore = useAuthStore()
+const { token, user } = storeToRefs(authStore)
+const profile = reactive<AccountForm>({ ...EMPTY_ACCOUNT })
 const profileBaseline = ref(accountSnapshot(profile))
 const errors = reactive<AccountErrors>({ username: '', phone: '', email: '', currentPassword: '', newPassword: '', confirmPassword: '' })
 const savingProfile = ref(false)
@@ -33,11 +51,25 @@ const passwordMessage = ref('')
 const passwordMessageError = ref(false)
 const pwd = reactive<PasswordForm>({ current: '', next: '', confirm: '' })
 
+let disposed = false
+let sessionEpoch = 0
+let profileLoadSeq = 0
+let profileSaveSeq = 0
+let passwordSeq = 0
+let reloadTimer: ReturnType<typeof setTimeout> | null = null
+let profileMessageTimer: ReturnType<typeof setTimeout> | null = null
+let passwordMessageTimer: ReturnType<typeof setTimeout> | null = null
+let profileMessageVersion = 0
+let passwordMessageVersion = 0
+let observedToken = ''
+let observedStoredToken = ''
+let observedOwnerKey: string | null = null
+
 const emit = defineEmits<{
   'dirty-change': [dirty: boolean]
 }>()
 
-function accountSnapshot(value: BasicInfoPayload): string {
+function accountSnapshot(value: Partial<AccountForm>): string {
   return JSON.stringify({
     username: String(value.username || ''),
     phone: String(value.phone || ''),
@@ -45,11 +77,78 @@ function accountSnapshot(value: BasicInfoPayload): string {
   })
 }
 
+function normalizeAccount(value: Partial<BasicInfoPayload> | null | undefined, fallback: Partial<AccountForm> = EMPTY_ACCOUNT): AccountForm {
+  return {
+    username: String(value?.username ?? fallback.username ?? ''),
+    phone: String(value?.phone ?? fallback.phone ?? ''),
+    email: String(value?.email ?? fallback.email ?? ''),
+  }
+}
+
+function normalizeId(value: unknown): Id | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  return null
+}
+
+function idKey(value: unknown): string | null {
+  const normalized = normalizeId(value)
+  return normalized === null ? null : String(normalized)
+}
+
+function currentToken(): string {
+  return String(token.value || '').trim()
+}
+
+function storedToken(): string {
+  return String(getStoredAccessToken() || '').trim()
+}
+
+function currentOwnerId(): Id | null {
+  return normalizeId(user.value?.id ?? user.value?.userId)
+}
+
+function captureSession(): SessionContext | null {
+  const accessToken = currentToken()
+  if (!hasRealToken(accessToken) || accessToken !== storedToken()) return null
+  return { token: accessToken, epoch: sessionEpoch, ownerId: currentOwnerId() }
+}
+
+function clearUnavailableSession(): void {
+  resetAccountStateForSession()
+  accountLoadError.value = hasRealToken(currentToken())
+    ? '账号状态已变更，请刷新页面后重试'
+    : '请登录后再加载账户信息'
+}
+
+function sameOwner(expected: Id | null, actual: Id | null): boolean {
+  // Header hydration fills an identity after a token-only session starts.
+  if (expected === null) return true
+  return actual !== null && idKey(expected) === idKey(actual)
+}
+
+function isCurrentSession(context: SessionContext): boolean {
+  return !disposed
+    && context.epoch === sessionEpoch
+    && currentToken() === context.token
+    && storedToken() === context.token
+    && sameOwner(context.ownerId, currentOwnerId())
+}
+
+function isCurrentOperation(context: SessionContext, sequence: number, currentSequence: number): boolean {
+  return isCurrentSession(context) && sequence === currentSequence
+}
+
 function passwordHasValue(): boolean {
   return Boolean(pwd.current || pwd.next || pwd.confirm)
 }
 
 const accountDirty = computed(() => accountSnapshot(profile) !== profileBaseline.value || passwordHasValue())
+const contactChanged = computed(() => {
+  if (!accountLoaded.value) return false
+  const baseline = JSON.parse(profileBaseline.value) as AccountForm
+  return profile.phone.trim() !== baseline.phone.trim() || profile.email.trim() !== baseline.email.trim()
+})
 watch(accountDirty, (dirty) => {
   emit('dirty-change', dirty)
 }, { immediate: true })
@@ -68,10 +167,31 @@ function clearErrors(): void {
   errors.confirmPassword = ''
 }
 
+function clearProfileMessageTimer(): void {
+  if (profileMessageTimer !== null) {
+    clearTimeout(profileMessageTimer)
+    profileMessageTimer = null
+  }
+  profileMessageVersion += 1
+}
+
+function clearPasswordMessageTimer(): void {
+  if (passwordMessageTimer !== null) {
+    clearTimeout(passwordMessageTimer)
+    passwordMessageTimer = null
+  }
+  passwordMessageVersion += 1
+}
+
 function setProfileMessage(message: string, isError = false): void {
   profileMessage.value = message
   profileMessageError.value = isError
-  setTimeout(() => {
+  clearProfileMessageTimer()
+  const version = ++profileMessageVersion
+  const messageEpoch = sessionEpoch
+  profileMessageTimer = setTimeout(() => {
+    profileMessageTimer = null
+    if (disposed || messageEpoch !== sessionEpoch || version !== profileMessageVersion) return
     profileMessage.value = ''
     profileMessageError.value = false
   }, isError ? 4000 : 3000)
@@ -80,40 +200,139 @@ function setProfileMessage(message: string, isError = false): void {
 function setPasswordMessage(message: string, isError = false): void {
   passwordMessage.value = message
   passwordMessageError.value = isError
-  setTimeout(() => {
+  clearPasswordMessageTimer()
+  const version = ++passwordMessageVersion
+  const messageEpoch = sessionEpoch
+  passwordMessageTimer = setTimeout(() => {
+    passwordMessageTimer = null
+    if (disposed || messageEpoch !== sessionEpoch || version !== passwordMessageVersion) return
     passwordMessage.value = ''
     passwordMessageError.value = false
   }, isError ? 4000 : 3000)
 }
 
+function invalidateOperations(): void {
+  profileLoadSeq += 1
+  profileSaveSeq += 1
+  passwordSeq += 1
+  sessionEpoch += 1
+}
+
+function resetAccountStateForSession(): void {
+  invalidateOperations()
+  profile.username = ''
+  profile.phone = ''
+  profile.email = ''
+  profileBaseline.value = accountSnapshot(profile)
+  accountLoading.value = false
+  accountLoaded.value = false
+  accountLoadError.value = ''
+  savingProfile.value = false
+  savingPassword.value = false
+  pwd.current = ''
+  pwd.next = ''
+  pwd.confirm = ''
+  clearErrors()
+  clearProfileMessageTimer()
+  clearPasswordMessageTimer()
+  profileMessage.value = ''
+  profileMessageError.value = false
+  passwordMessage.value = ''
+  passwordMessageError.value = false
+}
+
+function scheduleProfileReload(): void {
+  if (disposed || reloadTimer !== null) return
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null
+    if (!disposed) void reloadProfile()
+  }, 0)
+}
+
+function observeSessionChange(): boolean {
+  const nextToken = currentToken()
+  const nextStoredToken = storedToken()
+  const nextOwnerKey = idKey(currentOwnerId())
+  const tokenChanged = nextToken !== observedToken || nextStoredToken !== observedStoredToken
+  const sameTokenHydration = !tokenChanged && observedOwnerKey === null && nextOwnerKey !== null
+  const ownerChanged = !sameTokenHydration && nextOwnerKey !== observedOwnerKey
+  observedToken = nextToken
+  observedStoredToken = nextStoredToken
+  observedOwnerKey = nextOwnerKey
+  return tokenChanged || ownerChanged
+}
+
+function handleSessionSignal(): void {
+  if (disposed || !observeSessionChange()) return
+  resetAccountStateForSession()
+  scheduleProfileReload()
+}
+
+function forceAuthSessionSignal(): void {
+  if (disposed) return
+  if (reloadTimer !== null) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+  resetAccountStateForSession()
+  scheduleProfileReload()
+}
+
+function clearStateOnSessionDrift(context: SessionContext, sequence: number, currentSequence: number): void {
+  if (disposed || sequence !== currentSequence) return
+  if (currentToken() === context.token
+    && storedToken() === context.token
+    && sameOwner(context.ownerId, currentOwnerId())) return
+  observedToken = currentToken()
+  observedStoredToken = storedToken()
+  observedOwnerKey = idKey(currentOwnerId())
+  clearUnavailableSession()
+}
+
 async function reloadProfile(): Promise<void> {
+  if (disposed) return
+  if (savingProfile.value) {
+    setProfileMessage('保存进行中，请稍候', true)
+    return
+  }
+  const sequence = ++profileLoadSeq
+  const context = captureSession()
+  if (!context) {
+    if (!disposed && sequence === profileLoadSeq) clearUnavailableSession()
+    return
+  }
+
   accountLoading.value = true
   accountLoadError.value = ''
   try {
     const data = await getMyBasicInfo()
-    if (!data || typeof data !== 'object' || Object.keys(data).length === 0) throw new Error('账户信息为空，请稍后重试')
-    profile.username = data.username || ''
-    profile.phone = data.phone || ''
-    profile.email = data.email || ''
-    profileBaseline.value = accountSnapshot(profile)
+    if (!isCurrentOperation(context, sequence, profileLoadSeq)) return
+    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) throw new Error('账户信息为空，请稍后重试')
+    const normalized = normalizeAccount(data)
+    profile.username = normalized.username
+    profile.phone = normalized.phone
+    profile.email = normalized.email
+    profileBaseline.value = accountSnapshot(normalized)
     accountLoaded.value = true
     clearErrors()
   } catch (error: unknown) {
+    if (!isCurrentOperation(context, sequence, profileLoadSeq)) return
     accountLoaded.value = false
     accountLoadError.value = getApiErrorMessage(error, '账户信息加载失败，请重试')
   } finally {
-    accountLoading.value = false
+    clearStateOnSessionDrift(context, sequence, profileLoadSeq)
+    if (isCurrentOperation(context, sequence, profileLoadSeq)) accountLoading.value = false
   }
 }
 
 function validateProfile(): boolean {
   clearErrors()
   let ok = true
-  if (!isValidUsername(profile.username)) { errors.username = '3-20 位字母、数字或下划线'; ok = false }
+  if (!isValidUsername(profile.username)) { errors.username = '3-64 位字母、数字或下划线'; ok = false }
   const phone = String(profile.phone || '').trim()
   const email = String(profile.email || '').trim()
   if (!phone) { errors.phone = '请输入手机号'; ok = false }
-  else if (!isValidPhone(phone)) { errors.phone = '请输入有效手机号（国内 11 位或含国家码）'; ok = false }
+  else if (!isValidPhone(phone)) { errors.phone = '请输入有效手机号（1 开头的 11 位）'; ok = false }
   if (!email) { errors.email = '请输入邮箱'; ok = false }
   else if (!isValidEmail(email)) { errors.email = '邮箱格式不正确'; ok = false }
   return ok
@@ -124,20 +343,51 @@ async function onSaveProfile(): Promise<void> {
     setProfileMessage(accountLoadError.value || '账户信息加载失败，请重试后再保存', true)
     return
   }
+  if (savingProfile.value || accountLoading.value) return
   if (!validateProfile()) return
+  const context = captureSession()
+  if (!context) {
+    clearUnavailableSession()
+    return
+  }
+  const sequence = ++profileSaveSeq
+  const submitted = normalizeAccount(profile)
   savingProfile.value = true
+  clearProfileMessageTimer()
+  profileMessage.value = ''
+  profileMessageError.value = false
   try {
-    await updateMyBasicInfo({ username: profile.username, phone: profile.phone, email: profile.email })
-    profileBaseline.value = accountSnapshot(profile)
+    const data = await updateMyBasicInfo(submitted)
+    if (!isCurrentOperation(context, sequence, profileSaveSeq)) return
+    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) throw new Error('保存结果为空，请稍后重试')
+    const server = normalizeAccount(data, submitted)
+    const current = normalizeAccount(profile)
+    profile.username = current.username !== submitted.username ? current.username : server.username
+    profile.phone = current.phone !== submitted.phone ? current.phone : server.phone
+    profile.email = current.email !== submitted.email ? current.email : server.email
+    profileBaseline.value = accountSnapshot(server)
+    const confirmedOwnerId = currentOwnerId()
+    const ownerId = confirmedOwnerId !== null
+      && (context.ownerId === null || sameOwner(context.ownerId, confirmedOwnerId))
+      ? confirmedOwnerId
+      : null
+    if (ownerId !== null && isCurrentSession(context)) {
+      authStore.updateCurrentUser({ username: server.username, phone: server.phone, email: server.email })
+      try {
+        window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: ownerId, username: server.username } }))
+      } catch (_) {}
+    }
     setProfileMessage('保存成功')
   } catch (error: unknown) {
+    if (!isCurrentOperation(context, sequence, profileSaveSeq)) return
     const msg = getApiErrorMessage(error)
-    if (/用户名/.test(msg)) errors.username = '该用户名已被使用'
-    if (/邮箱/.test(msg)) errors.email = '该邮箱已被使用'
-    if (/手机号/.test(msg)) errors.phone = '该手机号已被使用'
+    if (/用户名/.test(msg)) errors.username = msg
+    if (/邮箱/.test(msg)) errors.email = msg
+    if (/手机号/.test(msg)) errors.phone = msg
     setProfileMessage(msg || '保存失败', true)
   } finally {
-    savingProfile.value = false
+    clearStateOnSessionDrift(context, sequence, profileSaveSeq)
+    if (isCurrentOperation(context, sequence, profileSaveSeq)) savingProfile.value = false
   }
 }
 
@@ -161,22 +411,68 @@ async function onChangePassword(): Promise<void> {
     setPasswordMessage(accountLoadError.value || '账户信息加载失败，请重试后再保存', true)
     return
   }
+  if (savingPassword.value) return
   if (!validatePasswordForm()) return
+  const context = captureSession()
+  if (!context) {
+    clearUnavailableSession()
+    return
+  }
+  const sequence = ++passwordSeq
+  const submitted = { current: pwd.current, next: pwd.next, confirm: pwd.confirm }
   savingPassword.value = true
+  clearPasswordMessageTimer()
+  passwordMessage.value = ''
+  passwordMessageError.value = false
   try {
-    await updateMyPassword({ currentPassword: pwd.current, newPassword: pwd.next })
-    resetPwdForm()
+    await updateMyPassword({ currentPassword: submitted.current, newPassword: submitted.next })
+    if (!isCurrentOperation(context, sequence, passwordSeq)) return
+    if (pwd.current === submitted.current) pwd.current = ''
+    if (pwd.next === submitted.next) pwd.next = ''
+    if (pwd.confirm === submitted.confirm) pwd.confirm = ''
     setPasswordMessage('密码已修改')
   } catch (error: unknown) {
+    if (!isCurrentOperation(context, sequence, passwordSeq)) return
     const msg = getApiErrorMessage(error)
     if (/当前密码/.test(msg) || /不正确/.test(msg)) { errors.currentPassword = '当前密码不正确' }
     setPasswordMessage(msg || '修改失败', true)
   } finally {
-    savingPassword.value = false
+    clearStateOnSessionDrift(context, sequence, passwordSeq)
+    if (isCurrentOperation(context, sequence, passwordSeq)) savingPassword.value = false
   }
 }
 
-onMounted(() => { void reloadProfile() })
+watch(
+  [() => currentToken(), () => storedToken(), () => idKey(currentOwnerId())],
+  () => handleSessionSignal(),
+  { flush: 'sync' },
+)
+
+function onAuthStateChanged(): void {
+  if (disposed) return
+  observeSessionChange()
+  forceAuthSessionSignal()
+}
+
+onMounted(() => {
+  observedToken = currentToken()
+  observedStoredToken = storedToken()
+  observedOwnerKey = idKey(currentOwnerId())
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
+  void reloadProfile()
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  if (reloadTimer !== null) {
+    clearTimeout(reloadTimer)
+    reloadTimer = null
+  }
+  clearProfileMessageTimer()
+  clearPasswordMessageTimer()
+  invalidateOperations()
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
+})
 </script>
 
 <template>
@@ -194,14 +490,14 @@ onMounted(() => { void reloadProfile() })
         <legend class="text-base font-semibold">账户信息</legend>
         <div>
           <label for="settings-account-username" class="mb-1 block text-sm font-medium">账户名</label>
-          <input id="settings-account-username" v-model.trim="profile.username" type="text" placeholder="3-20 位字母、数字或下划线"
+          <input id="settings-account-username" v-model.trim="profile.username" type="text" maxlength="64" placeholder="3-64 位字母、数字或下划线"
                  :aria-invalid="errors.username ? 'true' : 'false'" :aria-describedby="errors.username ? 'settings-account-username-error' : undefined"
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.username" id="settings-account-username-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.username }}</p>
         </div>
         <div>
           <label for="settings-account-phone" class="mb-1 block text-sm font-medium">手机号</label>
-          <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" required placeholder="国内 11 位或含国家码"
+          <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" required placeholder="1 开头的 11 位手机号"
                  :aria-invalid="errors.phone ? 'true' : 'false'" :aria-describedby="errors.phone ? 'settings-account-phone-error' : undefined"
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.phone" id="settings-account-phone-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.phone }}</p>
@@ -213,6 +509,10 @@ onMounted(() => { void reloadProfile() })
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.email" id="settings-account-email-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.email }}</p>
         </div>
+
+        <p v-if="contactChanged" role="status" aria-live="polite" class="ui-muted text-sm">
+          更换后，新的邮箱或手机号暂不能用于验证码登录。请先确认其他登录方式可用，以免无法登录原账号。
+        </p>
 
         <div class="flex flex-col items-stretch gap-2 pt-2 sm:flex-row sm:items-center sm:justify-end">
           <span v-if="profileMessage" role="status" aria-live="polite" :class="['text-xs sm:mr-auto', profileMessageError ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300']">{{ profileMessage }}</span>

@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ThreadCreate from '../ThreadCreate.vue'
-import { createThread } from '@/api/threads'
+import { createThread } from '@/api/threadWrites'
 import { listSections } from '@/api/sections'
 import { useAuthStore } from '@/stores/auth'
 import type { Thread } from '@/types'
@@ -14,11 +14,13 @@ const mocks = vi.hoisted(() => ({
   listSections: vi.fn(),
   uploadImage: vi.fn(),
   beautifyMarkdown: vi.fn(),
+  getCurrentUser: vi.fn(),
 }))
 
-vi.mock('@/api/threads', () => ({ createThread: mocks.createThread }))
+vi.mock('@/api/threadWrites', () => ({ createThread: mocks.createThread }))
 vi.mock('@/api/sections', () => ({ listSections: mocks.listSections }))
 vi.mock('@/api/uploads', () => ({ uploadImage: mocks.uploadImage }))
+vi.mock('@/api/users', () => ({ getCurrentUser: mocks.getCurrentUser }))
 vi.mock('@/composables/useMarkdownTools', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/composables/useMarkdownTools')>(),
   beautifyMarkdown: mocks.beautifyMarkdown,
@@ -26,6 +28,7 @@ vi.mock('@/composables/useMarkdownTools', async (importOriginal) => ({
 
 const createThreadMock = vi.mocked(createThread)
 const listSectionsMock = vi.mocked(listSections)
+const getCurrentUserMock = mocks.getCurrentUser
 
 function createWrapper() {
   return mount(ThreadCreate, {
@@ -50,6 +53,7 @@ describe('ThreadCreate', () => {
     localStorage.clear()
     setActivePinia(createPinia())
     useAuthStore().applyAuthState({ accessToken: 'real-token' })
+    getCurrentUserMock.mockResolvedValue(null)
     listSectionsMock.mockResolvedValue({
       items: [{ id: 3, name: '编程' }],
       page: 1,
@@ -65,6 +69,191 @@ describe('ThreadCreate', () => {
       previewDefaultCollapsed: true,
       mobilePreviewExclusive: true,
     })
+    wrapper.unmount()
+  })
+
+  it('keeps form values and retries a failed section request', async () => {
+    listSectionsMock
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ items: [{ id: 3, name: '编程' }], page: 1, size: 100, total: 1 })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('#thread-create-title').setValue('保留标题')
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('分区加载失败')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(listSectionsMock).toHaveBeenCalledTimes(2)
+    expect((wrapper.get('#thread-create-title').element as HTMLInputElement).value).toBe('保留标题')
+    expect(wrapper.find('#thread-create-section option[value="3"]').exists()).toBe(true)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('distinguishes an empty section result from a failed request', async () => {
+    listSectionsMock.mockReset()
+    listSectionsMock.mockResolvedValueOnce({ items: [], page: 1, size: 100, total: 0 })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('暂无可用分区')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('warns and blocks publishing while the logged-in account identity is pending', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-pending', user: null })
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const warning = wrapper.get('[data-testid="thread-create-identity-warning"]')
+    expect(warning.text()).toContain('账号信息正在加载')
+    await wrapper.find('select').setValue('3')
+    await wrapper.get('#thread-create-title').setValue('待确认标题')
+    await wrapper.find('textarea').setValue('待确认正文')
+    await wrapper.findAll('button').find((button) => button.text() === '发布')!.trigger('click')
+
+    expect(createThreadMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('账号信息确认后才能发布')
+    wrapper.unmount()
+  })
+
+  it('explains why manual save is pending and leaves shared keys untouched', async () => {
+    const pendingDraft = JSON.stringify({ sectionId: '3', title: '不应共享', content: 'pending', tags: '' })
+    localStorage.setItem('thread-draft-v1:pending', pendingDraft)
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-pending', user: null })
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '保存到本机')!.trigger('click')
+
+    expect(wrapper.text()).toContain('账号信息尚未确认，当前输入不会保存为草稿')
+    expect(wrapper.text()).not.toContain('草稿保存失败')
+    expect(localStorage.getItem('thread-draft-v1:pending')).toBe(pendingDraft)
+    expect(Object.keys(localStorage).some((key) => key.includes('token-pending'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('preserves typed fields and writes them to the owner draft after identity hydration', async () => {
+    let resolveUser!: (value: { id: number; username: string }) => void
+    getCurrentUserMock.mockReturnValueOnce(new Promise((resolve) => { resolveUser = resolve }))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-pending', user: null })
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.find('select').setValue('3')
+    await wrapper.get('#thread-create-title').setValue('保留标题')
+    await wrapper.find('textarea').setValue('保留正文')
+    await wrapper.findAll('button').find((button) => button.text() === '重试账号信息')!.trigger('click')
+    expect(getCurrentUserMock).toHaveBeenCalledWith('token-pending')
+
+    resolveUser({ id: 7, username: 'owner-7' })
+    await flushPromises()
+    await nextTick()
+
+    expect(auth.user).toMatchObject({ id: 7, username: 'owner-7' })
+    expect((wrapper.get('#thread-create-title').element as HTMLInputElement).value).toBe('保留标题')
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('保留正文')
+    expect(JSON.parse(localStorage.getItem('thread-draft-v1:7') || '{}')).toMatchObject({
+      sectionId: 3,
+      title: '保留标题',
+      content: '保留正文',
+    })
+    expect(wrapper.find('[data-testid="thread-create-identity-warning"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('fills only empty fields from a preexisting owner draft after hydration', async () => {
+    getCurrentUserMock.mockResolvedValueOnce({ id: 7, username: 'owner-7' })
+    localStorage.setItem('thread-draft-v1:7', JSON.stringify({
+      sectionId: '3',
+      title: '已保存标题',
+      content: '已保存正文',
+      tags: '已保存标签',
+    }))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-pending', user: null })
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('#thread-create-title').setValue('当前输入标题')
+    await wrapper.find('textarea').setValue('当前输入正文')
+    await wrapper.findAll('button').find((button) => button.text() === '重试账号信息')!.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect((wrapper.get('#thread-create-title').element as HTMLInputElement).value).toBe('当前输入标题')
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('当前输入正文')
+    expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('3')
+    expect((wrapper.find('#thread-create-tags').element as HTMLInputElement).value).toBe('已保存标签')
+    wrapper.unmount()
+  })
+
+  it('invalidates editor work when the token changes even if the owner ID stays the same', async () => {
+    let resolveFormat!: (value: string) => void
+    mocks.beautifyMarkdown.mockReturnValueOnce(new Promise<string>((resolve) => { resolveFormat = resolve }))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-a', user: { id: 7, username: 'same-owner' } })
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('账号 A 正文')
+    await wrapper.findAll('button').find((button) => button.text() === '美化内容')!.trigger('click')
+
+    auth.applyAuthState({ accessToken: 'token-b', user: { id: 7, username: 'same-owner' } })
+    await nextTick()
+    resolveFormat('不应覆盖的新账号正文')
+    await flushPromises()
+
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('账号 A 正文')
+    wrapper.unmount()
+  })
+
+  it('ignores a stale identity retry after switching from token A to token B', async () => {
+    let resolveOldUser!: (value: { id: number; username: string }) => void
+    getCurrentUserMock.mockReturnValueOnce(new Promise((resolve) => { resolveOldUser = resolve }))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-a', user: null })
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '重试账号信息')!.trigger('click')
+
+    auth.applyAuthState({ accessToken: 'token-b', user: null })
+    await nextTick()
+    await wrapper.get('#thread-create-title').setValue('B 当前输入')
+    resolveOldUser({ id: 1, username: 'account-a' })
+    await flushPromises()
+
+    expect(auth.user).toBeNull()
+    expect((wrapper.get('#thread-create-title').element as HTMLInputElement).value).toBe('B 当前输入')
+    expect(wrapper.text()).toContain('账号信息正在加载')
+    expect(localStorage.getItem('thread-draft-v1:1')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('allows a second identity retry after the first attempt fails', async () => {
+    getCurrentUserMock.mockRejectedValueOnce(new Error('temporary account lookup failure'))
+      .mockResolvedValueOnce({ id: 8, username: 'owner-8' })
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-pending', user: null })
+    const wrapper = createWrapper()
+    await flushPromises()
+    const retry = wrapper.findAll('button').find((button) => button.text() === '重试账号信息')!
+    await retry.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('账号信息加载失败，请重试')
+    expect(retry.attributes('disabled')).toBeUndefined()
+    await retry.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(getCurrentUserMock).toHaveBeenCalledTimes(2)
+    expect(auth.user).toMatchObject({ id: 8, username: 'owner-8' })
+    expect(wrapper.find('[data-testid="thread-create-identity-warning"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -87,6 +276,47 @@ describe('ThreadCreate', () => {
     expect(publish.attributes('disabled')).toBeUndefined()
     expect(wrapper.get('textarea').element.value).toBe('保留这段正文')
     expect(wrapper.text()).toContain('网络失败')
+    wrapper.unmount()
+  })
+
+  it('blocks image upload when persisted auth drifts and preserves the editor draft', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-owner', user: { id: 1, username: 'owner-1' } })
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('#thread-create-title').setValue('漂移前标题')
+    await wrapper.find('textarea').setValue('漂移前正文')
+    localStorage.setItem('accessToken', 'token-other')
+
+    const upload = wrapper.findComponent(MarkdownTextareaEditor).props('uploadImage')!
+    await expect(upload(new File(['image'], 'image.png', { type: 'image/png' }))).resolves.toBe('')
+
+    expect(mocks.uploadImage).not.toHaveBeenCalled()
+    expect((wrapper.get('#thread-create-title').element as HTMLInputElement).value).toBe('漂移前标题')
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('漂移前正文')
+    expect(wrapper.text()).toContain('登录状态已变化')
+    wrapper.unmount()
+  })
+
+  it('blocks image upload after logout while retaining the owner draft', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-owner', user: { id: 1, username: 'owner-1' } })
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('#thread-create-title').setValue('退出前标题')
+    await wrapper.find('textarea').setValue('退出前正文')
+    await wrapper.findAll('button').find((button) => button.text() === '保存到本机')!.trigger('click')
+    expect(localStorage.getItem('thread-draft-v1:1')).toContain('退出前正文')
+
+    auth.clearAuthState()
+    await nextTick()
+    await flushPromises()
+    const upload = wrapper.findComponent(MarkdownTextareaEditor).props('uploadImage')!
+    await expect(upload(new File(['image'], 'image.png', { type: 'image/png' }))).resolves.toBe('')
+
+    expect(mocks.uploadImage).not.toHaveBeenCalled()
+    expect(localStorage.getItem('thread-draft-v1:1')).toContain('退出前正文')
+    expect(wrapper.text()).toContain('请先登录后上传图片')
     wrapper.unmount()
   })
 
@@ -124,6 +354,7 @@ describe('ThreadCreate', () => {
   })
 
   it('rejects oversized content restored or inserted programmatically without posting it', async () => {
+    useAuthStore().applyAuthState({ accessToken: 'real-token', user: { id: 9, username: 'test-user' } })
     const wrapper = createWrapper()
     await flushPromises()
     await wrapper.find('select').setValue('3')
@@ -137,6 +368,7 @@ describe('ThreadCreate', () => {
   })
 
   it('prevents duplicate direct submits, keeps an empty form, and links to the created thread', async () => {
+    useAuthStore().applyAuthState({ accessToken: 'real-token', user: { id: 9, username: 'test-user' } })
     let resolveCreate!: (value: Thread) => void
     createThreadMock.mockReturnValueOnce(new Promise<Thread>((resolve) => {
       resolveCreate = resolve

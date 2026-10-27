@@ -3,6 +3,7 @@ package com.example.demo.notifications.outbox;
 import com.example.demo.user.service.UserSettingsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -14,10 +15,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -144,35 +147,64 @@ public class NotificationOutboxService {
 
     private List<Delivery> claim(String owner, int limit) {
         Instant now = clock.instant();
+        int pageSize = Math.min(limit, 100);
+        Set<Long> attemptedIds = new HashSet<>();
+        Map<Long, Delivery> claimed = new LinkedHashMap<>();
+        while (true) {
+            boolean widen = false;
+            for (NotificationOutbox candidate : readCandidates(now, pageSize)) {
+                if (claimed.size() >= limit || candidate.getId() == null) {
+                    break;
+                }
+                if (!attemptedIds.add(candidate.getId())) {
+                    continue;
+                }
+                // A late committed lease may already be expired; match the attempt snapshot too.
+                int expectedAttempts = candidate.getAttempts();
+                Delivery delivery = Delivery.from(candidate, expectedAttempts + 1);
+                int updated = repository.claim(
+                        candidate.getId(),
+                        NotificationOutboxStatus.PENDING,
+                        NotificationOutboxStatus.IN_FLIGHT,
+                        now,
+                        owner,
+                        now.plus(leaseDuration),
+                        expectedAttempts
+                );
+                if (updated == 1) {
+                    claimed.put(candidate.getId(), delivery);
+                } else if (pageSize < 100) {
+                    // A short first window can hide an older row behind a lost head;
+                    // widen once, keep the same cutoff, and skip every attempted id.
+                    widen = true;
+                    break;
+                }
+            }
+            if (!widen) {
+                break;
+            }
+            pageSize = 100;
+        }
+        return List.copyOf(claimed.values());
+    }
+
+    private List<NotificationOutbox> readCandidates(Instant now, int pageSize) {
         List<NotificationOutbox> candidates = new ArrayList<>();
-        candidates.addAll(repository.findTop100ByStatusAndAvailableAtLessThanEqualOrderByAvailableAtAscIdAsc(
-                NotificationOutboxStatus.PENDING, now));
-        candidates.addAll(repository.findTop100ByStatusAndLeaseUntilLessThanOrderByLeaseUntilAscIdAsc(
-                NotificationOutboxStatus.IN_FLIGHT, now));
+        candidates.addAll(repository.findByStatusAndAvailableAtLessThanEqualOrderByAvailableAtAscIdAsc(
+                NotificationOutboxStatus.PENDING,
+                now,
+                PageRequest.of(0, pageSize)
+        ));
+        candidates.addAll(repository.findByStatusAndLeaseUntilLessThanOrderByLeaseUntilAscIdAsc(
+                NotificationOutboxStatus.IN_FLIGHT,
+                now,
+                PageRequest.of(0, pageSize)
+        ));
         // Old expired leases remain eligible even while new pending events keep arriving.
         candidates.sort(Comparator.comparing((NotificationOutbox row) ->
                 row.getStatus() == NotificationOutboxStatus.IN_FLIGHT ? row.getLeaseUntil() : row.getAvailableAt())
                 .thenComparing(NotificationOutbox::getId));
-
-        Map<Long, Delivery> claimed = new LinkedHashMap<>();
-        for (NotificationOutbox candidate : candidates) {
-            if (claimed.size() >= limit || candidate.getId() == null) {
-                break;
-            }
-            Delivery delivery = Delivery.from(candidate, candidate.getAttempts() + 1);
-            int updated = repository.claim(
-                    candidate.getId(),
-                    NotificationOutboxStatus.PENDING,
-                    NotificationOutboxStatus.IN_FLIGHT,
-                    now,
-                    owner,
-                    now.plus(leaseDuration)
-            );
-            if (updated == 1) {
-                claimed.put(candidate.getId(), delivery);
-            }
-        }
-        return List.copyOf(claimed.values());
+        return candidates;
     }
 
     @Transactional

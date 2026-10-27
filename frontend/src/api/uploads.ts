@@ -1,4 +1,4 @@
-import api from './client'
+import api, { assertAutomaticRequestOwnsCurrentSession } from './client'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { AxiosProgressEvent } from 'axios'
 import { decodeMediaAsset, trackMediaUpload, type MediaAssetState } from '@/composables/mediaProcessingState'
@@ -16,7 +16,9 @@ export async function uploadImage(
 ): Promise<UploadImageResponse> {
   const form = new FormData()
   form.append('file', file)
-  const authToken = hasRealToken(token) ? token : getStoredAccessToken()
+  const explicitAuthToken = typeof token === 'string' && hasRealToken(token) ? token : null
+  const authToken = explicitAuthToken ?? getStoredAccessToken()
+  if (explicitAuthToken === null) assertAutomaticRequestOwnsCurrentSession(authToken)
   const { data } = await api.post('/uploads/images', form, {
     headers: {
       ...(hasRealToken(authToken) ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -27,7 +29,7 @@ export async function uploadImage(
       if (onProgress) onProgress(percent)
     }
   })
-  if (authToken) trackMediaUpload(data, authToken)
+  if (hasRealToken(authToken)) trackMediaUpload(data, authToken)
   return data
 }
 

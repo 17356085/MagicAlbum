@@ -11,7 +11,10 @@
 
     <div v-show="!followCollapsed" class="px-2 pb-2">
       <div v-if="followLoading" class="py-4 text-center text-xs text-gray-400">加载中...</div>
-      <div v-else-if="followError" class="py-4 text-center text-xs text-red-500">{{ followError }}</div>
+      <div v-else-if="followError" class="flex flex-wrap items-center justify-center gap-2 py-4 text-xs text-[var(--ui-danger)]" role="alert">
+        <span>{{ followError }}</span>
+        <button type="button" class="ui-button min-h-11" @click="resetAndReload">重试</button>
+      </div>
       <div v-else-if="feedItems.length === 0" class="py-4 text-center text-xs text-gray-400">暂无动态</div>
       <ul v-else class="space-y-1">
         <li v-for="item in feedItems" :key="item.id" class="group rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50">
@@ -43,7 +46,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { listFollowingFeed, type FollowingFeedItem } from '@/api/followingFeed'
-import { getCurrentUser } from '@/api/users'
+import { getStoredAccessToken } from '@/utils/authStorage'
 import { formatRelativeTime } from '@/composables/time'
 import { normalizeImageUrl } from '@/utils/image'
 import type { Id } from '@/types'
@@ -55,6 +58,8 @@ const feedItems = ref<FollowingFeedItem[]>([])
 const followLoading = ref(false)
 const followError = ref('')
 let followRequestSeq = 0
+let followSessionEpoch = 0
+let reloadQueued = false
 let disposed = false
 
 function toggleFollowCollapsed(): void {
@@ -62,38 +67,48 @@ function toggleFollowCollapsed(): void {
   try { localStorage.setItem('sidebar_follow_collapsed', String(followCollapsed.value)) } catch (_) {}
 }
 
-const currentUserId = computed(() => user.value?.id || user.value?.userId || null)
+const currentUserId = computed(() => user.value?.id ?? user.value?.userId ?? null)
 
 interface FeedRequestContext {
   sequence: number
-  identity: string
+  epoch: number
+  token: string
+  accountId: Id | null
 }
 
-function currentAccountIdentity(): string {
-  if (!isLoggedIn.value) return 'logged-out'
-  const current = user.value
-  const id = current?.id ?? current?.userId
-  if (id !== undefined && id !== null) return `id:${String(id)}`
-  return `username:${String(current?.username || '').trim().toLowerCase()}`
+function createRequestContext(): FeedRequestContext {
+  return {
+    sequence: ++followRequestSeq,
+    epoch: followSessionEpoch,
+    token: authStore.token,
+    accountId: currentUserId.value,
+  }
 }
 
 function isCurrentRequest(request: FeedRequestContext): boolean {
-  return !disposed && request.sequence === followRequestSeq && isLoggedIn.value && currentAccountIdentity() === request.identity
+  return !disposed
+    && request.sequence === followRequestSeq
+    && request.epoch === followSessionEpoch
+    && request.token === authStore.token
+    && getStoredAccessToken() === request.token
+    && isLoggedIn.value
 }
 
 async function resolveCurrentUserId(request: FeedRequestContext): Promise<Id | null> {
   if (!isCurrentRequest(request)) return null
-  if (!isLoggedIn.value) return null
-  if (currentUserId.value) return currentUserId.value
+  const knownId = currentUserId.value
+  if (knownId !== null && knownId !== undefined) {
+    request.accountId = knownId
+    return knownId
+  }
   try {
-    const current = await getCurrentUser()
+    const refreshed = await authStore.refreshCurrentUser()
     if (!isCurrentRequest(request)) return null
-    const id = current?.id || current?.userId || null
-    if (current && id) {
-      authStore.updateCurrentUser(current)
-      request.identity = currentAccountIdentity()
-      return id
-    }
+    if (!refreshed) return null
+    const hydratedId = currentUserId.value
+    if (hydratedId === null || hydratedId === undefined) return null
+    request.accountId = hydratedId
+    return hydratedId
   } catch (_) {}
   return null
 }
@@ -108,10 +123,7 @@ function avatarOf(item: FollowingFeedItem): string {
 }
 
 async function loadFeedItems(): Promise<void> {
-  const request: FeedRequestContext = {
-    sequence: ++followRequestSeq,
-    identity: currentAccountIdentity(),
-  }
+  const request = createRequestContext()
   if (disposed) return
   if (!isLoggedIn.value) {
     feedItems.value = []
@@ -125,10 +137,12 @@ async function loadFeedItems(): Promise<void> {
   try {
     const userId = await resolveCurrentUserId(request)
     if (!isCurrentRequest(request)) return
-    if (!userId) {
+    if (userId === null || userId === undefined) {
       feedItems.value = []
+      followError.value = '账号信息加载失败，请重试'
       return
     }
+    if (!isCurrentRequest(request)) return
     const page = await listFollowingFeed({ page: 1, size: 4 })
     if (isCurrentRequest(request)) feedItems.value = page.items
   } catch (_) {
@@ -141,14 +155,35 @@ async function loadFeedItems(): Promise<void> {
   }
 }
 
+function queueReload(): void {
+  if (disposed || reloadQueued) return
+  reloadQueued = true
+  queueMicrotask(() => {
+    reloadQueued = false
+    if (disposed) return
+    void loadFeedItems()
+  })
+}
+
 function resetAndReload(): void {
   if (disposed) return
+  followSessionEpoch += 1
   followRequestSeq += 1
   feedItems.value = []
   followError.value = ''
   followLoading.value = false
-  void loadFeedItems()
+  queueReload()
 }
+
+function onAuthStateChanged(): void {
+  resetAndReload()
+}
+
+const stopAuthWatch = watch(
+  [() => authStore.token, () => currentUserId.value, () => isLoggedIn.value],
+  () => resetAndReload(),
+  { flush: 'sync' },
+)
 
 onMounted(() => {
   try {
@@ -156,16 +191,17 @@ onMounted(() => {
     if (raw === 'true') followCollapsed.value = true
   } catch (_) {}
   void loadFeedItems()
-  window.addEventListener('follow-state-updated', loadFeedItems)
-  window.addEventListener('auth-state-changed', resetAndReload)
+  window.addEventListener('follow-state-updated', resetAndReload)
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
 })
-
-watch([currentUserId, isLoggedIn], () => resetAndReload())
 
 onBeforeUnmount(() => {
   disposed = true
+  followSessionEpoch += 1
   followRequestSeq += 1
-  window.removeEventListener('follow-state-updated', loadFeedItems)
-  window.removeEventListener('auth-state-changed', resetAndReload)
+  reloadQueued = false
+  stopAuthWatch()
+  window.removeEventListener('follow-state-updated', resetAndReload)
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
 })
 </script>

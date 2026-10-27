@@ -65,14 +65,24 @@
             type="text" 
             placeholder="和我说说话吧..." 
             class="ui-field flex-1 text-sm" aria-label="聊天消息"
-            :disabled="isTyping"
+            :disabled="isGuest || isTyping"
           />
           <button 
+            v-if="!isGuest"
             @click="send" 
             :disabled="!inputMsg.trim() || isTyping"
             class="ui-button-primary disabled:opacity-50 whitespace-nowrap"
           >
             发送
+          </button>
+          <button
+            v-else
+            type="button"
+            @click="requestLogin"
+            class="ui-button-primary whitespace-nowrap"
+            aria-label="登录后聊天"
+          >
+            登录后聊天
           </button>
           <button
             v-if="isTyping"
@@ -82,13 +92,16 @@
             停止
           </button>
         </div>
+        <p v-if="isGuest" class="mt-2 text-xs text-gray-500 dark:text-gray-400" role="status">
+          登录后才能和小祥聊天
+        </p>
         <div class="mt-1 text-[10px] text-gray-400 dark:text-gray-500 text-center">
           内容由 AI 生成，仅供娱乐
         </div>
       </div>
     </div>
   
-    <button v-if="!isOpen" type="button" @click="isOpen = true" class="chat-launcher flex h-12 w-12 items-center justify-center rounded-xl" title="找小祥聊天" aria-label="找小祥聊天">
+    <button v-if="!isOpen" type="button" @click="openFromLauncher" class="chat-launcher flex h-12 w-12 items-center justify-center rounded-xl" title="找小祥聊天" aria-label="找小祥聊天">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="h-6 w-6" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 3-2Z" stroke-linejoin="round"/><path d="M7 9h10M7 13h6" stroke-linecap="round"/></svg>
     </button>
   </div>
@@ -127,8 +140,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { createChatStream } from '@/api/ai'
 import type { AiChatMessage, ChatStreamHandle } from '@/api/ai'
+import { useAuthStore } from '@/stores/auth'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 
 const route = useRoute()
+const authStore = useAuthStore()
 const isSettingsRoute = computed(() => route.path === '/settings' || route.path.startsWith('/settings/'))
 const isOpen = ref(false)
 const inputMsg = ref('')
@@ -137,16 +153,146 @@ const msgListRef = ref<HTMLElement | null>(null)
 const streamHandle = ref<ChatStreamHandle | null>(null)
 const chatInputRef = ref<HTMLInputElement | null>(null)
 let opener: HTMLElement | null = null
+let disposed = false
+
+const WELCOME_MESSAGE = '……你是谁？如果是无关紧要的事，请不要打扰我。'
+type OwnerKey = string | null
+
+interface ActorContext {
+  memoryToken: string
+  persistedToken: string
+  ownerKey: OwnerKey
+}
+
+interface ChatRequest {
+  epoch: number
+  context: ActorContext
+  messages: AiChatMessage[]
+  handle: ChatStreamHandle | null
+  active: boolean
+  replyIndex: number
+  currentReply: string
+}
+
+const history = ref<AiChatMessage[]>([
+  { role: 'assistant', content: WELCOME_MESSAGE }
+])
+
+let actorEpoch = 0
+let actorContext = readActorContext()
+const contextVersion = ref(0)
+let activeRequest: ChatRequest | null = null
+
+function normalizeToken(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function readOwnerKey(value: unknown): OwnerKey {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const record = value as { id?: unknown; userId?: unknown }
+  const id = record.id ?? record.userId
+  if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) return `id:${id}`
+  if (typeof id === 'string' && /^[1-9]\d*$/.test(id.trim())) return `id:${id.trim()}`
+  return null
+}
+
+function readActorContext(): ActorContext {
+  return {
+    memoryToken: normalizeToken(authStore.token),
+    persistedToken: getStoredAccessToken(),
+    ownerKey: readOwnerKey(authStore.user),
+  }
+}
+
+function sameRequestContext(left: ActorContext, right: ActorContext): boolean {
+  if (!sameTokenPair(left, right)) return false
+  // Identity hydration confirms the owner for the same token. It must not
+  // invalidate a request that started while the store was still unknown.
+  return left.ownerKey === right.ownerKey || (left.ownerKey === null && right.ownerKey !== null)
+}
+
+function sameTokenPair(left: ActorContext, right: ActorContext): boolean {
+  return left.memoryToken === right.memoryToken && left.persistedToken === right.persistedToken
+}
+
+function isIdentityHydration(previous: ActorContext, next: ActorContext): boolean {
+  return sameTokenPair(previous, next) && previous.ownerKey === null && next.ownerKey !== null
+}
+
+function invalidateRequest(request: ChatRequest | null): void {
+  if (!request) return
+  request.active = false
+  if (activeRequest === request) {
+    activeRequest = null
+    if (streamHandle.value === request.handle) streamHandle.value = null
+  }
+}
+
+function resetChatState(): void {
+  const request = activeRequest
+  const handle = request?.handle || streamHandle.value
+  if (request) invalidateRequest(request)
+  else streamHandle.value = null
+  // Invalidate and clear every visible state before invoking cancel(). A
+  // transport may call its callbacks synchronously while it is being stopped.
+  isTyping.value = false
+  inputMsg.value = ''
+  history.value = [{ role: 'assistant', content: WELCOME_MESSAGE }]
+  isOpen.value = false
+  opener = null
+  handle?.cancel()
+}
+
+function syncActorContext(forceBoundary = false): void {
+  const next = readActorContext()
+  const tokenChanged = !sameTokenPair(actorContext, next)
+  const ownerChanged = actorContext.ownerKey !== next.ownerKey
+  const changed = tokenChanged || ownerChanged
+  if (!changed && !forceBoundary) return
+
+  const preserveHydration = !forceBoundary && isIdentityHydration(actorContext, next)
+  actorContext = next
+  contextVersion.value += 1
+  if (!preserveHydration && (forceBoundary || tokenChanged || ownerChanged)) {
+    actorEpoch += 1
+    resetChatState()
+  }
+}
+
+const isGuest = computed(() => {
+  // The version keeps storage drift visible after an auth event or an
+  // explicit send/callback guard synchronizes the context.
+  void contextVersion.value
+  const current = readActorContext()
+  return !hasRealToken(current.memoryToken) || current.memoryToken !== current.persistedToken
+})
+
+function isCurrentRequest(request: ChatRequest): boolean {
+  if (disposed || !request.active || activeRequest !== request || request.epoch !== actorEpoch) return false
+  syncActorContext()
+  if (disposed || !request.active || activeRequest !== request || request.epoch !== actorEpoch) return false
+  return sameRequestContext(request.context, actorContext)
+    && actorContext.memoryToken === actorContext.persistedToken
+}
+
+function snapshotMessages(messages: readonly AiChatMessage[]): AiChatMessage[] {
+  return messages.map(message => Object.freeze({
+    role: message.role,
+    content: message.content,
+  }) as AiChatMessage)
+}
 
 function openFromAccount(): void {
+  syncActorContext()
   opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
   isOpen.value = true
   void nextTick(() => chatInputRef.value?.focus())
 }
 
-const history = ref<AiChatMessage[]>([
-  { role: 'assistant', content: '……你是谁？如果是无关紧要的事，请不要打扰我。' }
-])
+function openFromLauncher(): void {
+  syncActorContext()
+  isOpen.value = true
+}
 
 function scrollToBottom(): void {
   nextTick(() => {
@@ -162,10 +308,14 @@ watch(isOpen, (val) => {
 })
 
 function stop(): void {
-  const handle = streamHandle.value
-  streamHandle.value = null
-  handle?.cancel()
+  const request = activeRequest
+  const handle = request?.handle || streamHandle.value
+  if (request) invalidateRequest(request)
+  else streamHandle.value = null
   isTyping.value = false
+  // The request is invalidated before cancel so synchronous transport
+  // callbacks cannot alter state belonging to a later request/session.
+  handle?.cancel()
 }
 
 function close(): void {
@@ -175,9 +325,18 @@ function close(): void {
   opener = null
 }
 
+function requestLogin(): void {
+  window.dispatchEvent(new CustomEvent('open-login-modal', { detail: { source: 'ai-chat' } }))
+}
+
 function send(): void {
   const content = inputMsg.value.trim()
-  if (!content || isTyping.value) return
+  syncActorContext()
+  if (disposed || !content || isTyping.value) return
+  if (isGuest.value) {
+    requestLogin()
+    return
+  }
 
   // 添加用户消息
   history.value.push({ role: 'user', content })
@@ -185,51 +344,104 @@ function send(): void {
   isTyping.value = true
   scrollToBottom()
 
-  const contextMessages = history.value.slice(-10)
+  const request: ChatRequest = {
+    epoch: actorEpoch,
+    context: { ...actorContext },
+    messages: snapshotMessages(history.value.slice(-10)),
+    handle: null,
+    active: true,
+    replyIndex: -1,
+    currentReply: '',
+  }
+  activeRequest = request
 
-  let currentReply = ''
-  let replyIndex = -1
+  const onMessage = (data: unknown): void => {
+    if (!isCurrentRequest(request)) return
+    const payload = (data ?? {}) as Partial<AiChatMessage>
+    // 收到第一个 chunk 时，初始化 assistant 消息
+    if (request.replyIndex === -1) {
+      history.value.push({ role: 'assistant', content: '' })
+      request.replyIndex = history.value.length - 1
+      // Keep the stream controls visible until the provider closes or is cancelled.
+    }
+    request.currentReply += (payload.content || '')
+    const reply = history.value[request.replyIndex]
+    if (!reply) return
+    reply.content = request.currentReply
+    scrollToBottom()
+  }
 
-  const handle = createChatStream(
-    contextMessages,
-    (data) => {
-      const payload = (data ?? {}) as Partial<AiChatMessage>
-      // 收到第一个 chunk 时，初始化 assistant 消息
-      if (replyIndex === -1) {
-        history.value.push({ role: 'assistant', content: '' })
-        replyIndex = history.value.length - 1
-        // Keep the stream controls visible until the provider closes or is cancelled.
-      }
-      currentReply += (payload.content || '')
-      history.value[replyIndex].content = currentReply
+  const onError = (): void => {
+    if (!isCurrentRequest(request)) return
+    if (request.replyIndex === -1 || !history.value[request.replyIndex]?.content) {
+      history.value.push({ role: 'assistant', content: '呜呜，连接出错了，请稍后再试...' })
       scrollToBottom()
-    },
-    () => {
-      if (streamHandle.value !== handle) return
-      isTyping.value = false
-      if (replyIndex === -1 || !history.value[replyIndex]?.content) {
+    }
+    isTyping.value = false
+    invalidateRequest(request)
+  }
+
+  const onComplete = (): void => {
+    if (!isCurrentRequest(request)) return
+    isTyping.value = false
+    invalidateRequest(request)
+  }
+
+  let handle: ChatStreamHandle | null = null
+  try {
+    handle = createChatStream(request.messages, onMessage, onError, onComplete)
+  } catch (_) {
+    if (isCurrentRequest(request)) {
+      if (request.replyIndex === -1 || !history.value[request.replyIndex]?.content) {
         history.value.push({ role: 'assistant', content: '呜呜，连接出错了，请稍后再试...' })
         scrollToBottom()
       }
+      isTyping.value = false
+      invalidateRequest(request)
+    }
+    return
+  }
+
+  request.handle = handle
+  if (!request.active || activeRequest !== request || !isCurrentRequest(request)) {
+    handle.cancel()
+    return
+  }
+  streamHandle.value = handle
+  void handle.done.then(
+    () => {
+      if (isCurrentRequest(request)) {
+        isTyping.value = false
+        invalidateRequest(request)
+      }
     },
     () => {
-      if (streamHandle.value === handle) {
+      if (isCurrentRequest(request)) {
         isTyping.value = false
+        invalidateRequest(request)
       }
-    }
+    },
   )
-  streamHandle.value = handle
-  void handle.done.finally(() => {
-    if (streamHandle.value === handle) {
-      streamHandle.value = null
-      isTyping.value = false
-    }
-  })
 }
 
-onMounted(() => window.addEventListener('open-ai-chat', openFromAccount))
+function onAuthStateChanged(): void {
+  syncActorContext(true)
+}
+
+watch(
+  () => [authStore.token, readOwnerKey(authStore.user)],
+  () => syncActorContext(),
+  { flush: 'sync' },
+)
+
+onMounted(() => {
+  window.addEventListener('open-ai-chat', openFromAccount)
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
+})
 onBeforeUnmount(() => {
+  disposed = true
   window.removeEventListener('open-ai-chat', openFromAccount)
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
   stop()
 })
 </script>

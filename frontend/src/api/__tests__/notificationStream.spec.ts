@@ -46,6 +46,42 @@ describe('authenticated notification stream', () => {
     }
   })
 
+  it('accepts many bounded events coalesced into one large network chunk', async () => {
+    const payload = Array.from({ length: 1000 }, (_, index) => {
+      const id = String(index + 1)
+      return `event:notification\nid:${id}\ndata:{"cursor":"${id}","notificationId":"12","kind":"created"}\n\n`
+    }).join('')
+    expect(payload.length).toBeGreaterThan(65536)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([payload])))
+    const changes = vi.fn()
+
+    await readNotificationStream('owner-token', undefined, new AbortController().signal, changes)
+
+    expect(changes).toHaveBeenCalledTimes(1000)
+    expect(changes).toHaveBeenLastCalledWith({ cursor: '1000', notificationId: '12', kind: 'created' })
+  })
+
+  it('bounds multiline event data across chunks before dispatch', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+      'event:notification\nid:1\n',
+      'data:' + 'x'.repeat(8000) + '\n',
+      'data:' + 'x'.repeat(8000) + '\n',
+      'data:' + 'x'.repeat(400) + '\n\n',
+    ])))
+    const changes = vi.fn()
+
+    await expect(readNotificationStream('owner-token', undefined, new AbortController().signal, changes))
+      .rejects.toBeInstanceOf(NotificationStreamError)
+    expect(changes).not.toHaveBeenCalled()
+  })
+
+  it('rejects an oversized unfinished line split across network chunks', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(['data:' + 'x'.repeat(8000), 'x'.repeat(200)])))
+
+    await expect(readNotificationStream('owner-token', undefined, new AbortController().signal, vi.fn()))
+      .rejects.toBeInstanceOf(NotificationStreamError)
+  })
+
   it('discards frames from an old token or an aborted owner', async () => {
     const payload = 'event:reset\nid:0\ndata:{"kind":"reset"}\n\n'
     const changes = vi.fn()

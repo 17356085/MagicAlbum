@@ -27,6 +27,8 @@ export function handleMarkdownKeydown(event: KeyboardEvent, context: KeydownCont
     applyResult,
   } = context
 
+  if (event.isComposing || event.keyCode === 229) return
+
   if ((showLinkPanel || showImagePanel) && event.key === 'Escape') {
     event.preventDefault()
     if (showLinkPanel) closeLinkPanel()

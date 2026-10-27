@@ -10,18 +10,51 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Instant;
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SectionServiceTest {
+
+    @Test
+    void list_should_reuse_cache_for_equivalent_normalized_pagination() {
+        for (int[] pagination : new int[][]{{0, 101, 100}, {-5, 0, 1}}) {
+            SectionRepository repository = mock(SectionRepository.class);
+            StringRedisTemplate redis = mock(StringRedisTemplate.class);
+            ValueOperations<String, String> values = mock(ValueOperations.class);
+            Map<String, String> entries = new HashMap<>();
+            when(redis.opsForValue()).thenReturn(values);
+            when(values.get(anyString())).thenAnswer(call -> entries.get(call.getArgument(0)));
+            doAnswer(call -> {
+                entries.put(call.getArgument(0), call.getArgument(1));
+                return null;
+            }).when(values).set(anyString(), anyString(), any(Duration.class));
+            PageRequest effectivePage = PageRequest.of(0, pagination[2]);
+            when(repository.search(eq("tech"), eq(effectivePage)))
+                    .thenReturn(new PageImpl<>(List.of(section(1L, "Tech", "tech")), effectivePage, 1));
+            SectionService service = new SectionService(repository, redis, null);
+
+            service.list(" tech ", pagination[0], pagination[1]);
+            Page<Section> cached = service.list("tech", 1, pagination[2]);
+
+            assertThat(cached.getContent()).extracting(Section::getName).containsExactly("Tech");
+            assertThat(cached.getNumber()).isZero();
+            assertThat(cached.getSize()).isEqualTo(pagination[2]);
+            verify(repository, times(1)).search("tech", effectivePage);
+            assertThat(entries).hasSize(1).containsKey("cache:sections:list:tech:1:" + pagination[2]);
+        }
+    }
 
     @Test
     void list_should_cache_result_in_redis() {

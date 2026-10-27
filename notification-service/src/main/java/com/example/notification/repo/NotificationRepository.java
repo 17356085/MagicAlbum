@@ -74,8 +74,8 @@ public class NotificationRepository {
         return matches.stream().findFirst();
     }
 
-    public void markRead(Long id, Long userId) {
-        jdbcTemplate.update("UPDATE notifications SET read_flag = TRUE WHERE id = ? AND user_id = ?", id, userId);
+    public boolean markRead(Long id, Long userId) {
+        return jdbcTemplate.update("UPDATE notifications SET read_flag = TRUE WHERE id = ? AND user_id = ? AND read_flag = FALSE", id, userId) > 0;
     }
 
     public Optional<Notification> findByIdempotencyKey(String idempotencyKey) {

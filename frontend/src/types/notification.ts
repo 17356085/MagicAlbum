@@ -2,17 +2,17 @@ import type { Id } from './common'
 
 export interface NotificationItem {
   id: Id
-  type?: string
-  title?: string
-  content?: string
+  type?: string | null
+  title?: string | null
+  content?: string | null
   read?: boolean
-  createdAt?: string
-  actorName?: string
-  actorId?: Id
-  threadId?: Id
-  targetId?: Id
-  targetType?: string
-  link?: string
+  createdAt?: string | null
+  actorName?: string | null
+  actorId?: Id | null
+  threadId?: Id | null
+  targetId?: Id | null
+  targetType?: string | null
+  link?: string | null
 }
 
 export interface NotificationInAppSettings {

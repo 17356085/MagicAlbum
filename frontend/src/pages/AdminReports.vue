@@ -114,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   listAdminReports,
   resolveAdminReport,
@@ -171,6 +171,7 @@ const roleSummary = computed(() => {
 })
 
 let lifecycle = 0
+let disposed = false
 let reportsRequestSeq = 0
 let activeSession: SessionSnapshot = { token: '', generation: 0 }
 
@@ -184,10 +185,10 @@ function captureSession(): SessionSnapshot {
 }
 
 function sessionCurrent(snapshot: SessionSnapshot, run: number, requestSeq?: number): boolean {
-  if (run !== lifecycle || (requestSeq !== undefined && requestSeq !== reportsRequestSeq)) return false
+  if (disposed || run !== lifecycle || (requestSeq !== undefined && requestSeq !== reportsRequestSeq)) return false
   if (getStoredAccessToken() !== snapshot.token) return false
   const store = authStoreOrNull()
-  return !store || store.isAuthGenerationCurrent(snapshot.generation)
+  return !store || (store.token === snapshot.token && store.isAuthGenerationCurrent(snapshot.generation))
 }
 
 function errorStatus(error: unknown): number | undefined {
@@ -209,6 +210,16 @@ function enterDenied(message: string): void {
   reasonError.value = ''
   feedback.value = ''
   actionError.value = ''
+}
+function ensureCurrentSession(snapshot: SessionSnapshot, run: number): boolean {
+  if (sessionCurrent(snapshot, run)) return true
+  // A stale operation must not clear a newer account's verification or list.
+  if (!disposed && run === lifecycle) {
+    loading.value = false
+    pendingReportId.value = null
+    enterDenied('账号已变化，请重新验证审核权限。')
+  }
+  return false
 }
 function targetTypeLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return targetTypeLabels[key] || String(value || '未知目标') }
 function reasonLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return reasonLabels[key] || String(value || '未说明') }
@@ -235,19 +246,20 @@ function threadPath(report: AdminReport): string | null {
 }
 
 async function loadReports(run = lifecycle, snapshot = activeSession): Promise<boolean> {
+  if (!ensureCurrentSession(snapshot, run)) return false
   const requestSeq = ++reportsRequestSeq
   loading.value = true
   reportsError.value = ''
   try {
     const result = await listAdminReports({ status: selectedStatus.value, page: currentPage.value, size: PAGE_SIZE })
-    if (!sessionCurrent(snapshot, run, requestSeq)) return false
+    if (!ensureCurrentSession(snapshot, run) || requestSeq !== reportsRequestSeq) return false
     reports.value = result.items || []
     currentPage.value = Number(result.page) > 0 ? Number(result.page) : currentPage.value
     pageSize.value = Number(result.size) > 0 ? Number(result.size) : PAGE_SIZE
     total.value = Number(result.total) >= 0 ? Number(result.total) : 0
     return true
   } catch (error) {
-    if (sessionCurrent(snapshot, run, requestSeq)) {
+    if (ensureCurrentSession(snapshot, run) && requestSeq === reportsRequestSeq) {
       if (errorStatus(error) === 403) {
         enterDenied('当前账号的审核权限已变化，请重新验证。')
       } else {
@@ -262,6 +274,7 @@ async function loadReports(run = lifecycle, snapshot = activeSession): Promise<b
 }
 
 async function verifyAccess(): Promise<void> {
+  if (disposed) return
   const run = ++lifecycle
   reportsRequestSeq += 1
   const snapshot = captureSession()
@@ -281,9 +294,11 @@ async function verifyAccess(): Promise<void> {
   governance.value = null
   adminState.value = 'checking'
 
+  if (!ensureCurrentSession(snapshot, run)) return
+
   try {
     const me = await getGovernanceMe()
-    if (!sessionCurrent(snapshot, run)) return
+    if (!ensureCurrentSession(snapshot, run)) return
     governance.value = me
     if (!me.admin && me.moderatedSectionIds.length === 0) {
       enterDenied('当前账号没有可用的审核范围。')
@@ -293,7 +308,7 @@ async function verifyAccess(): Promise<void> {
     adminState.value = 'allowed'
     await loadReports(run, snapshot)
   } catch (error) {
-    if (!sessionCurrent(snapshot, run)) return
+    if (!ensureCurrentSession(snapshot, run)) return
     clearReportList()
     if (errorStatus(error) === 403) {
       enterDenied('当前账号的审核权限已变化，请重新验证。')
@@ -305,13 +320,14 @@ async function verifyAccess(): Promise<void> {
 }
 
 function refreshReports(): void {
+  if (disposed || loading.value || pendingReportId.value !== null) return
   feedback.value = ''
   actionError.value = ''
   void loadReports(lifecycle, activeSession)
 }
 
 function submitFilters(): void {
-  if (pendingReportId.value !== null) return
+  if (disposed || loading.value || pendingReportId.value !== null) return
   currentPage.value = 1
   activeResolution.value = null
   resolutionReason.value = ''
@@ -323,7 +339,7 @@ function submitFilters(): void {
 
 function goToPage(page: number): void {
   const nextPage = Math.min(Math.max(1, page), totalPages.value)
-  if (nextPage === currentPage.value || pendingReportId.value !== null) return
+  if (disposed || loading.value || nextPage === currentPage.value || pendingReportId.value !== null) return
   currentPage.value = nextPage
   feedback.value = ''
   void loadReports(lifecycle, activeSession)
@@ -347,27 +363,29 @@ function cancelResolution(): void {
 async function submitResolution(report: AdminReport): Promise<void> {
   const active = activeResolution.value
   if (!active || String(active.id) !== String(report.id) || pendingReportId.value !== null) return
+  const run = lifecycle
+  const snapshot = activeSession
+  if (!ensureCurrentSession(snapshot, run)) return
   let reason: string
   try { reason = validateAdminReportReason(resolutionReason.value) } catch (error) {
     reasonError.value = error instanceof Error ? error.message : '请填写处理理由。'
     return
   }
-  const run = lifecycle
-  const snapshot = activeSession
   pendingReportId.value = report.id
   feedback.value = ''
   actionError.value = ''
   reasonError.value = ''
   try {
     await resolveAdminReport(report.id, active.action, reason)
+    if (!ensureCurrentSession(snapshot, run)) return
     const refreshed = await loadReports(run, snapshot)
-    if (!sessionCurrent(snapshot, run)) return
+    if (!ensureCurrentSession(snapshot, run)) return
     if (adminState.value === 'denied') return
     activeResolution.value = null
     resolutionReason.value = ''
     feedback.value = refreshed ? `${actionLabel(active.action)}成功，列表已刷新。` : `${actionLabel(active.action)}成功，但列表刷新失败，请重试。`
   } catch (error) {
-    if (sessionCurrent(snapshot, run)) {
+    if (ensureCurrentSession(snapshot, run)) {
       if (errorStatus(error) === 403) {
         enterDenied('当前账号的审核权限已变化，请重新验证。')
       } else {
@@ -398,7 +416,12 @@ function onAuthStateChanged(event: Event): void {
     accessError.value = '请先登录后访问举报审核。'
     return
   }
-  void verifyAccess()
+  const boundary = lifecycle
+  // App may replace this page for the same auth event. Let that render finish
+  // before reloading an instance that is still mounted independently.
+  void Promise.resolve().then(() => nextTick()).then(() => {
+    if (!disposed && boundary === lifecycle) void verifyAccess()
+  })
 }
 
 onMounted(() => {
@@ -407,6 +430,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   lifecycle += 1
   reportsRequestSeq += 1
   pendingReportId.value = null

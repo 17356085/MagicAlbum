@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { listFollowingFeed } from '@/api/followingFeed'
-import { getCurrentUser, listUserFollowing, listUserThreads } from '@/api/users'
+import { listUserFollowing, listUserThreads } from '@/api/users'
+import { getStoredAccessToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
 import type { FollowingFeedItem } from '@/api/followingFeed'
 import type { Id, PageResult, User } from '@/types'
@@ -21,7 +22,7 @@ const selectedUserId = ref<'all' | string>('all')
 const channelScroller = ref<HTMLElement | null>(null)
 const inputPage = ref('1')
 
-const currentUserId = computed(() => user.value?.id || user.value?.userId || null)
+const currentUserId = computed(() => user.value?.id ?? user.value?.userId ?? null)
 const totalPages = computed(() => Math.max(1, Math.ceil(Number(feed.value.total || 0) / Number(size.value || 10))))
 const visibleItems = computed(() => feed.value.items || [])
 const channelUsers = computed<User[]>(() => followingUsers.value)
@@ -31,20 +32,72 @@ const selectedUser = computed(() => {
   return followingUsers.value.find((u) => String(u.id) === selectedUserId.value) || null
 })
 const emptyText = computed(() => selectedUserId.value === 'all' ? '暂无动态，关注一些用户后这里会显示他们发布的帖子。' : '该用户暂未发布帖子')
-let loadRequestSeq = 0
+interface FeedRequestContext {
+  token: string
+  epoch: number
+  sequence: number
+  accountId: Id | null
+}
 
-async function resolveCurrentUserId(): Promise<Id | null> {
-  if (!isLoggedIn.value) return null
-  if (currentUserId.value) return currentUserId.value
+let sessionEpoch = 0
+let loadRequestSeq = 0
+let reloadQueued = false
+let disposed = false
+
+function createRequestContext(): FeedRequestContext {
+  return {
+    token: authStore.token,
+    epoch: sessionEpoch,
+    sequence: ++loadRequestSeq,
+    accountId: currentUserId.value,
+  }
+}
+
+function isCurrentRequest(request: FeedRequestContext): boolean {
+  return !disposed
+    && request.epoch === sessionEpoch
+    && request.sequence === loadRequestSeq
+    && request.token === authStore.token
+    && getStoredAccessToken() === request.token
+    && isLoggedIn.value
+}
+
+function queueReload(): void {
+  if (disposed || reloadQueued) return
+  reloadQueued = true
+  queueMicrotask(() => {
+    reloadQueued = false
+    if (disposed) return
+    void load()
+  })
+}
+
+function resetAndQueueReload(): void {
+  if (disposed) return
+  sessionEpoch += 1
+  loadRequestSeq += 1
+  resetFeedState()
+  loading.value = false
+  queueReload()
+}
+
+async function resolveCurrentUserId(request: FeedRequestContext): Promise<Id | null> {
+  if (!isCurrentRequest(request)) return null
+  const knownId = currentUserId.value
+  if (knownId !== null && knownId !== undefined) {
+    request.accountId = knownId
+    return knownId
+  }
   try {
-    const current = await getCurrentUser()
-    const id = current?.id || current?.userId || null
-    if (current && id) {
-      authStore.updateCurrentUser(current)
-      return id
-    }
-  } catch (_) {}
-  return null
+    const refreshed = await authStore.refreshCurrentUser()
+    if (!isCurrentRequest(request) || !refreshed) return null
+    const hydratedId = currentUserId.value
+    if (hydratedId === null || hydratedId === undefined) return null
+    request.accountId = hydratedId
+    return hydratedId
+  } catch (_) {
+    return null
+  }
 }
 
 function userDisplayName(u: User): string {
@@ -111,47 +164,55 @@ function resetFeedState(): void {
 }
 
 async function load(): Promise<void> {
-  const requestSeq = ++loadRequestSeq
-  const userId = await resolveCurrentUserId()
-  if (requestSeq !== loadRequestSeq) return
-  if (!userId) {
-    resetFeedState()
+  const request = createRequestContext()
+  if (!isCurrentRequest(request)) {
+    if (!isLoggedIn.value) resetFeedState()
     return
   }
   loading.value = true
   error.value = ''
   try {
+    const userId = await resolveCurrentUserId(request)
+    if (!isCurrentRequest(request)) return
+    if (userId === null || userId === undefined) {
+      resetFeedState()
+      error.value = '账号信息加载失败，请重试'
+      return
+    }
     const followingPage = await listUserFollowing(userId, { page: 1, size: 12 })
-    if (requestSeq !== loadRequestSeq) return
+    if (!isCurrentRequest(request)) return
     followingUsers.value = followingPage.items || []
     if (selectedUserId.value !== 'all' && !followingUsers.value.some((u) => String(u.id) === selectedUserId.value)) {
       selectedUserId.value = 'all'
     }
-    await loadFeed(requestSeq)
+    await loadFeed(request)
   } catch (_) {
-    if (requestSeq === loadRequestSeq) {
+    if (isCurrentRequest(request)) {
       error.value = '加载动态失败'
     }
   } finally {
-    if (requestSeq === loadRequestSeq) {
+    if (isCurrentRequest(request)) {
       loading.value = false
     }
   }
 }
 
-async function loadFeed(requestSeq = ++loadRequestSeq): Promise<void> {
-  const userId = await resolveCurrentUserId()
-  if (requestSeq !== loadRequestSeq) return
-  if (!userId) {
+async function loadFeed(request: FeedRequestContext): Promise<void> {
+  const userId = request.accountId ?? await resolveCurrentUserId(request)
+  if (!isCurrentRequest(request)) return
+  if (userId === null || userId === undefined) {
     resetFeedState()
+    error.value = '账号信息加载失败，请重试'
     return
   }
+  request.accountId = userId
   if (selectedUserId.value === 'all') {
+    if (!isCurrentRequest(request)) return
     const nextFeed = await listFollowingFeed({
       page: page.value,
       size: size.value,
     })
-    if (requestSeq === loadRequestSeq) {
+    if (isCurrentRequest(request)) {
       feed.value = nextFeed
     }
     return
@@ -162,8 +223,9 @@ async function loadFeed(requestSeq = ++loadRequestSeq): Promise<void> {
     feed.value = { items: [], page: page.value, size: size.value, total: 0 }
     return
   }
+  if (!isCurrentRequest(request)) return
   const data = await listUserThreads(target.id, { page: page.value, size: size.value })
-  if (requestSeq !== loadRequestSeq) return
+  if (!isCurrentRequest(request)) return
   feed.value = {
     items: data.items.map((thread) => ({
       ...thread,
@@ -180,19 +242,19 @@ async function loadFeed(requestSeq = ++loadRequestSeq): Promise<void> {
 
 async function selectUser(id: 'all' | string): Promise<void> {
   if (selectedUserId.value === id) return
-  const requestSeq = ++loadRequestSeq
+  const request = createRequestContext()
   selectedUserId.value = id
   page.value = 1
   loading.value = true
   error.value = ''
   try {
-    await loadFeed(requestSeq)
+    await loadFeed(request)
   } catch (_) {
-    if (requestSeq === loadRequestSeq) {
+    if (isCurrentRequest(request)) {
       error.value = '加载动态失败'
     }
   } finally {
-    if (requestSeq === loadRequestSeq) {
+    if (isCurrentRequest(request)) {
       loading.value = false
     }
   }
@@ -201,18 +263,18 @@ async function selectUser(id: 'all' | string): Promise<void> {
 function setPage(nextPage: number): void {
   const target = Math.min(Math.max(1, nextPage), totalPages.value)
   if (target === page.value) return
-  const requestSeq = ++loadRequestSeq
+  const request = createRequestContext()
   page.value = target
   loading.value = true
   error.value = ''
-  loadFeed(requestSeq)
+  loadFeed(request)
     .catch(() => {
-      if (requestSeq === loadRequestSeq) {
+      if (isCurrentRequest(request)) {
         error.value = '加载动态失败'
       }
     })
     .finally(() => {
-      if (requestSeq === loadRequestSeq) {
+      if (isCurrentRequest(request)) {
         loading.value = false
       }
     })
@@ -233,16 +295,31 @@ function scrollChannels(direction: 'left' | 'right'): void {
   el.scrollBy({ left: direction === 'left' ? -360 : 360, behavior: 'smooth' })
 }
 
-onMounted(load)
+const stopAuthWatch = watch(
+  [() => authStore.token, () => currentUserId.value, () => isLoggedIn.value],
+  () => resetAndQueueReload(),
+  { flush: 'sync' },
+)
+
+function onAuthStateChanged(): void {
+  resetAndQueueReload()
+}
+
+onMounted(() => {
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
+  void load()
+})
 watch(page, (val) => {
   inputPage.value = String(val || 1)
 }, { immediate: true })
 
-watch([currentUserId, isLoggedIn], () => {
+onBeforeUnmount(() => {
+  disposed = true
+  sessionEpoch += 1
   loadRequestSeq += 1
-  loading.value = false
-  resetFeedState()
-  load()
+  reloadQueued = false
+  stopAuthWatch()
+  window.removeEventListener('auth-state-changed', onAuthStateChanged)
 })
 </script>
 
@@ -332,8 +409,9 @@ watch([currentUserId, isLoggedIn], () => {
     <div v-if="loading" class="ui-panel ui-empty" role="status">
       正在加载...
     </div>
-    <div v-else-if="error" class="ui-error" role="alert">
-      {{ error }}
+    <div v-else-if="error" class="ui-error flex flex-wrap items-center justify-between gap-3" role="alert">
+      <span>{{ error }}</span>
+      <button type="button" class="ui-button min-h-11" :disabled="loading" @click="load">重试</button>
     </div>
     <div v-else-if="visibleItems.length === 0" class="ui-panel ui-empty" role="status">
       <h2>暂无关注动态</h2>

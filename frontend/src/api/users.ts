@@ -1,7 +1,8 @@
 import { isAxiosError } from 'axios'
 import api from './client'
+import { decodeUserFollowResponse } from './interactionState'
 import { decodePageResponse } from './pagination'
-import { normalizeThread } from './threads'
+import { normalizeThread } from './threadNormalization'
 import type {
   ApiError,
   Id,
@@ -173,17 +174,17 @@ export async function getUserProfile(id: Id): Promise<UserProfile & Partial<User
 
 export async function followUser(id: Id): Promise<UserFollowStatus> {
   const { data } = await api.post(`/users/${id}/follow`)
-  return data
+  return decodeUserFollowResponse(data, id, `/users/${id}/follow`)
 }
 
 export async function unfollowUser(id: Id): Promise<UserFollowStatus> {
   const { data } = await api.delete(`/users/${id}/follow`)
-  return data
+  return decodeUserFollowResponse(data, id, `/users/${id}/follow`)
 }
 
 export async function getUserFollowStatus(id: Id): Promise<UserFollowStatus> {
   const { data } = await api.get(`/users/${id}/follow-status`)
-  return data
+  return decodeUserFollowResponse(data, id, `/users/${id}/follow-status`)
 }
 
 export async function listUserFollowing(

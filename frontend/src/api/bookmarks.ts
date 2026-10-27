@@ -1,41 +1,25 @@
 import api from './client'
-import { decodePageResponse } from './pagination'
-import type { Id, PageResult } from '@/types'
+import { decodeBookmarkResponse } from './interactionState'
+import type { Id } from '@/types'
+
+export { listBookmarks } from './bookmarkPages'
+export type { BookmarkItem, BookmarkPage } from './bookmarkPages'
 
 export interface ThreadBookmarkState {
   bookmarked: boolean
 }
 
-export interface BookmarkItem {
-  threadId: Id
-  title: string
-  sectionName: string
-  bookmarkedAt: string
-}
-
-export type BookmarkPage = PageResult<BookmarkItem>
-
-interface ListBookmarksQuery {
-  page?: number
-  size?: number
-}
-
 export async function getThreadBookmarkState(id: Id): Promise<ThreadBookmarkState> {
   const { data } = await api.get(`/threads/${id}/bookmark`)
-  return data
+  return decodeBookmarkResponse(data, `/threads/${id}/bookmark`)
 }
 
 export async function bookmarkThread(id: Id): Promise<ThreadBookmarkState> {
   const { data } = await api.post(`/threads/${id}/bookmark`)
-  return data
+  return decodeBookmarkResponse(data, `/threads/${id}/bookmark`)
 }
 
 export async function unbookmarkThread(id: Id): Promise<ThreadBookmarkState> {
   const { data } = await api.delete(`/threads/${id}/bookmark`)
-  return data
-}
-
-export async function listBookmarks({ page = 1, size = 10 }: ListBookmarksQuery = {}): Promise<BookmarkPage> {
-  const { data } = await api.get('/users/me/bookmarks', { params: { page, size } })
-  return decodePageResponse<BookmarkItem>(data, { page, size, endpoint: '/users/me/bookmarks' })
+  return decodeBookmarkResponse(data, `/threads/${id}/bookmark`)
 }

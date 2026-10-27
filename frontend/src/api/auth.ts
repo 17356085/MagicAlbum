@@ -137,7 +137,6 @@ function parseQrStatusResponse(resp: unknown, expectedQrId: string, pollToken: s
     qrUrl: requireNonEmptyString(payload.qrUrl, 'qrUrl', '二维码状态'),
     expiresAt: requireNonEmptyString(payload.expiresAt, 'expiresAt', '二维码状态'),
     status: parseQrStatus(payload.status, '二维码状态'),
-    user: parseUser(payload.user, '二维码状态'),
     ...(message ? { message } : {}),
   }
 }

@@ -59,7 +59,7 @@ class UserServicePhoneConflictTest {
         User other = user(8L, "other-user", "other@example.test", PHONE);
         BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
         request.setPhone(PHONE);
-        when(userRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
         when(userRepository.findByUsername(current.getUsername())).thenReturn(Optional.of(current));
         when(userRepository.findByEmail(current.getEmail())).thenReturn(Optional.of(current));
         when(userRepository.findByPhone(PHONE)).thenReturn(Optional.of(other));
@@ -96,7 +96,7 @@ class UserServicePhoneConflictTest {
         current.setPhoneVerified(true);
         BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
         request.setPhone("13800138002");
-        when(userRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
         when(userRepository.findByUsername(current.getUsername())).thenReturn(Optional.of(current));
         when(userRepository.findByEmail(current.getEmail())).thenReturn(Optional.of(current));
         when(userRepository.findByPhone("13800138002")).thenReturn(Optional.empty());
@@ -117,7 +117,7 @@ class UserServicePhoneConflictTest {
         BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
         request.setEmail(current.getEmail());
         request.setPhone(current.getPhone());
-        when(userRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
         when(userRepository.findByUsername(current.getUsername())).thenReturn(Optional.of(current));
         when(userRepository.findByEmail(current.getEmail())).thenReturn(Optional.of(current));
         when(userRepository.findByPhone(current.getPhone())).thenReturn(Optional.of(current));

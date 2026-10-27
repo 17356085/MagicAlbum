@@ -35,20 +35,27 @@ export default defineConfig(({ command, mode }) => {
   },
 
   build: {
+    manifest: true,
     rollupOptions: {
       output: {
+        // Keep shared runtime helpers outside optional feature chunks so that
+        // importing a helper cannot pull highlighting into the application shell.
+        onlyExplicitManualChunks: true,
         manualChunks(id) {
           if (!id.includes('node_modules')) return
+          // Theme asset URLs are tiny entry-point constants. Putting them in
+          // the highlighter chunk would eagerly load the entire highlighter.
+          if (id.includes('?url')) return
 
-          if (
-            id.includes('markdown-it') ||
-            id.includes('markdown-it-katex') ||
-            id.includes('katex')
-          ) {
+          if (id.includes('katex')) {
+            return 'math'
+          }
+
+          if (id.includes('markdown-it')) {
             return 'markdown'
           }
 
-          if (id.includes('highlight.js')) {
+          if (id.includes('highlight.js/lib/')) {
             return 'highlight'
           }
 

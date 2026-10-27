@@ -12,6 +12,7 @@ export function useLiveNotifications(): void {
   let refreshTimer: ReturnType<typeof setTimeout> | undefined
   let generation = 0
   let disposed = false
+  let lastSessionToken: string | undefined
 
   const restart = () => {
     generation += 1
@@ -20,8 +21,10 @@ export function useLiveNotifications(): void {
     if (refreshTimer) clearTimeout(refreshTimer)
     timer = undefined
     refreshTimer = undefined
-    signalNotificationChanges('session')
     const token = auth.token
+    const sessionChanged = token !== lastSessionToken
+    lastSessionToken = token
+    if (sessionChanged) signalNotificationChanges('session')
     if (disposed || !hasRealToken(token) || document.visibilityState === 'hidden') return
     const current = generation
     let cursor: string | undefined

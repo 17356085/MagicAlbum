@@ -9,7 +9,6 @@ import org.springframework.web.server.ResponseStatusException;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -122,7 +121,7 @@ public class MediaResultCoordinator {
     }
 
     private DetectedImage validateImage(byte[] bytes) {
-        DetectedImage detected = detect(bytes);
+        DetectedImage detected = detectHeader(bytes);
         if (detected == null || (!"image/jpeg".equals(detected.contentType())
                 && !"image/png".equals(detected.contentType()))) {
             throw badRequest("媒体结果格式不受支持");
@@ -137,7 +136,7 @@ public class MediaResultCoordinator {
         return detected;
     }
 
-    private DetectedImage detect(byte[] bytes) {
+    private DetectedImage detectHeader(byte[] bytes) {
         try (ByteArrayInputStream input = new ByteArrayInputStream(bytes);
              ImageInputStream imageInput = ImageIO.createImageInputStream(input)) {
             if (imageInput == null) {
@@ -158,10 +157,6 @@ public class MediaResultCoordinator {
                 int width = reader.getWidth(0);
                 int height = reader.getHeight(0);
                 if (width <= 0 || height <= 0 || width > MAX_OUTPUT_EDGE || height > MAX_OUTPUT_EDGE) {
-                    return null;
-                }
-                BufferedImage decoded = reader.read(0);
-                if (decoded == null || decoded.getWidth() != width || decoded.getHeight() != height) {
                     return null;
                 }
                 return new DetectedImage(contentType, width, height);

@@ -1,5 +1,4 @@
-import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { defineStore, storeToRefs } from 'pinia'
 import {
   finishPhoneCodeLogin as apiFinishPhoneCodeLogin,
   finishEmailCodeLogin as apiFinishEmailCodeLogin,
@@ -7,19 +6,9 @@ import {
   loginWithEmailPassword as apiLoginWithEmailPassword,
 } from '@/api/auth'
 import { getCurrentUser } from '@/api/users'
-import {
-  clearPersistedAuthState,
-  getStoredAccessToken,
-  getStoredCurrentUser,
-  hasRealToken,
-  isMockToken,
-  persistAuthState,
-} from '@/utils/authStorage'
-import {
-  clearOAuthBrowserProof,
-  readOAuthBrowserProof,
-  type OAuthBrowserProof,
-} from '@/utils/oauthBrowserProof'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
+import type { OAuthBrowserProof } from '@/utils/oauthBrowserProof'
+import { useAuthSessionStore, type AuthOperationContext } from './authSession'
 import type {
   FinishPhoneCodeLoginRequest,
   FinishEmailCodeLoginRequest,
@@ -29,6 +18,8 @@ import type {
   PersistedAuthState,
   User,
 } from '@/types'
+
+export type { AuthOperationContext } from './authSession'
 
 export class AuthOperationSupersededError extends Error {
   readonly code = 'AUTH_OPERATION_SUPERSEDED'
@@ -46,108 +37,50 @@ export function isAuthOperationSuperseded(error: unknown): error is AuthOperatio
   return (error as { code?: unknown }).code === 'AUTH_OPERATION_SUPERSEDED'
 }
 
+/** Network orchestration over the per-Pinia session owner. */
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref<User | null>(getStoredCurrentUser())
-  const token = ref<string>(getStoredAccessToken())
-  const useMock = import.meta.env.VITE_USE_API_MOCK === 'true'
-  let authGeneration = 0
-  let oauthCallbackClaim: {
-    provider: OAuthBrowserProof['provider']
-    verifier: string
-    expiresAt: number
-    generation: number
-  } | null = null
+  const session = useAuthSessionStore()
+  const { token, user, isLoggedIn } = storeToRefs(session)
+  let identityRequest: { token: string; generation: number; revision: number; promise: Promise<boolean> } | null = null
 
-  // Clean mock token if needed
-  if (!useMock && isMockToken(token.value)) {
-    token.value = ''
-    clearPersistedAuthState()
+  // Keep facade actions as real actions: consumers subscribe to names such as
+  // invalidateAuthOperations through this store's $onAction API.
+  function invalidateAuthOperations(): number { return session.invalidateAuthOperations() }
+  function beginOAuthCallbackOperation(proof: OAuthBrowserProof): number | null { return session.beginOAuthCallbackOperation(proof) }
+  function getAuthGeneration(): number { return session.getAuthGeneration() }
+  function isAuthGenerationCurrent(generation: number): boolean { return session.isAuthGenerationCurrent(generation) }
+  function captureAuthOperationContext(): AuthOperationContext { return session.captureAuthOperationContext() }
+  function isAuthOperationContextCurrent(context: AuthOperationContext): boolean { return session.isAuthOperationContextCurrent(context) }
+  function applyAuthState(state: Partial<PersistedAuthState> = {}): void { session.applyAuthState(state) }
+  function clearAuthState(options: { clearDraft?: boolean } = {}): void { session.clearAuthState(options) }
+  function loginWithAuthResponse(state: PersistedAuthState): void { session.loginWithAuthResponse(state) }
+  function tryLoginWithAuthResponse(response: PersistedAuthState, context: AuthOperationContext): boolean {
+    return session.tryLoginWithAuthResponse(response, context)
   }
-
-  // Getters
-  const isLoggedIn = computed(() => hasRealToken(token.value))
-
-  function emitAuthChanged(loggedIn: boolean): void {
-    try {
-      window.dispatchEvent(new CustomEvent('auth-state-changed', { detail: { loggedIn } }))
-    } catch (_) {}
+  function logout(): void { session.logout() }
+  function updateCurrentUser(patch: Partial<User>): void { session.updateCurrentUser(patch) }
+  function syncAuthFromStorage(): boolean { return session.syncAuthFromStorage() }
+  function hydrateCurrentUser(patch: Partial<User>, expectedToken: string): boolean {
+    return session.hydrateCurrentUser(patch, expectedToken)
   }
+  function handleUnauthorized(requestToken?: string): boolean { return session.handleUnauthorized(requestToken) }
 
-  function writeAuthState({ accessToken = '', user: nextUser = null }: Partial<PersistedAuthState> = {}): void {
-    token.value = hasRealToken(accessToken) ? accessToken : ''
-    user.value = nextUser || null
-    persistAuthState({ accessToken: token.value, user: user.value })
-    emitAuthChanged(!!token.value)
-  }
-
-  function invalidateAuthOperations(): number {
-    authGeneration += 1
-    clearOAuthBrowserProof()
-    oauthCallbackClaim = null
-    return authGeneration
-  }
-
-  function beginOAuthCallbackOperation(proof: OAuthBrowserProof): number | null {
-    const current = readOAuthBrowserProof(proof.provider)
-    if (!current
-      || current.provider !== proof.provider
-      || current.verifier !== proof.verifier
-      || current.expiresAt !== proof.expiresAt) {
-      return null
-    }
-
-    if (oauthCallbackClaim
-      && oauthCallbackClaim.provider === proof.provider
-      && oauthCallbackClaim.verifier === proof.verifier
-      && oauthCallbackClaim.expiresAt === proof.expiresAt
-      && oauthCallbackClaim.generation === authGeneration) {
-      return oauthCallbackClaim.generation
-    }
-
-    authGeneration += 1
-    oauthCallbackClaim = {
-      provider: proof.provider,
-      verifier: proof.verifier,
-      expiresAt: proof.expiresAt,
-      generation: authGeneration,
-    }
-    return authGeneration
-  }
-
-  function getAuthGeneration(): number {
-    return authGeneration
-  }
-
-  function isAuthGenerationCurrent(generation: number): boolean {
-    return generation === authGeneration
-  }
-
-  function applyAuthState({ accessToken = '', user: nextUser = null }: Partial<PersistedAuthState> = {}): void {
-    invalidateAuthOperations()
-    writeAuthState({ accessToken, user: nextUser })
-  }
-
-  // Keep the option for caller compatibility; browser drafts are independent
-  // of auth cleanup and must survive logout for account-scoped recovery.
-  function clearAuthState(_options: { clearDraft?: boolean } = {}): void {
-    invalidateAuthOperations()
-    writeAuthState()
-  }
-
-  // Actions
   async function applyLoginResponse(
     generation: number,
     request: () => Promise<LoginResponse>,
   ): Promise<void> {
+    const context = captureAuthOperationContext()
+    const isCurrentLogin = (): boolean => context.generation === generation
+      && isAuthOperationContextCurrent(context)
     let response: LoginResponse
     try {
       response = await request()
     } catch (error: unknown) {
-      if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
+      if (!isCurrentLogin()) throw new AuthOperationSupersededError()
       throw error
     }
 
-    if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
+    if (!isCurrentLogin()) throw new AuthOperationSupersededError()
 
     let nextUser: User | null = response.user || null
     if (!nextUser) {
@@ -155,11 +88,11 @@ export const useAuthStore = defineStore('auth', () => {
         const fetched = await getCurrentUser(response.accessToken)
         if (fetched) nextUser = fetched
       } catch {}
-      if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
+      if (!isCurrentLogin()) throw new AuthOperationSupersededError()
     }
 
-    if (!isAuthGenerationCurrent(generation)) throw new AuthOperationSupersededError()
-    writeAuthState({ accessToken: response.accessToken, user: nextUser })
+    if (!isCurrentLogin()) throw new AuthOperationSupersededError()
+    session.commitAuthState({ accessToken: response.accessToken, user: nextUser })
   }
 
   async function loginWithPhonePassword({ phone, password, verifyToken, verifyProvider, verifyScene }: LoginWithPhonePasswordRequest): Promise<void> {
@@ -182,39 +115,21 @@ export const useAuthStore = defineStore('auth', () => {
     await applyLoginResponse(generation, () => apiFinishPhoneCodeLogin({ channel, address, code, session }))
   }
 
-  function loginWithAuthResponse({ accessToken, user: userData }: PersistedAuthState): void {
-    applyAuthState({ accessToken, user: userData || null })
-  }
-
-  function logout(): void {
-    clearAuthState()
-  }
-
-  function updateCurrentUser(patch: Partial<User>): void {
-    if (!user.value) {
-      return
-    }
-    const nextUser = {
-      ...user.value,
-      ...patch,
-    }
-    const changed = Object.keys(patch).some((key) => {
-      const typedKey = key as keyof User
-      return user.value?.[typedKey] !== nextUser[typedKey]
+  function refreshCurrentUser(): Promise<boolean> {
+    const ownerToken = token.value
+    const generation = getAuthGeneration()
+    const revision = session.getMetadataRevision()
+    if (!hasRealToken(ownerToken) || getStoredAccessToken() !== ownerToken) return Promise.resolve(false)
+    if (identityRequest?.token === ownerToken && identityRequest.generation === generation && identityRequest.revision === revision) return identityRequest.promise
+    const operation = (async () => {
+      const currentUser = await getCurrentUser(ownerToken)
+      return isAuthGenerationCurrent(generation) && session.getMetadataRevision() === revision && !!currentUser && hydrateCurrentUser(currentUser, ownerToken)
+    })()
+    const promise = operation.finally(() => {
+      if (identityRequest?.promise === promise) identityRequest = null
     })
-    if (!changed) {
-      return
-    }
-    user.value = nextUser
-    persistAuthState({ accessToken: token.value, user: user.value })
-  }
-
-  function handleUnauthorized(requestToken?: string): boolean {
-    const currentToken = token.value
-    if (!hasRealToken(currentToken)) return false
-    if (requestToken !== undefined && requestToken !== currentToken) return false
-    clearAuthState()
-    return true
+    identityRequest = { token: ownerToken, generation, revision, promise }
+    return promise
   }
 
   return {
@@ -224,16 +139,22 @@ export const useAuthStore = defineStore('auth', () => {
     applyAuthState,
     clearAuthState,
     beginOAuthCallbackOperation,
+    captureAuthOperationContext,
     getAuthGeneration,
     handleUnauthorized,
     invalidateAuthOperations,
     isAuthGenerationCurrent,
+    isAuthOperationContextCurrent,
     loginWithPhonePassword,
     loginWithEmailPassword,
     loginWithPhoneCode,
     loginWithEmailCode,
     loginWithAuthResponse,
+    tryLoginWithAuthResponse,
     logout,
     updateCurrentUser,
+    syncAuthFromStorage,
+    hydrateCurrentUser,
+    refreshCurrentUser,
   }
 })

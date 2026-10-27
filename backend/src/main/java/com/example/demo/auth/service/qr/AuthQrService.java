@@ -220,12 +220,7 @@ public class AuthQrService {
         response.setExpiresAt(normalized.expiresAt());
         response.setStatus(normalized.status());
         response.setMessage(resolveMessage(normalized.status()));
-        response.setUser(toUserDto(normalized.confirmedUserId()));
         return response;
-    }
-
-    QrLoginStatusResponse getStatus(String qrId) {
-        return getStatusWithoutPollTokenForLegacyTests(qrId);
     }
 
     public void cancel(String qrId, String pollToken) {
@@ -391,23 +386,6 @@ public class AuthQrService {
         response.setExpiresAt(session.expiresAt());
         response.setStatus(session.status());
         response.setMessage(message);
-        response.setUser(toUserDto(session.confirmedUserId()));
-        return response;
-    }
-
-    private QrLoginStatusResponse getStatusWithoutPollTokenForLegacyTests(String qrId) {
-        InMemoryQrLoginSession session = loadSession(qrId);
-        if (session == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "二维码会话不存在或已失效");
-        }
-        InMemoryQrLoginSession normalized = normalizeStatus(session);
-        QrLoginStatusResponse response = new QrLoginStatusResponse();
-        response.setQrId(normalized.qrId());
-        response.setQrUrl(normalized.qrUrl());
-        response.setExpiresAt(normalized.expiresAt());
-        response.setStatus(normalized.status());
-        response.setMessage(resolveMessage(normalized.status()));
-        response.setUser(toUserDto(normalized.confirmedUserId()));
         return response;
     }
 
@@ -611,7 +589,7 @@ public class AuthQrService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
         return new LoginResponse(
                 jwtTokenProvider.generateToken(user.getId(), user.getUsername()),
-                toUserDto(user.getId())
+                toUserDto(user)
         );
     }
 
@@ -631,12 +609,7 @@ public class AuthQrService {
         }
     }
 
-    private UserDto toUserDto(Long userId) {
-        if (userId == null) {
-            return null;
-        }
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+    private UserDto toUserDto(User user) {
         UserDto dto = new UserDto();
         dto.setId(user.getId());
         dto.setUsername(user.getUsername());

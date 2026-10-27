@@ -4,19 +4,18 @@ import { reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ThreadEdit from '../ThreadEdit.vue'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
+import { useAuthStore } from '@/stores/auth'
 
-const mocks = vi.hoisted(() => ({ getThread: vi.fn(), updateThread: vi.fn(), push: vi.fn(), uploadImage: vi.fn(), beautifyMarkdown: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getThread: vi.fn(), updateThread: vi.fn(), listSections: vi.fn(), push: vi.fn(), uploadImage: vi.fn(), beautifyMarkdown: vi.fn() }))
 const route = reactive({ params: { id: '42' } })
 vi.mock('@/api/threads', () => ({ getThread: mocks.getThread }))
-vi.mock('@/api/my', () => ({ updateThread: mocks.updateThread }))
+vi.mock('@/api/threadWrites', () => ({ updateThread: mocks.updateThread }))
 vi.mock('@/api/uploads', () => ({ uploadImage: mocks.uploadImage }))
 vi.mock('@/composables/useMarkdownTools', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/composables/useMarkdownTools')>(),
   beautifyMarkdown: mocks.beautifyMarkdown,
 }))
-vi.mock('@/api/sections', () => ({
-  listSections: vi.fn().mockResolvedValue({ items: [], page: 1, size: 100, total: 0 }),
-}))
+vi.mock('@/api/sections', () => ({ listSections: mocks.listSections }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: mocks.push }) }))
 
 const editorStub = {
@@ -27,7 +26,10 @@ const editorStub = {
 function createWrapper() {
   return mount(ThreadEdit, {
     global: {
-      stubs: { MarkdownTextareaEditor: editorStub },
+      stubs: {
+        MarkdownTextareaEditor: editorStub,
+        RouterLink: { props: ['to'], template: '<a :href="String(to)"><slot /></a>' },
+      },
     },
   })
 }
@@ -39,6 +41,7 @@ describe('ThreadEdit content boundaries', () => {
     localStorage.clear()
     route.params.id = '42'
     setActivePinia(createPinia())
+    mocks.listSections.mockResolvedValue({ items: [], page: 1, size: 100, total: 0 })
   })
 
   afterEach(() => {
@@ -56,7 +59,85 @@ describe('ThreadEdit content boundaries', () => {
     wrapper.unmount()
   })
 
+  it('offers retries for failed section and post loads without losing edit values', async () => {
+    mocks.listSections
+      .mockRejectedValueOnce(new Error('sections unavailable'))
+      .mockResolvedValueOnce({ items: [{ id: 3, name: '编程' }], page: 1, size: 100, total: 1 })
+    mocks.getThread
+      .mockRejectedValueOnce(new Error('thread unavailable'))
+      .mockResolvedValueOnce({ id: 42, sectionId: 3, title: '恢复标题', content: '恢复正文' })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('加载帖子失败')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.getThread).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[role="alert"]').text()).toContain('分区加载失败')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('#thread-edit-title').element as HTMLInputElement).value).toBe('恢复标题')
+    expect(wrapper.find('#thread-edit-section option[value="3"]').exists()).toBe(true)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('distinguishes an empty section result from a failed request', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+    mocks.listSections.mockResolvedValueOnce({ items: [], page: 1, size: 100, total: 0 })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('暂无可用分区')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows pending section loading without presenting an empty result', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+    let resolveSections!: (value: unknown) => void
+    mocks.listSections.mockReturnValueOnce(new Promise((resolve) => { resolveSections = resolve }))
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('正在加载分区')
+    expect(wrapper.text()).not.toContain('暂无可用分区')
+    expect(wrapper.get('#thread-edit-section').attributes('disabled')).toBeDefined()
+
+    resolveSections({ items: [{ id: 3, name: '编程' }], page: 1, size: 100, total: 1 })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('正在加载分区')
+    expect(wrapper.get('#thread-edit-section').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('#thread-edit-section option[value="3"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('clears old save errors across routes while preserving a public section failure', async () => {
+    mocks.getThread.mockImplementation((id: string) => Promise.resolve({ id, title: `帖子${id}`, content: '正文' }))
+    mocks.listSections.mockRejectedValueOnce(new Error('section service unavailable'))
+    mocks.updateThread.mockRejectedValueOnce(new Error('旧帖子保存失败'))
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('button.ui-button-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('旧帖子保存失败')
+
+    route.params.id = '43'
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('旧帖子保存失败')
+    expect((wrapper.get('#thread-edit-title').element as HTMLInputElement).value).toBe('帖子43')
+    expect(wrapper.text()).toContain('分区加载失败')
+    expect(wrapper.text()).not.toContain('暂无可用分区')
+    wrapper.unmount()
+  })
+
   it('blocks save during upload and keeps existing text on upload failure', async () => {
+    useAuthStore().applyAuthState({ accessToken: 'token-owner', user: { id: 1, username: 'owner-1' } })
     mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '保留正文' })
     let rejectUpload!: (reason: Error) => void
     mocks.uploadImage.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectUpload = reject }))
@@ -73,6 +154,39 @@ describe('ThreadEdit content boundaries', () => {
     await flushPromises()
     expect(save.attributes('disabled')).toBeUndefined()
     expect(wrapper.get('textarea').element.value).toBe('保留正文')
+    wrapper.unmount()
+  })
+
+  it('blocks image upload when persisted auth drifts and preserves existing text', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-owner', user: { id: 1, username: 'owner-1' } })
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '保留正文' })
+    const wrapper = createWrapper()
+    await flushPromises()
+    localStorage.setItem('accessToken', 'token-other')
+
+    const upload = wrapper.findComponent(MarkdownTextareaEditor).props('uploadImage')!
+    await expect(upload(new File(['image'], 'image.png', { type: 'image/png' }))).resolves.toBe('')
+
+    expect(mocks.uploadImage).not.toHaveBeenCalled()
+    expect(wrapper.get('textarea').element.value).toBe('保留正文')
+    expect(wrapper.text()).toContain('登录状态已变化')
+    wrapper.unmount()
+  })
+
+  it('blocks image upload after logout without sending the old session token', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-owner', user: { id: 1, username: 'owner-1' } })
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '保留正文' })
+    const wrapper = createWrapper()
+    await flushPromises()
+    auth.clearAuthState()
+    await flushPromises()
+
+    const upload = wrapper.findComponent(MarkdownTextareaEditor).props('uploadImage')!
+    await expect(upload(new File(['image'], 'image.png', { type: 'image/png' }))).resolves.toBe('')
+
+    expect(mocks.uploadImage).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -183,6 +297,73 @@ describe('ThreadEdit content boundaries', () => {
     await flushPromises()
 
     expect(mocks.push).toHaveBeenCalledWith('/threads/42')
+    wrapper.unmount()
+  })
+
+  it('keeps save locked through the redirect delay and submits only once', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原有帖子', content: '原有内容' })
+    mocks.updateThread.mockResolvedValue({ id: 42 })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    const save = wrapper.get('button.ui-button-primary')
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateThread).toHaveBeenCalledTimes(1)
+    expect(save.attributes('disabled')).toBeDefined()
+    await save.trigger('click')
+    expect(mocks.updateThread).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(400)
+    await flushPromises()
+    expect(mocks.push).toHaveBeenCalledWith('/threads/42')
+    wrapper.unmount()
+  })
+
+  it('restores controls after navigation cancellation and lets a failed save retry', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原有帖子', content: '原有内容' })
+    mocks.updateThread
+      .mockRejectedValueOnce(new Error('网络失败'))
+      .mockResolvedValueOnce({ id: 42 })
+    mocks.push.mockResolvedValueOnce({ type: 4 })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    const save = wrapper.get('button.ui-button-primary')
+
+    await save.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('网络失败')
+    expect(save.attributes('disabled')).toBeUndefined()
+
+    await save.trigger('click')
+    await flushPromises()
+    expect(mocks.updateThread).toHaveBeenCalledTimes(2)
+    expect(save.attributes('disabled')).toBeDefined()
+
+    vi.advanceTimersByTime(400)
+    await flushPromises()
+    expect(wrapper.text()).toContain('跳转失败')
+    expect(save.attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('makes the successful write explicit when navigation rejects', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+    mocks.updateThread.mockResolvedValue({ id: 42 })
+    mocks.push.mockRejectedValueOnce(new Error('router transport error'))
+    const wrapper = createWrapper()
+    await flushPromises()
+    const save = wrapper.get('button.ui-button-primary')
+    await save.trigger('click')
+    await flushPromises()
+    vi.advanceTimersByTime(400)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('保存成功，但跳转失败')
+    expect(wrapper.text()).not.toContain('router transport error')
+    expect(save.attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 })

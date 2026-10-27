@@ -78,6 +78,8 @@ pwsh -File ./scripts/Test-NotificationRuntime.ps1 -JavaHome 'C:\path\to\jdk-21'
 
 ## 另一种方式：完整 Compose
 
+需要自定义 MySQL JDBC 连接 URL 时，先看 [MySQL JDBC 时区配置手册](./docs/engineering/mysql-jdbc-timezone.md)。默认配置已带 `serverTimezone=UTC&forceConnectionTimeZoneToSession=true`；显式整条 URL 覆盖时必须自行保留这两个参数。
+
 根目录的 [`docker-compose.yml`](./docker-compose.yml) 会构建完整应用镜像，与上面的 PowerShell 原生应用模式**二选一**，不要同时占用相同端口。先复制 [`.env.example`](./.env.example) 为 `.env`，填写所有必填账号和高强度随机密钥，首次启动时保持 `APP_ADMIN_EMAIL` 为空、`APP_ADMIN_USER_ID=0`：
 
 ```powershell

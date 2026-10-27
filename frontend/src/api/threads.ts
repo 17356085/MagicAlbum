@@ -1,6 +1,11 @@
 import api from './client'
+import { decodeThreadLikeResponse } from './interactionState'
 import { decodePageResponse } from './pagination'
-import type { CreateThreadPayload, Id, PageResult, Thread, ThreadLikeState } from '@/types'
+import { normalizeThread } from './threadNormalization'
+import type { Id, PageResult, Thread, ThreadLikeState } from '@/types'
+
+export { normalizeThread } from './threadNormalization'
+export { createThread } from './threadWrites'
 
 interface ListThreadsQuery {
   q?: string
@@ -16,25 +21,12 @@ interface ListThreadRankingQuery {
   size?: number
 }
 
-export function normalizeThread(raw: Thread & { authorAvatar?: string }): Thread {
-  if (!raw) return raw
-  return {
-    ...raw,
-    authorAvatarUrl: raw.authorAvatarUrl || raw.authorAvatar || '',
-  }
-}
-
 function normalizeThreadResult(data: unknown, page: number, size: number, endpoint: string): PageResult<Thread> {
   const decoded = decodePageResponse<Thread & { authorAvatar?: string }>(data, { page, size, endpoint })
   return {
     ...decoded,
     items: decoded.items.map((item) => normalizeThread(item)),
   }
-}
-
-export async function createThread(payload: CreateThreadPayload): Promise<Thread> {
-  const { data } = await api.post('/threads', payload)
-  return normalizeThread(data)
 }
 
 export async function listThreads({
@@ -72,15 +64,15 @@ export async function listThreadRanking({
 
 export async function getThreadLikeState(id: Id): Promise<ThreadLikeState> {
   const { data } = await api.get(`/threads/${id}/like`)
-  return data
+  return decodeThreadLikeResponse(data, id, `/threads/${id}/like`)
 }
 
 export async function likeThread(id: Id): Promise<ThreadLikeState> {
   const { data } = await api.post(`/threads/${id}/like`)
-  return data
+  return decodeThreadLikeResponse(data, id, `/threads/${id}/like`)
 }
 
 export async function unlikeThread(id: Id): Promise<ThreadLikeState> {
   const { data } = await api.delete(`/threads/${id}/like`)
-  return data
+  return decodeThreadLikeResponse(data, id, `/threads/${id}/like`)
 }

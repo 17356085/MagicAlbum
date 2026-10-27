@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useHeaderTheme } from '@/components/header/useHeaderTheme'
 import { safeBack as navigateBackSafely } from '@/utils/router'
 import { setPendingAuthRedirect } from '@/utils/authStorage'
@@ -13,7 +14,12 @@ const router = useRouter()
 const authStore = useAuthStore()
 const { isLoggedIn, user } = storeToRefs(authStore)
 const { isDark, themeLabel, toggleTheme } = useHeaderTheme()
-const logoutDialog = ref<HTMLDialogElement | null>(null)
+const showLogoutConfirmation = ref(false)
+interface LogoutConfirmationSnapshot {
+  token: string
+  generation: number
+}
+const logoutConfirmationSnapshot = ref<LogoutConfirmationSnapshot | null>(null)
 const governanceAccess = ref<GovernanceMe | null>(null)
 let governanceRequestSeq = 0
 
@@ -43,7 +49,24 @@ async function loadGovernanceLinks(): Promise<void> {
   }
 }
 
-function onAuthStateChanged(): void { void loadGovernanceLinks() }
+function isLogoutConfirmationCurrent(): boolean {
+  const snapshot = logoutConfirmationSnapshot.value
+  return showLogoutConfirmation.value
+    && snapshot !== null
+    && isLoggedIn.value
+    && getStoredAccessToken() === snapshot.token
+    && authStore.isAuthGenerationCurrent(snapshot.generation)
+}
+
+function closeLogoutConfirmation(): void {
+  showLogoutConfirmation.value = false
+  logoutConfirmationSnapshot.value = null
+}
+
+function onAuthStateChanged(): void {
+  if (showLogoutConfirmation.value && !isLogoutConfirmationCurrent()) closeLogoutConfirmation()
+  void loadGovernanceLinks()
+}
 
 function safeBack(): void {
   navigateBackSafely(router)
@@ -66,24 +89,21 @@ function openHistory(): void {
   }
 }
 
-function openLogoutDialog(): void {
-  const dialog = logoutDialog.value
-  if (!dialog || dialog.open) return
-  if (typeof dialog.showModal === 'function') {
-    dialog.showModal()
-  } else {
-    // jsdom and older embedded browsers may not expose dialog methods.
-    dialog.setAttribute('open', '')
-  }
-}
-
-function closeLogoutDialog(): void {
-  logoutDialog.value?.close()
+function openLogoutConfirmation(): void {
+  if (showLogoutConfirmation.value || !isLoggedIn.value) return
+  const token = getStoredAccessToken()
+  if (!token) return
+  logoutConfirmationSnapshot.value = { token, generation: authStore.getAuthGeneration() }
+  showLogoutConfirmation.value = true
 }
 
 function confirmLogout(): void {
+  if (!isLogoutConfirmationCurrent()) {
+    closeLogoutConfirmation()
+    return
+  }
+  closeLogoutConfirmation()
   authStore.logout()
-  closeLogoutDialog()
 }
 
 onMounted(() => {
@@ -93,6 +113,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   governanceRequestSeq += 1
+  closeLogoutConfirmation()
   window.removeEventListener('auth-state-changed', onAuthStateChanged)
 })
 </script>
@@ -150,19 +171,18 @@ onBeforeUnmount(() => {
         <button type="button" class="mobile-me__link" @click="openAiChat">AI 助手<span aria-hidden="true">›</span></button>
       </div>
 
-      <button v-if="isLoggedIn" type="button" class="mobile-me__logout" @click="openLogoutDialog">退出登录</button>
+      <button v-if="isLoggedIn" type="button" class="mobile-me__logout" @click="openLogoutConfirmation">退出登录</button>
     </section>
 
-    <dialog ref="logoutDialog" class="mobile-me__dialog" aria-labelledby="mobile-me-logout-title">
-      <form method="dialog" class="mobile-me__dialog-content">
-        <h2 id="mobile-me-logout-title" class="text-lg font-semibold">退出登录？</h2>
-        <p class="mt-2 text-sm text-[var(--ui-muted)]">退出后仍可浏览公开内容，登录后可继续管理账户。</p>
-        <div class="mobile-me__dialog-actions">
-          <button type="submit" class="mobile-me__dialog-button">取消</button>
-          <button type="button" class="mobile-me__dialog-button mobile-me__dialog-button--primary" @click="confirmLogout">确认退出</button>
-        </div>
-      </form>
-    </dialog>
+    <ConfirmDialog
+      v-if="showLogoutConfirmation"
+      title="退出登录？"
+      message="退出后仍可浏览公开内容，登录后可继续管理账户。"
+      confirm-text="确认退出"
+      cancel-text="取消"
+      @confirm="confirmLogout"
+      @cancel="closeLogoutConfirmation"
+    />
   </section>
 </template>
 
@@ -243,8 +263,7 @@ onBeforeUnmount(() => {
 }
 
 .mobile-me__primary,
-.mobile-me__logout,
-.mobile-me__dialog-button {
+.mobile-me__logout {
   min-height: 48px;
   border-radius: 10px;
   font-weight: 600;
@@ -290,46 +309,6 @@ onBeforeUnmount(() => {
 .dark .mobile-me__logout:focus-visible {
   background: #3b2030;
 }
-
-.mobile-me__dialog {
-  width: min(420px, calc(100vw - 32px));
-  margin: auto;
-  border: 1px solid var(--ui-border);
-  border-radius: 16px;
-  padding: 0;
-  background: var(--ui-surface);
-  color: var(--ui-ink);
-}
-
-.mobile-me__dialog::backdrop {
-  background: rgb(15 23 42 / 0.46);
-}
-
-.mobile-me__dialog-content {
-  padding: 24px;
-}
-
-.mobile-me__dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 24px;
-}
-
-.mobile-me__dialog-button {
-  padding: 10px 16px;
-  border: 1px solid var(--ui-border);
-  background: var(--ui-surface);
-  color: var(--ui-ink);
-}
-
-.mobile-me__dialog-button--primary {
-  border-color: transparent;
-  background: #1d4ed8;
-  color: white;
-}
-
-.dark .mobile-me__dialog-button--primary { background: #4f46e5; }
 
 @media (max-width: 640px) {
   .mobile-me__header {

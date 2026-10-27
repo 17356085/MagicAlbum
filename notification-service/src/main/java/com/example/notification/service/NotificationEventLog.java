@@ -1,6 +1,5 @@
 package com.example.notification.service;
 
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -19,11 +18,8 @@ public class NotificationEventLog {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void append(Long userId, Long notificationId, String kind) {
-        Long existing = jdbc.queryForObject("SELECT COUNT(*) FROM notification_stream_cursor WHERE user_id=?", Long.class, userId);
-        if (existing == null || existing == 0) {
-            try { jdbc.update("INSERT INTO notification_stream_cursor(user_id,next_sequence) VALUES (?,0)", userId); }
-            catch (DuplicateKeyException concurrent) { /* The committed row is locked below. */ }
-        }
+        jdbc.update("INSERT INTO notification_stream_cursor(user_id,next_sequence) VALUES (?,0) "
+                + "ON DUPLICATE KEY UPDATE next_sequence=next_sequence", userId);
         Long previous = jdbc.queryForObject("SELECT next_sequence FROM notification_stream_cursor WHERE user_id=? FOR UPDATE", Long.class, userId);
         long sequence = Math.addExact(previous == null ? 0 : previous, 1);
         jdbc.update("UPDATE notification_stream_cursor SET next_sequence=? WHERE user_id=?", sequence, userId);

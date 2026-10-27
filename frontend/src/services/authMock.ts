@@ -184,7 +184,6 @@ export async function getQrLoginStatusMock(qrId: string, pollToken: string): Pro
       qrUrl: `mock://auth/qr/${qrId}`,
       expiresAt,
       status: 'CONFIRMED',
-      user: session.user,
       message: '已确认登录',
     }
   }
@@ -253,7 +252,6 @@ export async function confirmQrLoginSessionMock(qrId: string): Promise<QrLoginSt
     qrUrl: `mock://auth/qr/${qrId}`,
     expiresAt: new Date(session.createdAt + 60_000).toISOString(),
     status: 'CONFIRMED',
-    user: session.user,
     message: '已确认登录',
   }
 }

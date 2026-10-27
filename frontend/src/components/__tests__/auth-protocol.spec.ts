@@ -4,6 +4,7 @@ import {
   AuthProtocolError,
   cancelQrLoginSession,
   createQrLoginSession,
+  exchangeQrLoginSession,
   exchangeOAuthCode,
   getQrLoginStatus,
 } from '@/api/auth'
@@ -85,6 +86,33 @@ describe('auth protocol boundaries', () => {
     } as never)
 
     await expect(getQrLoginStatus('qr-1', 'poll-1')).rejects.toBeInstanceOf(AuthProtocolError)
+  })
+
+  it('drops legacy status user data while keeping confirmed exchange data separate', async () => {
+    apiMock.post
+      .mockResolvedValueOnce({
+        data: {
+          qrId: 'qr-1',
+          qrUrl: 'magicalbum://auth/qr/qr-1',
+          expiresAt: '2026-09-29T00:00:00Z',
+          status: 'CONFIRMED',
+          message: '已确认登录',
+          user: { id: 7, username: 'legacy-user', email: 'legacy@example.test' },
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        data: {
+          accessToken: 'qr-jwt',
+          user: { id: 7, username: 'exchange-user', email: 'exchange@example.test', phone: '+85255550123' },
+        },
+      } as never)
+
+    const status = await getQrLoginStatus('qr-1', 'poll-1')
+    expect(status).not.toHaveProperty('user')
+    await expect(exchangeQrLoginSession('qr-1', 'poll-1')).resolves.toMatchObject({
+      accessToken: 'qr-jwt',
+      user: { email: 'exchange@example.test', phone: '+85255550123' },
+    })
   })
 
   it('exchanges only a short-lived OAuth code through POST', async () => {

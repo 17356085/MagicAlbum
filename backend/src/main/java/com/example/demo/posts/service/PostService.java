@@ -5,6 +5,7 @@ import com.example.demo.common.RedisKeys;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.posts.dto.CreatePostRequest;
+import com.example.demo.posts.dto.PostLikeCountView;
 import com.example.demo.posts.dto.PostLikeResponse;
 import com.example.demo.posts.dto.PostDto;
 import com.example.demo.posts.dto.PostQueryView;
@@ -31,7 +32,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -105,9 +108,10 @@ public class PostService {
         findNormalThread(threadId);
         int limit = Math.min(Math.max(size, 1), 50);
         int pageIndex = Math.max(page, 1) - 1;
+        int effectivePage = pageIndex + 1;
         String normalizedSort = normalizeSort(sort);
         CachedPostPage cached = currentUserId == null
-                ? readThreadPostsCache(threadId, normalizedSort, page, limit)
+                ? readThreadPostsCache(threadId, normalizedSort, effectivePage, limit)
                 : null;
         if (cached != null) {
             if (isFreshAnonymousPostPage(cached, threadId)) {
@@ -119,10 +123,10 @@ public class PostService {
         Page<PostQueryView> p = "likeCount".equals(normalizedSort)
                 ? postRepository.findByThreadLikeCountDescView(threadId, pr)
                 : postRepository.findByThreadAscView(threadId, pr);
-        List<PostDto> items = p.getContent().stream().map(view -> toDto(view, currentUserId)).toList();
+        List<PostDto> items = toDtos(p.getContent(), currentUserId);
         Page<PostDto> result = new org.springframework.data.domain.PageImpl<>(items, p.getPageable(), p.getTotalElements());
         if (currentUserId == null) {
-            writeThreadPostsCache(threadId, normalizedSort, page, limit, new CachedPostPage(items, p.getTotalElements()));
+            writeThreadPostsCache(threadId, normalizedSort, effectivePage, limit, new CachedPostPage(items, p.getTotalElements()));
         }
         return result;
     }
@@ -131,7 +135,7 @@ public class PostService {
     public Page<PostDto> listByAuthor(Long authorId, int page, int size) {
         PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 50));
         Page<PostQueryView> p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, null, null, pr);
-        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
+        return new org.springframework.data.domain.PageImpl<>(toDtos(p.getContent(), null), p.getPageable(), p.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -153,7 +157,7 @@ public class PostService {
                 p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, keyword, sectionId, pr);
             }
         }
-        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(this::toDto).toList(), p.getPageable(), p.getTotalElements());
+        return new org.springframework.data.domain.PageImpl<>(toDtos(p.getContent(), null), p.getPageable(), p.getTotalElements());
     }
 
     @Transactional
@@ -242,9 +246,12 @@ public class PostService {
         if (content == null || content.isBlank()) {
             return userIds;
         }
+        Set<String> usernames = new LinkedHashSet<>();
         Matcher matcher = MENTION_PATTERN.matcher(content);
         while (matcher.find()) {
-            String username = matcher.group(1);
+            usernames.add(matcher.group(1));
+        }
+        for (String username : usernames) {
             Optional<com.example.demo.user.entity.User> user = userRepository.findByUsername(username);
             user.map(com.example.demo.user.entity.User::getId).ifPresent(userIds::add);
         }
@@ -362,6 +369,30 @@ public class PostService {
     }
 
     private PostDto toDto(PostQueryView view, Long currentUserId) {
+        return toDto(view, countLikes(view.getId()), currentUserId != null && isLikedBy(view.getId(), currentUserId));
+    }
+
+    private List<PostDto> toDtos(List<PostQueryView> views, Long currentUserId) {
+        if (views == null || views.isEmpty()) {
+            return List.of();
+        }
+        List<Long> postIds = views.stream()
+                .map(PostQueryView::getId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, Long> likeCounts = batchLikeCounts(postIds);
+        Set<Long> likedPostIds = currentUserId == null
+                ? Set.of()
+                : batchLikedPostIds(currentUserId, postIds);
+        return views.stream()
+                .map(view -> toDto(view,
+                        likeCounts.getOrDefault(view.getId(), 0L),
+                        view.getId() != null && likedPostIds.contains(view.getId())))
+                .toList();
+    }
+
+    private PostDto toDto(PostQueryView view, long likeCount, boolean liked) {
         PostDto dto = new PostDto();
         dto.setId(view.getId());
         dto.setThreadId(view.getThreadId());
@@ -377,8 +408,8 @@ public class PostService {
         dto.setParentAuthorNickname(view.getParentAuthorNickname());
         dto.setCreatedAt(view.getCreatedAt());
         dto.setUpdatedAt(view.getUpdatedAt());
-        dto.setLikeCount(countLikes(view.getId()));
-        dto.setLiked(currentUserId != null && isLikedBy(view.getId(), currentUserId));
+        dto.setLikeCount(likeCount);
+        dto.setLiked(liked);
         return dto;
     }
 
@@ -544,6 +575,39 @@ public class PostService {
             return postLikeRepository.existsByPostIdAndUserId(postId, userId);
         } catch (DataAccessException e) {
             return false;
+        }
+    }
+
+    private Map<Long, Long> batchLikeCounts(Collection<Long> postIds) {
+        Map<Long, Long> counts = new HashMap<>();
+        if (postLikeRepository == null || postIds == null || postIds.isEmpty()) {
+            return counts;
+        }
+        try {
+            List<PostLikeCountView> rows = postLikeRepository.findLikeCountsByPostIds(postIds);
+            if (rows == null) {
+                return counts;
+            }
+            for (PostLikeCountView row : rows) {
+                if (row != null && row.getPostId() != null && row.getLikeCount() != null) {
+                    counts.put(row.getPostId(), row.getLikeCount());
+                }
+            }
+        } catch (DataAccessException e) {
+            return new HashMap<>();
+        }
+        return counts;
+    }
+
+    private Set<Long> batchLikedPostIds(Long userId, Collection<Long> postIds) {
+        if (postLikeRepository == null || userId == null || postIds == null || postIds.isEmpty()) {
+            return Set.of();
+        }
+        try {
+            List<Long> likedPostIds = postLikeRepository.findPostIdsLikedByUser(userId, postIds);
+            return likedPostIds == null ? Set.of() : new HashSet<>(likedPostIds);
+        } catch (DataAccessException e) {
+            return Set.of();
         }
     }
 

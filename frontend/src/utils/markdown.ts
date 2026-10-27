@@ -1,14 +1,14 @@
-import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
-import MarkdownIt from 'markdown-it'
+import type MarkdownIt from 'markdown-it'
 import type { RendererRule } from 'markdown-it'
 import markdownItKatex from '@vscode/markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import { normalizeImageUrl } from '@/utils/image'
+import { createBaseMarkdownRenderer } from './markdownBase'
+import type { MarkdownBaseOptions } from './markdownBase'
+export { sanitizeHtml, renderMarkdown, renderInlineMarkdown } from './markdownBase'
 
-interface MarkdownRendererOptions {
-  html?: boolean
-  breaks?: boolean
+interface MarkdownRendererOptions extends MarkdownBaseOptions {
   katex?: boolean
   highlight?: boolean
   normalizeImages?: boolean
@@ -18,17 +18,17 @@ function renderHighlightedCode(md: MarkdownIt, str: string, lang: string): strin
   if (lang && hljs.getLanguage(lang)) {
     try {
       const out = hljs.highlight(str, { language: lang, ignoreIllegals: true }).value
-      return `<pre><code class="hljs language-${lang}">${out}</code></pre>`
+      return `<pre><code class="hljs language-${lang}" data-highlighted="yes">${out}</code></pre>`
     } catch (_) {}
   } else {
     try {
       const auto = hljs.highlightAuto(str)
       const langGuess = auto.language ? ` language-${auto.language}` : ''
-      return `<pre><code class="hljs${langGuess}">${auto.value}</code></pre>`
+      return `<pre><code class="hljs${langGuess}" data-highlighted="yes">${auto.value}</code></pre>`
     } catch (_) {}
   }
 
-  return `<pre><code class="hljs">${md.utils.escapeHtml(str)}</code></pre>`
+  return `<pre><code class="hljs" data-highlighted="yes">${md.utils.escapeHtml(str)}</code></pre>`
 }
 
 function installImageRule(md: MarkdownIt): void {
@@ -52,19 +52,8 @@ function installImageRule(md: MarkdownIt): void {
   }
 }
 
-export function sanitizeHtml(html: string | undefined | null): string {
-  return DOMPurify.sanitize(String(html || ''))
-}
-
 export function createMarkdownRenderer(options: MarkdownRendererOptions = {}): MarkdownIt {
-  const markdownOptions: ConstructorParameters<typeof MarkdownIt>[0] = {
-    html: options.html ?? true,
-    linkify: true,
-    breaks: options.breaks ?? true,
-    langPrefix: 'language-',
-  }
-
-  const md = new MarkdownIt(markdownOptions)
+  const md = createBaseMarkdownRenderer(options)
 
   if (options.highlight !== false) {
     md.options.highlight = (str: string, lang: string) => renderHighlightedCode(md, str, lang)
@@ -85,19 +74,12 @@ export function createMarkdownRenderer(options: MarkdownRendererOptions = {}): M
   return md
 }
 
-export function renderMarkdown(md: MarkdownIt, raw: string | undefined | null): string {
-  return sanitizeHtml(md.render(String(raw || '')))
-}
-
-export function renderInlineMarkdown(md: MarkdownIt, raw: string | undefined | null): string {
-  return sanitizeHtml(md.renderInline(String(raw || '')))
-}
-
 export function applyRuntimeHighlight(root: HTMLElement | null): void {
   if (!root) return
 
   const codeNodes = root.querySelectorAll<HTMLElement>('pre code')
   codeNodes.forEach((node) => {
+    if (node.dataset.highlighted) return
     try {
       hljs.highlightElement(node)
     } catch (_) {}

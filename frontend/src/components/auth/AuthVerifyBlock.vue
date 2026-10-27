@@ -22,7 +22,7 @@
       ></div>
       <div class="flex items-center gap-2">
         <button
-          v-if="status === 'verified' || status === 'failed' || status === 'expired'"
+          v-if="status === 'verified' || status === 'failed' || status === 'expired' || (status === 'unavailable' && turnstileSiteKey)"
           type="button"
           class="ui-button px-3 py-1.5 text-xs"
           @click="resetState"
@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw } from 'vue'
 import {
   createVerifyResult,
   getAuthVerifyMode,
@@ -99,6 +99,11 @@ const result = ref<AuthVerifyResult | null>(null)
 const message = ref('')
 const turnstileContainerRef = ref<HTMLDivElement | null>(null)
 const widgetId = ref<string | null>(null)
+let disposed = false
+let lifecycleGeneration = 0
+let turnstileRenderPromise: Promise<void> | null = null
+let turnstileRenderGeneration: number | null = null
+let manualVerification: { generation: number; promise: Promise<AuthVerifyResult | null> } | null = null
 
 const verifyHint = computed(() => {
   if (isTurnstileMode) {
@@ -141,11 +146,12 @@ function loadTurnstileScript(): Promise<void> {
   if (window.turnstile) return Promise.resolve()
   if (turnstileScriptPromise) return turnstileScriptPromise
 
-  turnstileScriptPromise = new Promise((resolve, reject) => {
-    const existing = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null
-    if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true })
-      existing.addEventListener('error', () => reject(new Error('Turnstile script load failed')), { once: true })
+  let existingScript: HTMLScriptElement | null = null
+  const pendingScriptPromise = new Promise<void>((resolve, reject) => {
+    existingScript = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null
+    if (existingScript) {
+      existingScript.addEventListener('load', () => resolve(), { once: true })
+      existingScript.addEventListener('error', () => reject(new Error('Turnstile script load failed')), { once: true })
       return
     }
 
@@ -156,122 +162,202 @@ function loadTurnstileScript(): Promise<void> {
     script.defer = true
     script.onload = () => resolve()
     script.onerror = () => reject(new Error('Turnstile script load failed'))
+    existingScript = script
     document.head.appendChild(script)
   })
+  let trackedScriptPromise!: Promise<void>
+  trackedScriptPromise = pendingScriptPromise.catch((error: unknown) => {
+    if (turnstileScriptPromise === trackedScriptPromise) {
+      turnstileScriptPromise = null
+      if (existingScript && !window.turnstile) existingScript.remove()
+    }
+    throw error
+  })
+  turnstileScriptPromise = trackedScriptPromise
 
   return turnstileScriptPromise
 }
 
-function resetTurnstileWidget(): void {
-  if (widgetId.value && window.turnstile) {
-    window.turnstile.reset(widgetId.value)
-  }
+function isLifecycleCurrent(generation: number): boolean {
+  return !disposed && lifecycleGeneration === generation
 }
 
 function removeTurnstileWidget(): void {
   if (widgetId.value && window.turnstile) {
     window.turnstile.remove(widgetId.value)
-    widgetId.value = null
   }
+  widgetId.value = null
 }
 
-async function renderTurnstileWidget(): Promise<void> {
-  if (!isTurnstileMode) return
+function renderTurnstileWidget(): Promise<void> {
+  if (!isTurnstileMode) return Promise.resolve()
+  const generation = lifecycleGeneration
+  if (!isLifecycleCurrent(generation)) return Promise.resolve()
   if (!turnstileSiteKey) {
     status.value = 'unavailable'
     message.value = '未配置 Turnstile site key，当前无法启用真实人工验证。'
-    return
+    return Promise.resolve()
   }
 
-  await nextTick()
-  if (!turnstileContainerRef.value) return
-
-  status.value = 'verifying'
-  message.value = '请完成验证后再继续提交。'
-
-  try {
-    await loadTurnstileScript()
-    removeTurnstileWidget()
-
-    widgetId.value = window.turnstile?.render(turnstileContainerRef.value, {
-      sitekey: turnstileSiteKey,
-      action: props.scene,
-      theme: 'auto',
-      size: 'flexible',
-      callback: (token: string) => {
-        const verifyResult = createVerifyResult({
-          token,
-          provider: 'turnstile',
-          scene: props.scene,
-        })
-        result.value = verifyResult
-        status.value = 'verified'
-        message.value = '验证已完成，可以继续提交。'
-        emit('verified', verifyResult)
-      },
-      'error-callback': () => {
-        result.value = null
-        status.value = 'failed'
-        message.value = 'Turnstile 验证失败，请重试。'
-      },
-      'expired-callback': () => {
-        result.value = null
-        status.value = 'expired'
-        message.value = '验证已过期，请重新完成验证。'
-      },
-    }) || null
-  } catch {
-    status.value = 'unavailable'
-    message.value = 'Turnstile 加载失败，请稍后重试。'
+  if (widgetId.value) return Promise.resolve()
+  if (turnstileRenderPromise && turnstileRenderGeneration === generation) {
+    return turnstileRenderPromise
   }
+
+  const renderPromise = (async () => {
+    await nextTick()
+    if (!isLifecycleCurrent(generation) || !turnstileContainerRef.value) return
+
+    status.value = 'verifying'
+    message.value = '请完成验证后再继续提交。'
+
+    try {
+      await loadTurnstileScript()
+      if (!isLifecycleCurrent(generation) || !turnstileContainerRef.value) return
+
+      removeTurnstileWidget()
+      const turnstile = window.turnstile
+      if (!turnstile) {
+        status.value = 'unavailable'
+        message.value = 'Turnstile 加载失败，请稍后重试。'
+        return
+      }
+
+      widgetId.value = turnstile.render(turnstileContainerRef.value, {
+        sitekey: turnstileSiteKey,
+        action: props.scene,
+        theme: 'auto',
+        size: 'flexible',
+        callback: (token: string) => {
+          if (!isLifecycleCurrent(generation)) return
+          const verifyResult = createVerifyResult({
+            token,
+            provider: 'turnstile',
+            scene: props.scene,
+          })
+          result.value = verifyResult
+          status.value = 'verified'
+          message.value = '验证已完成，可以继续提交。'
+          emit('verified', verifyResult)
+        },
+        'error-callback': () => {
+          if (!isLifecycleCurrent(generation)) return
+          result.value = null
+          status.value = 'failed'
+          message.value = 'Turnstile 验证失败，请重试。'
+        },
+        'expired-callback': () => {
+          if (!isLifecycleCurrent(generation)) return
+          result.value = null
+          status.value = 'expired'
+          message.value = '验证已过期，请重新完成验证。'
+        },
+      }) || null
+    } catch {
+      if (!isLifecycleCurrent(generation)) return
+      status.value = 'unavailable'
+      message.value = 'Turnstile 加载失败，请稍后重试。'
+    }
+  })()
+
+  turnstileRenderGeneration = generation
+  turnstileRenderPromise = renderPromise
+  renderPromise.then(
+    () => {
+      if (turnstileRenderPromise === renderPromise) {
+        turnstileRenderPromise = null
+        turnstileRenderGeneration = null
+      }
+    },
+    () => {
+      if (turnstileRenderPromise === renderPromise) {
+        turnstileRenderPromise = null
+        turnstileRenderGeneration = null
+      }
+    },
+  )
+  return renderPromise
 }
 
 async function startManualVerify(): Promise<AuthVerifyResult | null> {
+  const generation = lifecycleGeneration
+  if (!isLifecycleCurrent(generation)) return null
   if (!isMockVerifyEnabled()) {
     status.value = 'idle'
     message.value = '当前验证模式不支持手动验证。'
     return null
   }
   if (verified.value && result.value) return result.value
+  if (manualVerification?.generation === generation) return manualVerification.promise
 
   status.value = 'verifying'
   message.value = '正在完成人工验证占位流程…'
+  const pending = (async (): Promise<AuthVerifyResult | null> => {
+    try {
+      const verifyResult = await startVerify({ scene: props.scene })
+      if (!isLifecycleCurrent(generation)) return null
+      result.value = verifyResult
+      status.value = 'verified'
+      message.value = `验证完成，票据已就绪：${getVerifyToken(verifyResult).slice(0, 18)}...`
+      emit('verified', verifyResult)
+      return verifyResult
+    } catch {
+      if (!isLifecycleCurrent(generation)) return null
+      status.value = 'failed'
+      message.value = '人工验证未完成，请重试'
+      return null
+    }
+  })()
+  manualVerification = { generation, promise: pending }
   try {
-    const verifyResult = await startVerify({ scene: props.scene })
-    result.value = verifyResult
-    status.value = 'verified'
-    message.value = `验证完成，票据已就绪：${getVerifyToken(verifyResult).slice(0, 18)}...`
-    emit('verified', verifyResult)
-    return verifyResult
-  } catch {
-    status.value = 'failed'
-    message.value = '人工验证未完成，请重试'
-    return null
+    return await pending
+  } finally {
+    if (manualVerification?.promise === pending) manualVerification = null
   }
 }
 
 function resetState(): void {
+  if (disposed) return
+  lifecycleGeneration += 1
   resetVerify()
   result.value = null
   status.value = 'idle'
   message.value = ''
 
   if (isTurnstileMode) {
-    resetTurnstileWidget()
+    removeTurnstileWidget()
     status.value = 'verifying'
     message.value = '请完成验证后再继续提交。'
+    void renderTurnstileWidget()
   }
 
   emit('reset')
 }
 
+function resetIfMatches(expected: AuthVerifyResult): boolean {
+  const current = result.value
+  if (
+    disposed ||
+    !current ||
+    toRaw(current) !== toRaw(expected) ||
+    current.token !== expected.token ||
+    current.provider !== expected.provider ||
+    current.scene !== expected.scene
+  ) {
+    return false
+  }
+  resetState()
+  return true
+}
+
 async function ensureVerified(): Promise<AuthVerifyResult | null> {
+  const generation = lifecycleGeneration
+  if (!isLifecycleCurrent(generation)) return null
   if (verified.value && result.value) return result.value
 
   if (isTurnstileMode) {
-    if (!widgetId.value) {
-      await renderTurnstileWidget()
-    }
+    if (!widgetId.value) await renderTurnstileWidget()
+    if (!isLifecycleCurrent(generation)) return null
     if (!verified.value) {
       message.value = turnstileSiteKey ? '请先完成 Turnstile 验证。' : '当前未配置 Turnstile site key。'
       if (!turnstileSiteKey) status.value = 'unavailable'
@@ -290,12 +376,15 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  lifecycleGeneration += 1
   removeTurnstileWidget()
 })
 
 defineExpose({
   ensureVerified,
   reset: resetState,
+  resetIfMatches,
   isVerified: () => verified.value,
   getVerifyResult: () => result.value,
   getVerifyPayload: (): AuthVerifyPayload => toVerifyPayload(result.value),

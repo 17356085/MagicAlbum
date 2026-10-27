@@ -16,8 +16,8 @@ vi.mock('@/api/users', () => ({ getUserProfile: mocks.getUserProfile }))
 vi.mock('@/utils/image', () => ({
   normalizeImageUrl: (url: string | undefined) => url || '',
 }))
-vi.mock('@/utils/markdown', () => ({
-  createMarkdownRenderer: () => ({}),
+vi.mock('@/utils/markdownBase', () => ({
+  createBaseMarkdownRenderer: () => ({}),
   renderInlineMarkdown: (_renderer: unknown, text: string | undefined) => text || '',
   renderMarkdown: (_renderer: unknown, text: string | undefined) => text || '',
 }))
@@ -122,5 +122,30 @@ describe('Discover', () => {
     expect(wrapper.text()).toContain('Newest result')
     expect(wrapper.text()).not.toContain('Stale result')
     expect(wrapper.text()).not.toContain('正在加载...')
+  })
+
+  it('offers a retry after a list request fails', async () => {
+    mocks.listThreads
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({
+        items: [{ id: 9, title: '恢复后的帖子', content: '正文', createdAt: '2026-10-08T00:00:00Z' }],
+        page: 2,
+        size: 10,
+        total: 1,
+      })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('加载帖子失败')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.listThreads).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('恢复后的帖子')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 })

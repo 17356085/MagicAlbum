@@ -80,7 +80,6 @@ export interface QrLoginSession {
 }
 
 export interface QrLoginStatusResponse extends QrLoginSession {
-  user?: User | null
   message?: string
 }
 

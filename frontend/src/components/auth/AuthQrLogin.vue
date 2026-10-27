@@ -61,7 +61,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { cancelQrLoginSession, confirmQrLoginSession, createQrLoginSession, exchangeQrLoginSession, getQrLoginStatus } from '@/api/auth'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, type AuthOperationContext } from '@/stores/auth'
 import type { QrLoginSession, QrLoginStatus } from '@/types'
 import AuthQrCode from './AuthQrCode.vue'
 
@@ -88,7 +88,8 @@ const loading = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let lifecycleGeneration = 0
-let flowAuthGeneration = authStore.getAuthGeneration()
+let flowAuthContext: AuthOperationContext | null = null
+let disposed = false
 const now = ref(Date.now())
 
 type SessionSnapshot = Readonly<QrLoginSession>
@@ -146,9 +147,9 @@ function clearTimers(): void {
   }
 }
 
-function isLifecycleCurrent(generation: number): boolean {
-  if (generation !== lifecycleGeneration) return false
-  if (authStore.isAuthGenerationCurrent(flowAuthGeneration)) return true
+function isLifecycleCurrent(generation: number, context: AuthOperationContext | null = flowAuthContext): boolean {
+  if (disposed || generation !== lifecycleGeneration) return false
+  if (context && authStore.isAuthOperationContextCurrent(context)) return true
   clearTimers()
   loading.value = false
   return false
@@ -157,6 +158,7 @@ function isLifecycleCurrent(generation: number): boolean {
 function invalidateLifecycle(): number {
   lifecycleGeneration += 1
   clearTimers()
+  loading.value = false
   return lifecycleGeneration
 }
 
@@ -164,31 +166,32 @@ function snapshotSession(value: QrLoginSession | null): SessionSnapshot | null {
   return value ? { ...value } : null
 }
 
-function schedulePoll(generation: number, snapshot: SessionSnapshot): void {
-  if (!isLifecycleCurrent(generation)) return
+function schedulePoll(generation: number, snapshot: SessionSnapshot, context: AuthOperationContext): void {
+  if (!isLifecycleCurrent(generation, context)) return
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = setTimeout(() => {
     pollTimer = null
-    if (isLifecycleCurrent(generation)) void pollStatus(generation, snapshot)
+    if (isLifecycleCurrent(generation, context)) void pollStatus(generation, snapshot, context)
   }, 2000)
 }
 
-function startCountdown(generation: number): void {
+function startCountdown(generation: number, context: AuthOperationContext): void {
   if (countdownTimer) clearInterval(countdownTimer)
   countdownTimer = setInterval(() => {
-    if (!isLifecycleCurrent(generation)) return
+    if (!isLifecycleCurrent(generation, context)) return
     now.value = Date.now()
   }, 1000)
 }
 
 async function createSession(): Promise<void> {
   const generation = ++lifecycleGeneration
-  flowAuthGeneration = authStore.getAuthGeneration()
+  const context = authStore.captureAuthOperationContext()
+  flowAuthContext = context
   clearTimers()
   loading.value = true
   try {
     const nextSession = await createQrLoginSession()
-    if (!isLifecycleCurrent(generation)) {
+    if (!isLifecycleCurrent(generation, context)) {
       void Promise.resolve()
         .then(() => cancelQrLoginSession(nextSession.qrId, nextSession.pollToken))
         .catch(() => {})
@@ -199,23 +202,24 @@ async function createSession(): Promise<void> {
     status.value = nextSession.status
     message.value = ''
     now.value = Date.now()
-    startCountdown(generation)
-    schedulePoll(generation, nextSnapshot)
+    startCountdown(generation, context)
+    schedulePoll(generation, nextSnapshot, context)
   } catch {
-    if (!isLifecycleCurrent(generation)) return
+    if (!isLifecycleCurrent(generation, context)) return
     message.value = '二维码生成失败，请稍后重试'
     emit('notify', message.value)
+    if (!isLifecycleCurrent(generation, context)) return
   } finally {
-    if (isLifecycleCurrent(generation)) loading.value = false
+    if (isLifecycleCurrent(generation, context)) loading.value = false
   }
 }
 
-async function pollStatus(generation: number, snapshot: SessionSnapshot): Promise<void> {
-  if (!isLifecycleCurrent(generation)) return
+async function pollStatus(generation: number, snapshot: SessionSnapshot, context: AuthOperationContext): Promise<void> {
+  if (!isLifecycleCurrent(generation, context)) return
   loading.value = true
   try {
     const response = await getQrLoginStatus(snapshot.qrId, snapshot.pollToken)
-    if (!isLifecycleCurrent(generation)) return
+    if (!isLifecycleCurrent(generation, context)) return
 
     session.value = {
       qrId: response.qrId,
@@ -228,14 +232,20 @@ async function pollStatus(generation: number, snapshot: SessionSnapshot): Promis
     message.value = response.message || ''
 
     if (response.status === 'CONFIRMED') {
+      if (!isLifecycleCurrent(generation, context)) return
       const login = await exchangeQrLoginSession(snapshot.qrId, snapshot.pollToken)
-      if (!isLifecycleCurrent(generation)) return
-      loading.value = false
-      invalidateLifecycle()
-      authStore.loginWithAuthResponse(login)
+      if (!isLifecycleCurrent(generation, context)) return
+      if (!authStore.tryLoginWithAuthResponse(login, context)) {
+        isLifecycleCurrent(generation, context)
+        return
+      }
+      if (disposed) return
+      const committedGeneration = invalidateLifecycle()
+      const committedContext = authStore.captureAuthOperationContext()
       emit('notify', '二维码登录成功')
+      if (disposed || committedGeneration !== lifecycleGeneration
+        || !authStore.isAuthOperationContextCurrent(committedContext)) return
       emit('success')
-      clearTimers()
       return
     }
 
@@ -250,38 +260,47 @@ async function pollStatus(generation: number, snapshot: SessionSnapshot): Promis
       return
     }
 
-    schedulePoll(generation, snapshot)
+    schedulePoll(generation, snapshot, context)
   } catch {
-    if (!isLifecycleCurrent(generation)) return
+    if (!isLifecycleCurrent(generation, context)) return
     message.value = useMock ? '二维码状态查询失败，请稍后重试' : '二维码状态查询失败，请稍后重试'
     emit('notify', message.value)
-    if (useMock) schedulePoll(generation, snapshot)
+    if (!isLifecycleCurrent(generation, context)) return
+    if (useMock) schedulePoll(generation, snapshot, context)
   } finally {
-    if (isLifecycleCurrent(generation)) loading.value = false
+    if (isLifecycleCurrent(generation, context)) loading.value = false
   }
 }
 
 async function refreshSession(): Promise<void> {
-  flowAuthGeneration = authStore.getAuthGeneration()
   const previous = snapshotSession(session.value)
   const generation = invalidateLifecycle()
+  const refreshContext = authStore.captureAuthOperationContext()
+  flowAuthContext = refreshContext
   session.value = null
   status.value = 'PENDING'
   message.value = ''
   loading.value = true
-  await cancelSession(previous, true, generation)
-  if (!isLifecycleCurrent(generation)) return
+  await cancelSession(previous, true, generation, refreshContext)
+  if (!isLifecycleCurrent(generation, refreshContext)) return
   await createSession()
 }
 
-async function cancelSession(snapshot: SessionSnapshot | null, notifyOnFailure: boolean, generation?: number): Promise<void> {
+async function cancelSession(
+  snapshot: SessionSnapshot | null,
+  notifyOnFailure: boolean,
+  generation?: number,
+  context?: AuthOperationContext,
+): Promise<void> {
   if (!snapshot) return
   try {
     await cancelQrLoginSession(snapshot.qrId, snapshot.pollToken)
   } catch {
-    if (notifyOnFailure && (generation === undefined || isLifecycleCurrent(generation))) {
+    const current = generation === undefined || isLifecycleCurrent(generation, context)
+    if (notifyOnFailure && current) {
       message.value = '旧二维码会话取消失败，已继续生成新二维码'
       emit('notify', message.value)
+      if (generation !== undefined && !isLifecycleCurrent(generation, context)) return
     } else {
       console.warn('二维码会话清理失败')
     }
@@ -292,19 +311,20 @@ function simulateConfirm(): void {
   message.value = ''
   const generation = lifecycleGeneration
   const snapshot = snapshotSession(session.value)
-  if (!snapshot || !isLifecycleCurrent(generation)) return
+  const context = flowAuthContext
+  if (!snapshot || !context || !isLifecycleCurrent(generation, context)) return
   loading.value = true
   void confirmQrLoginSession(snapshot.qrId)
     .then(() => {
-      if (isLifecycleCurrent(generation)) return pollStatus(generation, snapshot)
+      if (isLifecycleCurrent(generation, context)) return pollStatus(generation, snapshot, context)
       return undefined
     })
     .catch(() => {
-      if (!isLifecycleCurrent(generation)) return
+      if (!isLifecycleCurrent(generation, context)) return
       message.value = '模拟确认失败，请稍后重试'
     })
     .finally(() => {
-      if (isLifecycleCurrent(generation)) loading.value = false
+      if (isLifecycleCurrent(generation, context)) loading.value = false
     })
 }
 
@@ -322,6 +342,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
   const current = snapshotSession(session.value)
   invalidateLifecycle()
   session.value = null

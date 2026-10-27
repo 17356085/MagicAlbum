@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import SettingsAccount from '@/pages/SettingsAccount.vue'
 import SettingsConnectedTab from '@/pages/settings/SettingsConnectedTab.vue'
@@ -31,8 +31,11 @@ const dirtyTabs = reactive<Record<SettingsTab, boolean>>({
   account: false,
 })
 const hasDirtyDraft = computed(() => tabs.some((tab) => dirtyTabs[tab.key]))
+const navigationPending = ref(false)
+const navigationError = ref('')
 
 function setTabDirty(tab: SettingsTab, dirty: boolean): void {
+  if (tab !== selectedTab.value) return
   dirtyTabs[tab] = dirty
 }
 
@@ -44,22 +47,31 @@ function confirmDiscardIfNeeded(tabKeys = getDirtyTabs()): boolean {
   const dirtyKeys = tabKeys.filter((key) => dirtyTabs[key])
   if (!dirtyKeys.length) return true
 
-  const shouldDiscard = window.confirm('当前设置页有未保存的更改，确定放弃这些更改吗？')
-  if (shouldDiscard) {
-    dirtyKeys.forEach((key) => { dirtyTabs[key] = false })
-  }
-  return shouldDiscard
+  return window.confirm('当前设置页有未保存的更改，确定放弃这些更改吗？')
 }
 
 function selectTab(tab: SettingsTab): void {
-  if (tab === selectedTab.value) return
-  if (!confirmDiscardIfNeeded([selectedTab.value])) return
+  if (tab === selectedTab.value || navigationPending.value) return
 
+  navigationPending.value = true
+  navigationError.value = ''
   void router.push({
     path: route.path,
     query: { ...route.query, tab },
+  }).then(() => {
+    navigationError.value = ''
+  }).catch(() => {
+    navigationError.value = '页面切换失败，草稿仍保留，请重试。'
+  }).finally(() => {
+    navigationPending.value = false
   })
 }
+
+watch(selectedTab, (toTab, fromTab) => {
+  if (toTab === fromTab) return
+  dirtyTabs[fromTab] = false
+  navigationError.value = ''
+})
 
 function onBeforeUnload(event: BeforeUnloadEvent): void {
   if (!hasDirtyDraft.value) return
@@ -103,6 +115,7 @@ onUnmounted(() => {
             type="button"
             class="settings-tab ui-button min-w-0 flex-1 whitespace-normal px-3 py-2 text-sm sm:flex-none sm:px-4"
             :aria-current="selectedTab === tab.key ? 'page' : undefined"
+            :disabled="navigationPending"
             @click="selectTab(tab.key)"
           >
             {{ tab.label }}
@@ -110,6 +123,8 @@ onUnmounted(() => {
         </div>
 
       </nav>
+
+      <p v-if="navigationError" class="px-4 pt-4 text-sm text-red-600" role="alert">{{ navigationError }}</p>
 
       <div class="p-4 sm:p-6">
         <SettingsProfileTab v-if="selectedTab === 'profile'" @dirty-change="setTabDirty('profile', $event)" />

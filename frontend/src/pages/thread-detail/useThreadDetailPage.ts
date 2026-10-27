@@ -1,9 +1,10 @@
-import { computed, onScopeDispose, ref } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { getThread } from '@/api/threads'
 import { getUserProfile } from '@/api/users'
-import { updateVisitSectionById, updateVisitTitleById, updateVisitTitleByPath } from '@/composables/useRecentVisits'
+import { addVisit } from '@/composables/useRecentVisits'
+import { getStoredAccessToken, getStoredCurrentUser, hasRealToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
 import type { Thread } from '@/types'
 import { formatPageTitle } from '@/config/brand'
@@ -17,20 +18,57 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
   const auth = useAuthStore()
   let disposed = false
   let requestSequence = 0
+  let authEventEpoch = 0
+  let loadedHistoryCallback: (() => void) | null = null
   const loading = ref(false)
   const error = ref('')
   const thread = ref<Thread | null>(null)
   const authorProfileAvatarUrl = ref('')
   const anchorPostId = ref<number | null>(null)
 
-  function accountContext(): string {
-    return JSON.stringify([auth.token, auth.user?.id ?? auth.user?.userId ?? null])
+  function currentUserId(): string | number | null {
+    return auth.user?.id ?? auth.user?.userId ?? null
   }
+
+  function clearInvalidatedLoading(sequence: number, id: string, path: string): void {
+    if (disposed || sequence !== requestSequence) return
+    if (getRouteParamId(route.params.id as string | string[] | undefined) !== id || route.path !== path) return
+    thread.value = null
+    authorProfileAvatarUrl.value = ''
+    loading.value = false
+  }
+
+  function handleAuthStateChanged(): void {
+    if (disposed) return
+    authEventEpoch += 1
+    requestSequence += 1
+    loadedHistoryCallback = null
+    thread.value = null
+    authorProfileAvatarUrl.value = ''
+    anchorPostId.value = null
+    error.value = ''
+    loading.value = false
+  }
+
+  window.addEventListener('auth-state-changed', handleAuthStateChanged)
 
   onScopeDispose(() => {
     disposed = true
     requestSequence += 1
+    loadedHistoryCallback = null
+    window.removeEventListener('auth-state-changed', handleAuthStateChanged)
   })
+
+  watch(
+    currentUserId,
+    (nextId, previousId) => {
+      if (disposed || previousId != null || nextId == null) return
+      const callback = loadedHistoryCallback
+      if (!callback) return
+      loadedHistoryCallback = null
+      callback()
+    },
+  )
 
   const displayAuthorAvatarUrl = computed(() =>
     normalizeImageUrl(thread.value?.authorAvatarUrl || authorProfileAvatarUrl.value || ''),
@@ -48,17 +86,27 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
     const sequence = ++requestSequence
     const id = getRouteParamId(route.params.id as string | string[] | undefined)
     const path = route.path
-    const account = accountContext()
+    const token = auth.token
+    const epoch = authEventEpoch
+    loadedHistoryCallback = null
     const isCurrent = (): boolean => !disposed && sequence === requestSequence &&
       getRouteParamId(route.params.id as string | string[] | undefined) === id &&
-      route.path === path && accountContext() === account
+      route.path === path && authEventEpoch === epoch && auth.token === token &&
+      getStoredAccessToken() === token
     loading.value = true
     error.value = ''
     thread.value = null
     authorProfileAvatarUrl.value = ''
+    if (!isCurrent()) {
+      clearInvalidatedLoading(sequence, id, path)
+      return
+    }
     try {
       const data = await getThread(id)
-      if (!isCurrent()) return
+      if (!isCurrent()) {
+        clearInvalidatedLoading(sequence, id, path)
+        return
+      }
       thread.value = data
 
       if (!data.authorAvatarUrl && data.authorId) {
@@ -67,24 +115,40 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
           if (isCurrent()) authorProfileAvatarUrl.value = profile?.avatarUrl || ''
         } catch (_) {}
       }
+      if (!isCurrent()) {
+        clearInvalidatedLoading(sequence, id, path)
+        return
+      }
       // Route remounts do not cancel promises: guard persistent history and
       // document metadata as well as this component's local refs.
-      if (!isCurrent()) return
-
-      try {
-        updateVisitSectionById(Number(id), data.sectionId, data.sectionName)
-      } catch (_) {}
-
       try {
         const titleText = String(data.title || '').trim()
         if (titleText) {
           if (route.name === 'thread-detail' && getRouteParamId(route.params.id as string | string[] | undefined) === id) {
             document.title = formatPageTitle(titleText)
           }
-          updateVisitTitleByPath(path, titleText)
-          try {
-            updateVisitTitleById(Number(id), titleText)
-          } catch (_) {}
+        }
+
+        if (!isCurrent()) {
+          clearInvalidatedLoading(sequence, id, path)
+          return
+        }
+
+        const recordHistory = (): void => {
+          if (!isCurrent()) return
+          addVisit({
+            id,
+            path,
+            name: String(route.name || ''),
+            title: titleText,
+            sectionId: data.sectionId,
+            sectionName: data.sectionName,
+          })
+        }
+
+        recordHistory()
+        if (hasRealToken(token) && !getStoredCurrentUser(token)) {
+          loadedHistoryCallback = recordHistory
         }
       } catch (_) {}
     } catch (cause) {
@@ -95,6 +159,7 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
       }
     } finally {
       if (isCurrent()) loading.value = false
+      else clearInvalidatedLoading(sequence, id, path)
     }
   }
 

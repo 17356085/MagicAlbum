@@ -44,12 +44,12 @@ public class SectionService {
 
     public Page<Section> list(String q, int page, int size) {
         String normalizedQ = normalizeQuery(q);
-        String key = cacheKey(normalizedQ, page, size);
+        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 100));
+        String key = cacheKey(normalizedQ, pr.getPageNumber() + 1, pr.getPageSize());
         CachedSectionPage cached = readCache(key);
         if (cached != null) {
-            return new PageImpl<>(cached.items(), PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 100)), cached.total());
+            return new PageImpl<>(cached.items(), pr, cached.total());
         }
-        PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 100));
         Page<Section> result = sectionRepository.search(normalizedQ, pr);
         writeCache(key, new CachedSectionPage(result.getContent(), result.getTotalElements()));
         return result;

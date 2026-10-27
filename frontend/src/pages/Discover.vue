@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listThreads } from '@/api/threads'
 import { normalizeImageUrl } from '@/utils/image'
-import { createMarkdownRenderer, renderInlineMarkdown } from '@/utils/markdown'
+import { createBaseMarkdownRenderer, renderInlineMarkdown } from '@/utils/markdownBase'
 import { getSingleQueryValue } from '@/utils/router'
 import { formatAbsoluteTime } from '@/composables/time'
 import type { Id, Thread } from '@/types'
@@ -103,6 +103,10 @@ async function load() {
   }
 }
 
+function retryLoad(): void {
+  void load()
+}
+
 onMounted(load)
 watch(page, (val) => {
   inputPage.value = String(val || '')
@@ -167,7 +171,7 @@ function textExcerpt(mdText: string | undefined, maxLen = 180) {
 // 预览图不再支持展开/收起，统一在固定最大尺寸内完整显示
 
 // 标题行内 Markdown 渲染（仅文本行内，支持删除线），并进行清理
-const mdTitle = createMarkdownRenderer({ html: false, breaks: false, highlight: false })
+const mdTitle = createBaseMarkdownRenderer({ html: false, breaks: false })
 function renderTitleMarkdownHtml(text: string | undefined) {
   return renderInlineMarkdown(mdTitle, text)
 }
@@ -203,7 +207,10 @@ function getAuthorAvatarUrl(thread: Thread): string {
         </div>
       </div>
     </div>
-    <div v-else-if="error" class="ui-error" role="alert">{{ error }}</div>
+    <div v-else-if="error" class="ui-error" role="alert">
+      <p>{{ error }}</p>
+      <button type="button" class="ui-button mt-3" @click="retryLoad">重试</button>
+    </div>
     <div v-else-if="items.length === 0" class="ui-panel ui-empty">
       <h2>暂无帖子</h2>
       <p>换一个关键词或标签试试。</p>

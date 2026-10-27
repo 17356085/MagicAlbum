@@ -18,6 +18,7 @@ vi.mock('@/api/users', () => userApiMocks)
 
 import { AuthOperationSupersededError, useAuthStore } from '../auth'
 import { storeOAuthBrowserProof } from '@/utils/oauthBrowserProof'
+import { getStoredCurrentUser, persistAuthState } from '@/utils/authStorage'
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -181,6 +182,131 @@ describe('auth draft ownership', () => {
     expect(userApiMocks.getCurrentUser).toHaveBeenCalledWith('token-b')
     expect(auth.token).toBe('token-b')
     expect(auth.user?.id).toBe(7)
+  })
+
+  it.each(['phone-password', 'email-password', 'phone-code', 'email-code'] as const)(
+    'preserves a storage-first account switch while %s is pending', async (method) => {
+      const reply = deferred<LoginResponse>()
+      const auth = useAuthStore()
+      auth.applyAuthState({ accessToken: 'token-original', user: { id: 1, username: 'original' } })
+      let pending: Promise<void>
+      if (method === 'phone-password') {
+        apiMocks.loginWithPhonePassword.mockReturnValueOnce(reply.promise)
+        pending = auth.loginWithPhonePassword({ phone: '13800000000', password: 'LegacyPassword1' })
+      } else if (method === 'email-password') {
+        apiMocks.loginWithEmailPassword.mockReturnValueOnce(reply.promise)
+        pending = auth.loginWithEmailPassword({ email: 'original@example.com', password: 'LegacyPassword1' })
+      } else if (method === 'phone-code') {
+        apiMocks.finishPhoneCodeLogin.mockReturnValueOnce(reply.promise)
+        pending = auth.loginWithPhoneCode({ channel: 'phone', address: '13800000000', code: '123456', session: 'otp' })
+      } else {
+        apiMocks.finishEmailCodeLogin.mockReturnValueOnce(reply.promise)
+        pending = auth.loginWithEmailCode({ channel: 'email', address: 'original@example.com', code: '123456', session: 'otp' })
+      }
+      const rejection = expect(pending).rejects.toBeInstanceOf(AuthOperationSupersededError)
+      persistAuthState({ accessToken: 'token-new-tab', user: { id: 9, username: 'new-tab' } })
+      const storedIdentity = localStorage.getItem('currentUserSession.v1')
+      reply.resolve(loginResponse('token-stale-login', null))
+      await rejection
+      expect(userApiMocks.getCurrentUser).not.toHaveBeenCalled()
+      expect(auth.token).toBe('token-original')
+      expect(auth.user?.id).toBe(1)
+      expect(localStorage.getItem('accessToken')).toBe('token-new-tab')
+      expect(localStorage.getItem('currentUserSession.v1')).toBe(storedIdentity)
+      expect(getStoredCurrentUser('token-new-tab')?.id).toBe(9)
+    },
+  )
+
+  it('preserves storage logout during a pending identity fallback', async () => {
+    const profile = deferred<User | null>()
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'token-original', user: { id: 1, username: 'original' } })
+    apiMocks.loginWithEmailPassword.mockResolvedValueOnce(loginResponse('token-login', null))
+    userApiMocks.getCurrentUser.mockReturnValueOnce(profile.promise)
+    const pending = auth.loginWithEmailPassword({ email: 'other@example.com', password: 'LegacyPassword1' })
+    const rejection = expect(pending).rejects.toBeInstanceOf(AuthOperationSupersededError)
+    await Promise.resolve()
+    expect(userApiMocks.getCurrentUser).toHaveBeenCalledWith('token-login')
+    localStorage.removeItem('accessToken')
+    profile.resolve({ id: 2, username: 'other' })
+    await rejection
+    expect(localStorage.getItem('accessToken')).toBeNull()
+    expect(auth.token).toBe('token-original')
+    expect(auth.user?.id).toBe(1)
+  })
+
+  it('rejects a pending login after memory credentials change without an auth event', async () => {
+    const reply = deferred<LoginResponse>()
+    const auth = useAuthStore()
+    apiMocks.loginWithEmailPassword.mockReturnValueOnce(reply.promise)
+    const pending = auth.loginWithEmailPassword({ email: 'other@example.com', password: 'LegacyPassword1' })
+    const rejection = expect(pending).rejects.toBeInstanceOf(AuthOperationSupersededError)
+    auth.token = 'other-memory-token'
+    reply.resolve(loginResponse('token-stale', { id: 2, username: 'other' }))
+    await rejection
+    expect(auth.token).toBe('other-memory-token')
+    expect(localStorage.getItem('accessToken')).toBeNull()
+  })
+
+  it('captures an auth operation without changing credentials or browser proof', () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'original', user: { id: 1, username: 'original' } })
+    storeOAuthBrowserProof({ provider: 'google', verifier: 'v'.repeat(43), expiresAt: Date.now() + 300_000 })
+    const proof = sessionStorage.getItem('oauthBrowserProof')
+    const generation = auth.getAuthGeneration()
+    const context = auth.captureAuthOperationContext()
+    expect(context).toEqual({ generation, memoryToken: 'original', persistedToken: 'original' })
+    expect(Object.isFrozen(context)).toBe(true)
+    expect(auth.isAuthOperationContextCurrent(context)).toBe(true)
+    expect(auth.getAuthGeneration()).toBe(generation)
+    expect(sessionStorage.getItem('oauthBrowserProof')).toBe(proof)
+  })
+
+  it.each(['storage', 'memory', 'generation'] as const)('rejects a guarded auth response after a %s change', reason => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'original', user: { id: 1, username: 'original' } })
+    const context = auth.captureAuthOperationContext()
+    if (reason === 'storage') persistAuthState({ accessToken: 'new-tab', user: { id: 2, username: 'new-tab' } })
+    if (reason === 'memory') auth.token = 'new-memory'
+    if (reason === 'generation') auth.invalidateAuthOperations()
+    const storedToken = localStorage.getItem('accessToken')
+    const storedIdentity = localStorage.getItem('currentUserSession.v1')
+    const generation = auth.getAuthGeneration()
+    const events = vi.spyOn(window, 'dispatchEvent')
+    try {
+      expect(auth.isAuthOperationContextCurrent(context)).toBe(false)
+      expect(auth.tryLoginWithAuthResponse({ accessToken: 'stale', user: { id: 9, username: 'stale' } }, context)).toBe(false)
+      expect(auth.token).toBe(reason === 'memory' ? 'new-memory' : 'original')
+      expect(auth.user?.id).toBe(1)
+      expect(auth.getAuthGeneration()).toBe(generation)
+      expect(localStorage.getItem('accessToken')).toBe(storedToken)
+      expect(localStorage.getItem('currentUserSession.v1')).toBe(storedIdentity)
+      expect(events).not.toHaveBeenCalled()
+    } finally { events.mockRestore() }
+  })
+
+  it('commits a current guarded response once and rejects reusing its old context', () => {
+    const auth = useAuthStore()
+    const context = auth.captureAuthOperationContext()
+    expect(auth.tryLoginWithAuthResponse({ accessToken: 'accepted', user: { id: 3, username: 'accepted' } }, context)).toBe(true)
+    expect(auth.token).toBe('accepted')
+    expect(getStoredCurrentUser('accepted')?.id).toBe(3)
+    expect(auth.isAuthOperationContextCurrent(context)).toBe(false)
+    expect(auth.tryLoginWithAuthResponse({ accessToken: 'replay', user: { id: 4, username: 'replay' } }, context)).toBe(false)
+    expect(localStorage.getItem('accessToken')).toBe('accepted')
+  })
+
+  it('reports a guarded commit as superseded when an auth listener replaces it synchronously', () => {
+    const auth = useAuthStore()
+    const context = auth.captureAuthOperationContext()
+    const replaceSession = () => {
+      window.removeEventListener('auth-state-changed', replaceSession)
+      auth.applyAuthState({ accessToken: 'newer', user: { id: 8, username: 'newer' } })
+    }
+    window.addEventListener('auth-state-changed', replaceSession)
+    expect(auth.tryLoginWithAuthResponse({ accessToken: 'earlier', user: { id: 7, username: 'earlier' } }, context)).toBe(false)
+    expect(auth.token).toBe('newer')
+    expect(getStoredCurrentUser('newer')?.id).toBe(8)
   })
 
   it('invalidates pending login when an explicit auth response is applied', async () => {

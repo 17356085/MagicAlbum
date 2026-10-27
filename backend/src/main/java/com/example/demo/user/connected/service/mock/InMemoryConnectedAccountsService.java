@@ -2,39 +2,38 @@ package com.example.demo.user.connected.service.mock;
 
 import com.example.demo.user.connected.dto.ConnectedAccountDto;
 import com.example.demo.user.connected.service.ConnectedAccountsService;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Objects;
 
-@Service
-@ConditionalOnMissingBean(type = "com.example.demo.user.connected.repo.UserConnectedAccountRepository")
 public class InMemoryConnectedAccountsService implements ConnectedAccountsService {
     private static final String[] DEFAULT_PROVIDERS = new String[] {"github", "google", "wechat"};
 
-    private final ConcurrentHashMap<Long, Map<String, ConnectedAccountDto>> store = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Long> externalAccountIndex = new ConcurrentHashMap<>();
-
-    private Map<String, ConnectedAccountDto> ensureSeed(Long userId) {
-        return store.computeIfAbsent(userId, ignored -> {
-            Map<String, ConnectedAccountDto> map = new ConcurrentHashMap<>();
-            for (String provider : DEFAULT_PROVIDERS) {
-                map.put(provider, new ConnectedAccountDto(provider, false, null, null));
-            }
-            return map;
-        });
-    }
+    private final Map<Long, Map<String, Binding>> store = new HashMap<>();
+    private final Map<ExternalAccountKey, Long> externalAccountIndex = new HashMap<>();
 
     @Override
-    public Map<String, Object> list(Long userId) {
-        Map<String, ConnectedAccountDto> map = ensureSeed(userId);
-        List<ConnectedAccountDto> items = new ArrayList<>(map.values());
+    public synchronized Map<String, Object> list(Long userId) {
+        Objects.requireNonNull(userId, "userId");
+        Map<String, Binding> map = store.getOrDefault(userId, Map.of());
+        List<ConnectedAccountDto> items = new ArrayList<>();
+        for (String provider : DEFAULT_PROVIDERS) {
+            items.add(toDto(provider, map.get(provider)));
+        }
+        for (Map.Entry<String, Binding> entry : map.entrySet()) {
+            if (!isDefaultProvider(entry.getKey())) {
+                items.add(toDto(entry.getKey(), entry.getValue()));
+            }
+        }
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("items", items);
         return body;
@@ -46,35 +45,95 @@ public class InMemoryConnectedAccountsService implements ConnectedAccountsServic
     }
 
     @Override
-    public void bindExternalAccount(Long userId, String provider, String externalId, String displayName) {
+    public synchronized void bindExternalAccount(Long userId, String provider, String externalId, String displayName) {
+        Objects.requireNonNull(userId, "userId");
         if (externalId == null || externalId.isBlank()) {
             throw new IllegalArgumentException("第三方账号标识不能为空");
         }
-        Map<String, ConnectedAccountDto> map = ensureSeed(userId);
-        ConnectedAccountDto dto = map.computeIfAbsent(provider, key -> new ConnectedAccountDto(key, false, null, null));
-        dto.setConnected(true);
-        dto.setDisplayName(displayName);
-        dto.setLinkedAt(Instant.now());
-        externalAccountIndex.put(buildExternalKey(provider, externalId), userId);
+        if (provider == null || provider.isBlank()) {
+            throw new IllegalArgumentException("第三方平台不能为空");
+        }
+        String normalizedProvider = normalizeProvider(provider);
+        String normalizedExternalId = externalId.trim();
+        ExternalAccountKey key = new ExternalAccountKey(normalizedProvider, normalizedExternalId);
+        Long existingOwner = externalAccountIndex.get(key);
+        if (existingOwner != null && !existingOwner.equals(userId)) {
+            throw new DataIntegrityViolationException("第三方账号已绑定其他用户");
+        }
+
+        Map<String, Binding> map = store.computeIfAbsent(userId, ignored -> new LinkedHashMap<>());
+        Binding previous = map.get(normalizedProvider);
+        if (previous != null && !previous.externalId().equals(normalizedExternalId)) {
+            ExternalAccountKey previousKey = new ExternalAccountKey(normalizedProvider, previous.externalId());
+            if (userId.equals(externalAccountIndex.get(previousKey))) {
+                externalAccountIndex.remove(previousKey);
+            }
+        }
+        map.put(normalizedProvider, new Binding(
+                normalizedExternalId,
+                trimToNull(displayName),
+                Instant.now()
+        ));
+        externalAccountIndex.put(key, userId);
     }
 
     @Override
-    public Long findUserIdByExternalAccount(String provider, String externalId) {
+    public synchronized Long findUserIdByExternalAccount(String provider, String externalId) {
         if (provider == null || provider.isBlank() || externalId == null || externalId.isBlank()) {
             return null;
         }
-        return externalAccountIndex.get(buildExternalKey(provider, externalId));
+        return externalAccountIndex.get(new ExternalAccountKey(normalizeProvider(provider), externalId.trim()));
     }
 
     @Override
-    public void disconnect(Long userId, String provider) {
-        Map<String, ConnectedAccountDto> map = ensureSeed(userId);
-        ConnectedAccountDto dto = map.computeIfAbsent(provider, key -> new ConnectedAccountDto(key, false, null, null));
-        dto.setConnected(false);
-        dto.setLinkedAt(null);
+    public synchronized void disconnect(Long userId, String provider) {
+        Objects.requireNonNull(userId, "userId");
+        Map<String, Binding> map = store.get(userId);
+        if (map == null) {
+            return;
+        }
+        String normalizedProvider = normalizeProvider(provider);
+        Binding previous = map.remove(normalizedProvider);
+        if (previous != null) {
+            ExternalAccountKey key = new ExternalAccountKey(normalizedProvider, previous.externalId());
+            if (userId.equals(externalAccountIndex.get(key))) {
+                externalAccountIndex.remove(key);
+            }
+        }
+        if (map.isEmpty()) {
+            store.remove(userId);
+        }
     }
 
-    private String buildExternalKey(String provider, String externalId) {
-        return provider.trim().toLowerCase() + ":" + externalId.trim();
+    private ConnectedAccountDto toDto(String provider, Binding binding) {
+        if (binding == null) {
+            return new ConnectedAccountDto(provider, false, null, null);
+        }
+        return new ConnectedAccountDto(provider, true, binding.displayName(), binding.linkedAt());
     }
+
+    private boolean isDefaultProvider(String provider) {
+        for (String defaultProvider : DEFAULT_PROVIDERS) {
+            if (defaultProvider.equals(provider)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeProvider(String provider) {
+        return provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private record Binding(String externalId, String displayName, Instant linkedAt) {}
+
+    private record ExternalAccountKey(String provider, String externalId) {}
 }

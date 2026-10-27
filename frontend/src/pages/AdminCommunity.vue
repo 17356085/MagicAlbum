@@ -6,7 +6,7 @@
         <h1 class="ui-title mt-1">社区管理</h1>
         <p class="ui-description max-w-2xl">管理成员权限、版主分区和社区分区。每次变更都需要说明理由，并会留下可追溯记录。</p>
       </div>
-      <button v-if="viewState === 'allowed'" type="button" class="ui-button shrink-0" :disabled="usersLoading || pendingKey !== null" @click="refreshAll">刷新数据</button>
+      <button v-if="viewState === 'allowed'" type="button" class="ui-button shrink-0" :disabled="usersLoading || sectionsLoading || auditLoading || pendingKey !== null" @click="refreshAll">刷新数据</button>
     </header>
 
     <section v-if="viewState === 'checking'" class="ui-panel ui-empty" role="status" aria-live="polite">正在验证社区管理权限...</section>
@@ -112,9 +112,9 @@
         <nav v-if="!usersLoading && !usersError && userTotalPages > 1" class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between" aria-label="成员列表分页">
           <span class="text-[var(--ui-muted)]">共 {{ userTotal }} 位成员</span>
           <div class="flex flex-wrap items-center gap-2">
-            <button type="button" class="ui-button" :disabled="userPage <= 1 || pendingKey !== null" @click="goToUserPage(userPage - 1)">上一页</button>
+            <button type="button" class="ui-button" :disabled="userPage <= 1 || usersLoading || pendingKey !== null" @click="goToUserPage(userPage - 1)">上一页</button>
             <span class="min-w-20 text-center text-[var(--ui-muted)]">第 {{ userPage }} / {{ userTotalPages }} 页</span>
-            <button type="button" class="ui-button" :disabled="userPage >= userTotalPages || pendingKey !== null" @click="goToUserPage(userPage + 1)">下一页</button>
+            <button type="button" class="ui-button" :disabled="userPage >= userTotalPages || usersLoading || pendingKey !== null" @click="goToUserPage(userPage + 1)">下一页</button>
           </div>
         </nav>
       </section>
@@ -192,7 +192,7 @@
         </ul>
         <nav v-if="!auditLoading && !auditError && auditTotalPages > 1" class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between" aria-label="变更记录分页">
           <span class="text-[var(--ui-muted)]">共 {{ auditTotal }} 条记录</span>
-          <div class="flex flex-wrap items-center gap-2"><button type="button" class="ui-button" :disabled="auditPage <= 1 || pendingKey !== null" @click="goToAuditPage(auditPage - 1)">上一页</button><span class="min-w-20 text-center text-[var(--ui-muted)]">第 {{ auditPage }} / {{ auditTotalPages }} 页</span><button type="button" class="ui-button" :disabled="auditPage >= auditTotalPages || pendingKey !== null" @click="goToAuditPage(auditPage + 1)">下一页</button></div>
+          <div class="flex flex-wrap items-center gap-2"><button type="button" class="ui-button" :disabled="auditPage <= 1 || auditLoading || pendingKey !== null" @click="goToAuditPage(auditPage - 1)">上一页</button><span class="min-w-20 text-center text-[var(--ui-muted)]">第 {{ auditPage }} / {{ auditTotalPages }} 页</span><button type="button" class="ui-button" :disabled="auditPage >= auditTotalPages || auditLoading || pendingKey !== null" @click="goToAuditPage(auditPage + 1)">下一页</button></div>
         </nav>
       </section>
     </template>
@@ -200,7 +200,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import {
   createGovernanceSection,
   getGovernanceMe,
@@ -256,6 +256,7 @@ const userTotalPages = computed(() => Math.max(1, Math.ceil(userTotal.value / PA
 const auditTotalPages = computed(() => Math.max(1, Math.ceil(auditTotal.value / PAGE_SIZE)))
 
 let lifecycle = 0
+let disposed = false
 let usersSeq = 0
 let sectionsSeq = 0
 let auditSeq = 0
@@ -346,6 +347,7 @@ async function loadAudit(run = lifecycle, snapshot = activeSession): Promise<boo
 }
 
 async function verifyAccess(): Promise<void> {
+  if (disposed) return
   const run = ++lifecycle
   usersSeq += 1; sectionsSeq += 1; auditSeq += 1
   const snapshot = captureSession()
@@ -365,10 +367,13 @@ async function verifyAccess(): Promise<void> {
   }
 }
 
-function refreshAll(): void { feedback.value = ''; operationError.value = ''; void Promise.all([loadUsers(), loadSections(), loadAudit()]) }
+function refreshAll(): void {
+  if (usersLoading.value || sectionsLoading.value || auditLoading.value || pendingKey.value !== null) return
+  feedback.value = ''; operationError.value = ''; void Promise.all([loadUsers(), loadSections(), loadAudit()])
+}
 function submitUserSearch(): void { if (pendingKey.value !== null) return; userPage.value = 1; void loadUsers() }
-function goToUserPage(page: number): void { if (pendingKey.value !== null) return; userPage.value = Math.min(Math.max(1, page), userTotalPages.value); void loadUsers() }
-function goToAuditPage(page: number): void { if (pendingKey.value !== null) return; auditPage.value = Math.min(Math.max(1, page), auditTotalPages.value); void loadAudit() }
+function goToUserPage(page: number): void { if (usersLoading.value || pendingKey.value !== null) return; userPage.value = Math.min(Math.max(1, page), userTotalPages.value); void loadUsers() }
+function goToAuditPage(page: number): void { if (auditLoading.value || pendingKey.value !== null) return; auditPage.value = Math.min(Math.max(1, page), auditTotalPages.value); void loadAudit() }
 
 async function runOperation<T>(key: string, operation: () => Promise<T>, success: (result: T) => void, successMessage: string): Promise<void> {
   if (pendingKey.value !== null) return
@@ -413,11 +418,16 @@ function onAuthStateChanged(event: Event): void {
   startNewSection()
   const loggedIn = (event as CustomEvent<{ loggedIn?: boolean }>).detail?.loggedIn
   if (loggedIn === false) { viewState.value = 'denied'; accessError.value = '请先登录后访问社区管理。'; return }
-  void verifyAccess()
+  const boundary = lifecycle
+  // App owns auth-triggered page replacement; a surviving standalone page
+  // still refreshes itself after that render has settled.
+  void Promise.resolve().then(() => nextTick()).then(() => {
+    if (!disposed && boundary === lifecycle) void verifyAccess()
+  })
 }
 
 onMounted(() => { window.addEventListener('auth-state-changed', onAuthStateChanged); void verifyAccess() })
-onBeforeUnmount(() => { lifecycle += 1; usersSeq += 1; sectionsSeq += 1; auditSeq += 1; pendingKey.value = null; window.removeEventListener('auth-state-changed', onAuthStateChanged) })
+onBeforeUnmount(() => { disposed = true; lifecycle += 1; usersSeq += 1; sectionsSeq += 1; auditSeq += 1; pendingKey.value = null; window.removeEventListener('auth-state-changed', onAuthStateChanged) })
 </script>
 
 <style scoped>

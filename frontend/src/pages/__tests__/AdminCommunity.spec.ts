@@ -16,7 +16,18 @@ const access = { admin: true, moderatedSectionIds: [], postingRestricted: false,
 const member = { id: 7, username: 'member', ...access, admin: false }
 const section = { id: 3, name: '交流', slug: 'chat', description: '', rules: '', visible: true, archived: false }
 const empty = { items: [], page: 1, size: 20, total: 0 }
+type UserPage = Omit<typeof empty, 'items'> & { items: Array<typeof member> }
 let wrapper: VueWrapper | undefined
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 async function createWrapper() {
   wrapper = mount(AdminCommunity)
@@ -111,5 +122,101 @@ describe('AdminCommunity', () => {
     resolveOld(empty)
     await flushPromises()
     expect(view.text()).toContain('latest-member')
+  })
+
+  it('keeps aggregate refresh disabled while any initial resource is pending', async () => {
+    const firstUsers = deferred<UserPage>()
+    const firstSections = deferred<typeof section[]>()
+    const firstAudit = deferred<typeof empty>()
+    mocks.listGovernanceUsers.mockImplementationOnce(() => firstUsers.promise)
+    mocks.listGovernanceSections.mockImplementationOnce(() => firstSections.promise)
+    mocks.listGovernanceAudit.mockImplementationOnce(() => firstAudit.promise)
+
+    const view = await createWrapper()
+    expect(mocks.listGovernanceUsers).toHaveBeenCalledTimes(1)
+    expect(mocks.listGovernanceSections).toHaveBeenCalledTimes(1)
+    expect(mocks.listGovernanceAudit).toHaveBeenCalledTimes(1)
+
+    firstUsers.resolve({ ...empty, items: [member], total: 1 })
+    await flushPromises()
+    const refresh = view.get('header button')
+    expect(refresh.attributes('disabled')).toBeDefined()
+    await refresh.trigger('click')
+    expect(mocks.listGovernanceUsers).toHaveBeenCalledTimes(1)
+    expect(mocks.listGovernanceSections).toHaveBeenCalledTimes(1)
+    expect(mocks.listGovernanceAudit).toHaveBeenCalledTimes(1)
+
+    firstSections.resolve([section])
+    firstAudit.resolve(empty)
+    await flushPromises()
+  })
+
+  it('coalesces repeated aggregate refresh attempts before resource requests settle', async () => {
+    const firstUsers = deferred<UserPage>()
+    const firstSections = deferred<typeof section[]>()
+    const firstAudit = deferred<typeof empty>()
+    mocks.listGovernanceUsers.mockImplementationOnce(() => firstUsers.promise)
+    mocks.listGovernanceSections.mockImplementationOnce(() => firstSections.promise)
+    mocks.listGovernanceAudit.mockImplementationOnce(() => firstAudit.promise)
+
+    const view = await createWrapper()
+    const refresh = view.get('header button')
+    await refresh.trigger('click')
+    await refresh.trigger('click')
+    expect(mocks.listGovernanceUsers).toHaveBeenCalledTimes(1)
+    expect(mocks.listGovernanceSections).toHaveBeenCalledTimes(1)
+    expect(mocks.listGovernanceAudit).toHaveBeenCalledTimes(1)
+
+    firstUsers.resolve({ ...empty, items: [member], total: 1 })
+    firstSections.resolve([section])
+    firstAudit.resolve(empty)
+    await flushPromises()
+  })
+
+  it('guards user and audit pagination while that resource is loading', async () => {
+    const auditEntry = { id: 9, action: 'ADMIN_ROLE_CHANGED', targetType: 'USER', targetId: 7, reason: 'r', actorId: 1, occurredAt: '2026-01-01T00:00:00Z' }
+    mocks.listGovernanceUsers.mockResolvedValueOnce({ ...empty, items: [member], total: 40 })
+    mocks.listGovernanceAudit.mockResolvedValueOnce({ ...empty, items: [auditEntry], total: 40 })
+    const view = await createWrapper()
+
+    const secondUsers = deferred<UserPage>()
+    mocks.listGovernanceUsers.mockImplementationOnce(() => secondUsers.promise)
+    const userNext = view.get('nav[aria-label="成员列表分页"] button:last-of-type')
+    await userNext.trigger('click')
+    await flushPromises()
+    await userNext.trigger('click')
+    expect(mocks.listGovernanceUsers).toHaveBeenCalledTimes(2)
+    secondUsers.resolve({ ...empty, page: 2, items: [{ ...member, username: 'page-two-member' }], total: 40 })
+    await flushPromises()
+    expect(view.get('nav[aria-label="成员列表分页"]').text()).toContain('第 2 / 2 页')
+
+    const secondAudit = deferred<Omit<typeof empty, 'items'> & { items: Array<typeof auditEntry> }>()
+    mocks.listGovernanceAudit.mockImplementationOnce(() => secondAudit.promise)
+    const auditNext = view.get('nav[aria-label="变更记录分页"] button:last-of-type')
+    await auditNext.trigger('click')
+    await flushPromises()
+    await auditNext.trigger('click')
+    expect(mocks.listGovernanceAudit).toHaveBeenCalledTimes(2)
+    secondAudit.resolve({ ...empty, page: 2, items: [auditEntry], total: 40 })
+    await flushPromises()
+    expect(view.get('nav[aria-label="变更记录分页"]').text()).toContain('第 2 / 2 页')
+  })
+
+  it('allows one aggregate retry after a settled refresh failure', async () => {
+    const view = await createWrapper()
+    mocks.listGovernanceSections.mockRejectedValueOnce(new Error('offline'))
+
+    await view.get('header button').trigger('click')
+    await flushPromises()
+    expect(mocks.listGovernanceUsers).toHaveBeenCalledTimes(2)
+    expect(mocks.listGovernanceSections).toHaveBeenCalledTimes(2)
+    expect(mocks.listGovernanceAudit).toHaveBeenCalledTimes(2)
+    expect(view.text()).toContain('分区加载失败')
+
+    await view.get('header button').trigger('click')
+    await flushPromises()
+    expect(mocks.listGovernanceUsers).toHaveBeenCalledTimes(3)
+    expect(mocks.listGovernanceSections).toHaveBeenCalledTimes(3)
+    expect(mocks.listGovernanceAudit).toHaveBeenCalledTimes(3)
   })
 })

@@ -1,5 +1,6 @@
 package com.example.demo.threads.service;
 
+import com.example.demo.common.RedisKeys;
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
@@ -19,7 +20,9 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -226,7 +230,7 @@ class ThreadServiceCacheTest {
                 mock(ContentEventRecorder.class));
         service.list("  tech  ", null, 7L, 1, 10);
 
-        verify(valueOperations).get("cache:threads:list:tech::7:1:10");
+        verify(valueOperations).get(RedisKeys.threadsList("tech", null, 7L, 1, 10));
         verify(threadRepository).searchNewestView(eq("tech"), isNull(), eq(7L), any(PageRequest.class));
     }
 
@@ -253,8 +257,142 @@ class ThreadServiceCacheTest {
                 mock(ContentEventRecorder.class));
         service.list("  tech  ", null, 7L, 1, 10);
 
-        verify(valueOperations).get("cache:threads:list:tech::7:1:10");
+        verify(valueOperations).get(RedisKeys.threadsList("tech", null, 7L, 1, 10));
         verify(mpReader).searchNewest("tech", 7L, 1, 10);
+    }
+
+    @Test
+    void mp_list_should_filter_currently_non_normal_rows_before_response_and_cache() throws Exception {
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        Map<String, String> cacheStore = new HashMap<>();
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenAnswer(invocation -> cacheStore.get(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            cacheStore.put(invocation.getArgument(0), invocation.getArgument(1));
+            return null;
+        }).when(valueOperations).set(anyString(), anyString(), any());
+
+        ThreadReadServiceMp mpReader = mock(ThreadReadServiceMp.class);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<com.example.demo.threads.entity.Thread> mpPage =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        mpPage.setRecords(List.of(normalThread(2L), normalThread(1L), normalThread(3L)));
+        mpPage.setTotal(3L);
+        when(mpReader.searchNewest(null, 7L, 1, 10)).thenReturn(mpPage);
+        ThreadQueryView visibleView = projection(2L, "visible", "NORMAL");
+        ThreadQueryView hiddenView = projection(1L, "hidden", "HIDDEN");
+        ThreadQueryView deletedView = projection(3L, "deleted", "DELETED");
+        when(threadRepository.findViewsByIdIn(List.of(2L, 1L, 3L))).thenReturn(List.of(
+                visibleView, hiddenView, deletedView));
+
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(mpReader);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(null);
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+                mock(MarkdownRenderService.class), mpProvider, true, rabbitProvider, false,
+                redisTemplate, mapper, mock(ContentEventRecorder.class));
+
+        var result = service.list(null, null, 7L, 1, 10);
+
+        assertThat(result.getContent()).extracting(ThreadDto::getId).containsExactly(2L);
+        assertThat(result.getTotalElements()).isEqualTo(1L);
+        String key = RedisKeys.threadsList(null, null, 7L, 1, 10);
+        com.fasterxml.jackson.databind.JsonNode cached = mapper.readTree(cacheStore.get(key));
+        assertThat(cached.get("total").asLong()).isEqualTo(3L);
+        assertThat(cached.get("items")).hasSize(1);
+        assertThat(cached.get("items").get(0).get("id").asLong()).isEqualTo(2L);
+        assertThat(cached.toString()).doesNotContain("hidden", "deleted");
+        verify(mpReader).searchNewest(null, 7L, 1, 10);
+        verify(threadRepository).findViewsByIdIn(List.of(2L, 1L, 3L));
+    }
+
+    @Test
+    void list_should_separate_colliding_query_and_tag_tuples_with_stateful_cache() {
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        Map<String, String> cacheStore = new HashMap<>();
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenAnswer(invocation -> cacheStore.get(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            cacheStore.put(invocation.getArgument(0), invocation.getArgument(1));
+            return null;
+        }).when(valueOperations).set(anyString(), anyString(), any());
+
+        ThreadQueryView view = mock(ThreadQueryView.class);
+        when(view.getId()).thenReturn(1L);
+        when(view.getSectionId()).thenReturn(7L);
+        when(view.getSectionName()).thenReturn("Tech");
+        when(view.getAuthorId()).thenReturn(11L);
+        when(view.getAuthorUsername()).thenReturn("alice");
+        when(view.getAuthorNickname()).thenReturn("Alice");
+        when(view.getAuthorAvatar()).thenReturn("/a.png");
+        when(view.getTitle()).thenReturn("Expected");
+        when(view.getContent()).thenReturn("World");
+        when(view.getStatus()).thenReturn("NORMAL");
+        when(threadRepository.searchNewestView(eq("a:b"), eq("c"), eq(7L), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
+        when(threadRepository.searchNewestView(eq("a"), eq("b:c"), eq(7L), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 10), 1));
+
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(null);
+
+        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
+                mock(ContentEventRecorder.class));
+
+        assertThat(service.list("a:b", "c", 7L, 1, 10).getContent()).isEmpty();
+        assertThat(service.list("a", "b:c", 7L, 1, 10).getContent())
+                .extracting(ThreadDto::getTitle).containsExactly("Expected");
+        assertThat(service.list("a:b", "c", 7L, 1, 10).getContent()).isEmpty();
+
+        verify(threadRepository, times(1)).searchNewestView(eq("a:b"), eq("c"), eq(7L), any(PageRequest.class));
+        verify(threadRepository, times(1)).searchNewestView(eq("a"), eq("b:c"), eq(7L), any(PageRequest.class));
+        assertThat(cacheStore).containsKeys(
+                RedisKeys.threadsList("a:b", "c", 7L, 1, 10),
+                RedisKeys.threadsList("a", "b:c", 7L, 1, 10));
+        assertThat(RedisKeys.threadsList("a:b", "c", 7L, 1, 10))
+                .isNotEqualTo(RedisKeys.threadsList("a", "b:c", 7L, 1, 10));
+    }
+
+    @Test
+    void list_should_use_one_effective_page_for_key_and_repository_when_page_is_non_positive() {
+        ThreadRepository threadRepository = mock(ThreadRepository.class);
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        Map<String, String> cacheStore = new HashMap<>();
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get(anyString())).thenAnswer(invocation -> cacheStore.get(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            cacheStore.put(invocation.getArgument(0), invocation.getArgument(1));
+            return null;
+        }).when(valueOperations).set(anyString(), anyString(), any());
+        when(threadRepository.searchNewestView(isNull(), isNull(), eq(7L), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
+
+        ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
+        when(mpProvider.getIfAvailable()).thenReturn(null);
+        ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
+        when(rabbitProvider.getIfAvailable()).thenReturn(null);
+        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+                mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
+                mock(ContentEventRecorder.class));
+
+        service.list(null, null, 7L, 0, 10);
+        service.list(null, null, 7L, -1, 10);
+        service.list(null, null, 7L, 1, 10);
+
+        String effectiveKey = RedisKeys.threadsList(null, null, 7L, 1, 10);
+        verify(valueOperations, times(3)).get(effectiveKey);
+        verify(threadRepository, times(1)).searchNewestView(isNull(), isNull(), eq(7L),
+                eq(PageRequest.of(0, 10)));
     }
 
     @Test
@@ -265,7 +403,7 @@ class ThreadServiceCacheTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(anyString())).thenReturn("{\"items\":[{\"id\":9,\"title\":\"Missing ownership\"}],\"total\":1}");
         doThrow(new RuntimeException("redis unavailable"))
-                .when(redisTemplate).delete("cache:threads:list:::7:1:10");
+                .when(redisTemplate).delete(RedisKeys.threadsList(null, null, 7L, 1, 10));
         when(threadRepository.searchNewestView(any(), any(), any(), any(PageRequest.class)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
 
@@ -279,7 +417,7 @@ class ThreadServiceCacheTest {
 
         assertThat(service.list(null, null, 7L, 1, 10)).isNotNull();
 
-        verify(redisTemplate).delete("cache:threads:list:::7:1:10");
+        verify(redisTemplate).delete(RedisKeys.threadsList(null, null, 7L, 1, 10));
         verify(threadRepository).searchNewestView(isNull(), isNull(), eq(7L), any(PageRequest.class));
     }
 
@@ -303,7 +441,7 @@ class ThreadServiceCacheTest {
 
         assertThat(service.list(null, null, 7L, 1, 10)).isNotNull();
 
-        verify(redisTemplate).delete("cache:threads:list:::7:1:10");
+        verify(redisTemplate).delete(RedisKeys.threadsList(null, null, 7L, 1, 10));
         verify(threadRepository).searchNewestView(isNull(), isNull(), eq(7L), any(PageRequest.class));
     }
 
@@ -490,6 +628,20 @@ class ThreadServiceCacheTest {
         dto.setTitle("Cached");
         dto.setStatus(status);
         return dto;
+    }
+
+    private ThreadQueryView projection(Long id, String title, String status) {
+        ThreadQueryView view = mock(ThreadQueryView.class);
+        when(view.getId()).thenReturn(id);
+        when(view.getSectionId()).thenReturn(7L);
+        when(view.getSectionName()).thenReturn("Tech");
+        when(view.getAuthorId()).thenReturn(11L);
+        when(view.getAuthorUsername()).thenReturn("alice");
+        when(view.getAuthorNickname()).thenReturn("Alice");
+        when(view.getTitle()).thenReturn(title);
+        when(view.getContent()).thenReturn("Body");
+        when(view.getStatus()).thenReturn(status);
+        return view;
     }
 
     private com.example.demo.threads.entity.Thread normalThread(Long id) {

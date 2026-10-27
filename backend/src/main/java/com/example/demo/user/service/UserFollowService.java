@@ -1,10 +1,8 @@
 package com.example.demo.user.service;
 
 import com.example.demo.notifications.client.NotificationClient;
-import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.dto.UserFollowResponse;
 import com.example.demo.user.dto.UserSummaryDto;
-import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserFollow;
 import com.example.demo.user.repo.UserFollowRepository;
 import com.example.demo.user.repo.UserRepository;
@@ -155,27 +153,12 @@ public class UserFollowService {
 
     private Page<UserSummaryDto> toUserSummaryPage(Page<Long> ids) {
         List<Long> userIds = ids.getContent();
-        List<User> users = userRepository.findAllById(userIds);
-        Map<Long, ProfileDto> profiles = userProfileService.getProfiles(userIds);
-        Map<Long, User> userMap = users.stream().collect(java.util.stream.Collectors.toMap(User::getId, user -> user));
+        Map<Long, UserSummaryDto> summaries = userProfileService.getUserSummaries(userIds);
         List<UserSummaryDto> items = userIds.stream()
-                .map(userMap::get)
+                .map(summaries::get)
                 .filter(java.util.Objects::nonNull)
-                .map(user -> toSummary(user, profiles.get(user.getId())))
                 .toList();
         return new PageImpl<>(items, ids.getPageable(), ids.getTotalElements());
-    }
-
-    private UserSummaryDto toSummary(User user, ProfileDto profile) {
-        UserSummaryDto dto = new UserSummaryDto();
-        dto.setId(user.getId());
-        dto.setUsername(user.getUsername());
-        dto.setCreatedAt(user.getCreatedAt());
-        if (profile != null) {
-            dto.setNickname(profile.getNickname());
-            dto.setAvatarUrl(profile.getAvatarUrl());
-        }
-        return dto;
     }
 
     private void sendFollowNotification(Long followerId, Long targetUserId) {

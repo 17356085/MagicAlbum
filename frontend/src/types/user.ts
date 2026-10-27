@@ -2,10 +2,10 @@ import type { AuthVerifyPayload } from './auth'
 import type { Id } from './common'
 
 export interface ProfileUpdatedDetail {
+  id: Id
   avatarUrl?: string
   nickname?: string
   userId?: Id
-  id?: Id
   username?: string
 }
 

@@ -204,10 +204,11 @@ public class ThreadService {
 
     public Page<ThreadDto> list(String q, String tag, Long sectionId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 10);
-        int pageIndex = Math.max(page, 1) - 1;
+        int normalizedPage = Math.max(page, 1);
+        int pageIndex = normalizedPage - 1;
         String normalizedQuery = normalizeQuery(q);
         String normalizedTag = (tag == null || tag.isBlank()) ? null : tag.trim();
-        String cacheKey = threadListCacheKey(normalizedQuery, normalizedTag, sectionId, page, limit);
+        String cacheKey = threadListCacheKey(normalizedQuery, normalizedTag, sectionId, normalizedPage, limit);
         ThreadCache.CachedThreadPage cached = cache.readList(cacheKey);
         if (cached != null) {
             if (isFreshThreadPage(cached)) {
@@ -216,7 +217,8 @@ public class ThreadService {
             cache.evictList(cacheKey);
         }
         if (normalizedTag == null && mpThreadsEnabled && threadReadServiceMp != null) {
-            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Thread> mpPage = threadReadServiceMp.searchNewest(normalizedQuery, sectionId, page, limit);
+            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Thread> mpPage = threadReadServiceMp.searchNewest(
+                    normalizedQuery, sectionId, normalizedPage, limit);
             java.util.List<ThreadDto> items = dtoMapper.toDtosFromEntities(mpPage.getRecords());
             Page<ThreadDto> pageResult = new org.springframework.data.domain.PageImpl<>(items, PageRequest.of(pageIndex, limit), mpPage.getTotal());
             cache.writeList(cacheKey, new ThreadCache.CachedThreadPage(items, mpPage.getTotal()));
@@ -229,7 +231,7 @@ public class ThreadService {
                 sectionId,
                 pr
         );
-        List<ThreadDto> items = p.getContent().stream().map(dtoMapper::toDto).toList();
+        List<ThreadDto> items = dtoMapper.toDtos(p.getContent());
         Page<ThreadDto> pageResult = new org.springframework.data.domain.PageImpl<>(items, p.getPageable(), p.getTotalElements());
         cache.writeList(cacheKey, new ThreadCache.CachedThreadPage(items, p.getTotalElements()));
         return pageResult;
@@ -254,7 +256,7 @@ public class ThreadService {
         int limit = Math.min(Math.max(size, 1), 20);
         int pageIndex = Math.max(page, 1) - 1;
         Page<ThreadRankingView> p = threadRepository.rankingView(sectionId, PageRequest.of(pageIndex, limit));
-        List<ThreadDto> items = p.getContent().stream().map(dtoMapper::toDto).toList();
+        List<ThreadDto> items = dtoMapper.toRankingDtos(p.getContent());
         return new PageImpl<>(items, p.getPageable(), p.getTotalElements());
     }
 
@@ -267,7 +269,7 @@ public class ThreadService {
         } else {
             p = threadRepository.findByAuthorNewestView(authorId, pr);
         }
-        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(dtoMapper::toDto).toList(), p.getPageable(), p.getTotalElements());
+        return new org.springframework.data.domain.PageImpl<>(dtoMapper.toDtos(p.getContent()), p.getPageable(), p.getTotalElements());
     }
 
     public Page<ThreadDto> listByAuthor(Long authorId, String q, Long sectionId, String sort, int page, int size) {
@@ -281,7 +283,7 @@ public class ThreadService {
         } else {
             p = threadRepository.searchByAuthorUpdatedDescView(authorId, query, sid, pr);
         }
-        return new org.springframework.data.domain.PageImpl<>(p.getContent().stream().map(dtoMapper::toDto).toList(), p.getPageable(), p.getTotalElements());
+        return new org.springframework.data.domain.PageImpl<>(dtoMapper.toDtos(p.getContent()), p.getPageable(), p.getTotalElements());
     }
 
     @Transactional

@@ -432,11 +432,10 @@ describe('Comments request ordering', () => {
     expect(wrapper.text()).toContain('♥ 已赞 2')
   })
 
-  it('keeps the newest like result for the same comment', async () => {
+  it('coalesces duplicate likes while the same comment is in flight', async () => {
     const firstLike = deferred<PostLikeState>()
-    const secondLike = deferred<PostLikeState>()
     listPostsMock.mockResolvedValueOnce(result(1, '同一条评论'))
-    likePostMock.mockReturnValueOnce(firstLike.promise).mockReturnValueOnce(secondLike.promise)
+    likePostMock.mockReturnValueOnce(firstLike.promise)
 
     const wrapper = createWrapper()
     await flushPromises()
@@ -445,13 +444,11 @@ describe('Comments request ordering', () => {
     await likeButton!.trigger('click')
     await likeButton!.trigger('click')
 
-    secondLike.resolve({ postId: 1, liked: true, likeCount: 2 })
-    await flushPromises()
     firstLike.resolve({ postId: 1, liked: true, likeCount: 1 })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('♥ 已赞 2')
-    expect(wrapper.text()).not.toContain('♥ 已赞 1')
+    expect(likePostMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('♥ 已赞 1')
   })
 
   it('ignores an in-flight response after unmount', async () => {
@@ -584,5 +581,46 @@ describe('Comments mobile controls', () => {
     expect(pageInput.classes()).toContain('min-h-11')
     expect(pageInput.attributes('inputmode')).toBe('numeric')
     wrapper.unmount()
+  })
+})
+
+describe('Comments profile event ownership', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    useAuthStore().applyAuthState({ accessToken: 'account-b', user: { id: 2, username: 'bob' } })
+    listPostsMock.mockReset()
+    listPostsMock.mockResolvedValue(resultWithItems([
+      { ...post(10, 'Alice comment', '2026-10-07T00:00:00Z'), authorId: 1, authorAvatarUrl: 'https://cdn.example/alice.png' },
+      { ...post(20, 'Bob comment', '2026-10-08T00:00:00Z'), authorId: 2, authorAvatarUrl: 'https://cdn.example/bob.png' },
+    ]))
+  })
+
+  it.each([{ id: 1, avatarUrl: 'https://cdn.example/late-alice.png' }, { avatarUrl: 'https://cdn.example/unknown.png' }])('rejects an event outside the current owner: %j', async detail => {
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      window.dispatchEvent(new CustomEvent('profile-updated', { detail }))
+      await flushPromises()
+      const avatars = wrapper.findAll('img[alt="头像"]').map(img => img.attributes('src'))
+      expect(avatars).toContain('https://cdn.example/bob.png')
+      expect(avatars).toContain('https://cdn.example/alice.png')
+      expect(avatars).not.toContain(detail.avatarUrl)
+    } finally { wrapper.unmount() }
+  })
+
+  it('updates only current-owner comments and supports clearing that avatar', async () => {
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: 2, avatarUrl: 'https://cdn.example/bob-new.png' } }))
+      await flushPromises()
+      expect(wrapper.findAll('img[alt="头像"]').map(img => img.attributes('src'))).toContain('https://cdn.example/bob-new.png')
+      window.dispatchEvent(new CustomEvent('profile-updated', { detail: { id: 2, avatarUrl: '' } }))
+      await flushPromises()
+      const avatars = wrapper.findAll('img[alt="头像"]').map(img => img.attributes('src'))
+      expect(avatars).not.toContain('https://cdn.example/bob-new.png')
+      expect(avatars).toContain('https://cdn.example/alice.png')
+    } finally { wrapper.unmount() }
   })
 })

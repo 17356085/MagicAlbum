@@ -50,6 +50,9 @@ const {
   linkTextInputRef,
   linkUrl,
   onSelectImage,
+  onTextareaBlur,
+  onTextareaCompositionEnd,
+  onTextareaCompositionStart,
   onTextareaInput,
   onTextareaKeydown,
   previewHtml,
@@ -207,6 +210,9 @@ const {
           :disabled="disabled"
           :class="mobilePreviewExclusive ? 'h-[40dvh] min-h-[220px] max-h-[480px] lg:h-auto lg:max-h-none lg:min-h-[260px]' : 'min-h-[260px]'"
           class="ui-field w-full resize-none overflow-y-auto px-3 py-3 text-base leading-6 focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
+          @blur="onTextareaBlur"
+          @compositionend="onTextareaCompositionEnd"
+          @compositionstart="onTextareaCompositionStart"
           @input="onTextareaInput"
           @keydown="onTextareaKeydown"
         />

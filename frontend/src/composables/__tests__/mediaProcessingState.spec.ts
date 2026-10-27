@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { decodeMediaAsset, hydrateMediaAssets, mediaAssets, trackMediaUpload, updateMediaAsset } from '../mediaProcessingState'
+import { persistAuthState } from '@/utils/authStorage'
+import { decodeMediaAsset, dismissMediaAsset, hydrateMediaAssets, mediaAssets, trackMediaUpload, updateMediaAsset } from '../mediaProcessingState'
 
 const asset = { assetId: 'd2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/original.png', processingStatus: 'PENDING' as const }
 function owner(id: number, token: string) {
-  localStorage.setItem('accessToken', token)
-  localStorage.setItem('currentUser', JSON.stringify({ id }))
+  persistAuthState({ accessToken: token, user: { id, username: `owner-${id}` } })
   hydrateMediaAssets(token)
 }
 
@@ -23,6 +23,69 @@ describe('owner-scoped media status', () => {
     expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
     expect(localStorage.getItem('bluealbum:media:1')).not.toContain('first')
   })
+
+  it('blocks stale owner events after an external token switch before hydration', () => {
+    owner(1, 'first')
+    trackMediaUpload(asset, 'first')
+    const firstCache = localStorage.getItem('bluealbum:media:1')
+
+    persistAuthState({ accessToken: 'second', user: { id: 2, username: 'owner-2' } })
+    dismissMediaAsset(asset.assetId)
+    updateMediaAsset({ ...asset, processingStatus: 'SUCCEEDED' }, 'first', true)
+    trackMediaUpload({ ...asset, processingStatus: 'SUCCEEDED' }, 'first')
+
+    expect(mediaAssets.value).toEqual([expect.objectContaining(asset)])
+    expect(localStorage.getItem('bluealbum:media:1')).toBe(firstCache)
+    expect(localStorage.getItem('bluealbum:media:2')).toBeNull()
+
+    hydrateMediaAssets('second')
+    expect(mediaAssets.value).toEqual([])
+
+    owner(1, 'first')
+    expect(mediaAssets.value).toEqual([expect.objectContaining(asset)])
+  })
+
+  it('does not create a cache for a token-only session', () => {
+    persistAuthState({ accessToken: 'token-only', user: null })
+    hydrateMediaAssets('token-only')
+
+    trackMediaUpload(asset, 'token-only')
+    updateMediaAsset(asset, 'token-only', true)
+    dismissMediaAsset(asset.assetId)
+
+    expect(mediaAssets.value).toEqual([])
+    expect(localStorage.getItem('bluealbum:media:1')).toBeNull()
+  })
+
+  it('stops writes when the bound owner changes under the same token', () => {
+    owner(1, 'stable-token')
+    trackMediaUpload(asset, 'stable-token')
+    const firstCache = localStorage.getItem('bluealbum:media:1')
+
+    localStorage.setItem('currentUserSession.v1', JSON.stringify({
+      accessToken: 'stable-token',
+      user: { id: 2, username: 'owner-2' },
+    }))
+    dismissMediaAsset(asset.assetId)
+    updateMediaAsset({ ...asset, processingStatus: 'SUCCEEDED' }, 'stable-token', true)
+
+    expect(mediaAssets.value).toEqual([expect.objectContaining(asset)])
+    expect(localStorage.getItem('bluealbum:media:1')).toBe(firstCache)
+    expect(localStorage.getItem('bluealbum:media:2')).toBeNull()
+  })
+
+  it('rejects a cache hydration when the token is paired with another owner', () => {
+    owner(1, 'first')
+    trackMediaUpload(asset, 'first')
+    const firstCache = localStorage.getItem('bluealbum:media:1')
+
+    localStorage.setItem('accessToken', 'second')
+    hydrateMediaAssets('second')
+
+    expect(mediaAssets.value).toEqual([])
+    expect(localStorage.getItem('bluealbum:media:1')).toBe(firstCache)
+  })
+
   it('limits history and treats legacy uploads as original-only', () => {
     owner(1, 'token')
     trackMediaUpload({ url: '/legacy.png' }, 'token')

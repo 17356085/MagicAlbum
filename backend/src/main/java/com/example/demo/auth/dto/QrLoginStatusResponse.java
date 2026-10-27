@@ -1,7 +1,5 @@
 package com.example.demo.auth.dto;
 
-import com.example.demo.user.dto.UserDto;
-
 import java.time.OffsetDateTime;
 
 public class QrLoginStatusResponse {
@@ -10,7 +8,6 @@ public class QrLoginStatusResponse {
     private OffsetDateTime expiresAt;
     private QrLoginStatus status;
     private String message;
-    private UserDto user;
 
     public String getQrId() {
         return qrId;
@@ -50,13 +47,5 @@ public class QrLoginStatusResponse {
 
     public void setMessage(String message) {
         this.message = message;
-    }
-
-    public UserDto getUser() {
-        return user;
-    }
-
-    public void setUser(UserDto user) {
-        this.user = user;
     }
 }

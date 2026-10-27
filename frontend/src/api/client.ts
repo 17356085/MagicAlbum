@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthSessionStore } from '@/stores/authSession'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 
 const api = axios.create({
@@ -15,6 +15,16 @@ const publicAuthenticationPaths = new Set([
   '/auth/qr/cancel', '/auth/qr/exchange',
 ])
 
+export class AuthSessionChangedError extends Error {
+  readonly code = 'AUTH_SESSION_CHANGED'
+
+  constructor() {
+    super('账号已在其他标签页变更，请刷新后重试')
+    this.name = 'AuthSessionChangedError'
+    Object.setPrototypeOf(this, new.target.prototype)
+  }
+}
+
 function isPublicAuthenticationRequest(url: string): boolean {
   try {
     const pathname = new URL(url, window.location.origin).pathname.replace(/^\/api\/v1(?=\/)/, '')
@@ -23,7 +33,32 @@ function isPublicAuthenticationRequest(url: string): boolean {
 }
 
 export function captureAuthGeneration(): number | undefined {
-  try { return useAuthStore().getAuthGeneration() } catch { return undefined }
+  try { return useAuthSessionStore().getAuthGeneration() } catch { return undefined }
+}
+
+function getAuthSessionToken(): string | undefined {
+  try {
+    const auth = useAuthSessionStore() as { token?: unknown }
+    return typeof auth.token === 'string' ? auth.token : undefined
+  } catch (_) {
+    return undefined
+  }
+}
+
+function normalizeRealToken(token?: string | null): string {
+  const normalized = typeof token === 'string' ? token.trim() : ''
+  return hasRealToken(normalized) ? normalized : ''
+}
+
+export function assertAutomaticRequestOwnsCurrentSession(persistedToken: string): void {
+  const storeToken = getAuthSessionToken()
+  // Some callers/tests use the client without an active Pinia store. Preserve
+  // the existing storage-only behavior in that case.
+  if (storeToken === undefined) return
+
+  if (normalizeRealToken(storeToken) !== normalizeRealToken(persistedToken)) {
+    throw new AuthSessionChangedError()
+  }
 }
 
 function createRequestId(): string {
@@ -59,7 +94,7 @@ export function handleCurrentTokenUnauthorized(requestToken: string, requestGene
   }
 
   try {
-    const auth = useAuthStore()
+    const auth = useAuthSessionStore()
     // A new login invalidates old requests before its replacement token arrives.
     if (requestGeneration !== undefined && auth.getAuthGeneration() !== requestGeneration) return false
     const result = auth.handleUnauthorized(requestToken)
@@ -69,21 +104,29 @@ export function handleCurrentTokenUnauthorized(requestToken: string, requestGene
   }
 }
 
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const generation = captureAuthGeneration()
-  if (generation !== undefined) requestAuthGenerations.set(config, generation)
-  config.headers['X-Request-Id'] = config.headers['X-Request-Id'] || createRequestId()
-  const existingAuthorization = typeof config.headers.get === 'function'
-    ? config.headers.get('Authorization')
-    : config.headers.Authorization ?? config.headers.authorization
-  if (!existingAuthorization) {
-    const token = getStoredAccessToken()
-    if (hasRealToken(token)) {
-      config.headers.Authorization = `Bearer ${token}`
+api.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    const generation = captureAuthGeneration()
+    if (generation !== undefined) requestAuthGenerations.set(config, generation)
+    config.headers['X-Request-Id'] = config.headers['X-Request-Id'] || createRequestId()
+    const existingAuthorization = typeof config.headers.get === 'function'
+      ? config.headers.get('Authorization')
+      : config.headers.Authorization ?? config.headers.authorization
+    if (!existingAuthorization) {
+      const token = getStoredAccessToken()
+      const requestUrl = String(config.url || '')
+      if (!isPublicAuthenticationRequest(requestUrl)) {
+        assertAutomaticRequestOwnsCurrentSession(token)
+      }
+      if (hasRealToken(token)) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
     }
-  }
-  return config
-})
+    return config
+  },
+  (error: unknown) => { throw error },
+  { synchronous: true },
+)
 
 api.interceptors.response.use(
   (response) => response,

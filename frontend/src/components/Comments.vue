@@ -10,6 +10,8 @@ import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { normalizeImageUrl } from '@/utils/image'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
+import { InteractionResponseError } from '@/api/interactionState'
+import { isPostCreationUnconfirmedError } from '@/api/postCreationResponse'
 import type { Id, ProfileUpdatedDetail } from '@/types'
 import type { UploadImageResponse } from '@/api/uploads'
 import type { CommentItem, CommentsProps } from '@/components/comments/types'
@@ -24,6 +26,9 @@ const props = withDefaults(defineProps<CommentsProps>(), {
 
 const loading = ref(false)
 const error = ref('')
+const loadError = ref('')
+const submissionUnconfirmed = ref(false)
+const unconfirmedLikeMessage = '点赞结果暂未确认，请刷新评论后重试'
 const items = ref<CommentItem[]>([])
 const {
   groups,
@@ -65,7 +70,7 @@ const total = ref(0)
 const content = ref('')
 const replyToPostId = ref<Id | null>(null)
 const authStore = useAuthStore()
-const { isLoggedIn, user } = storeToRefs(authStore)
+const { isLoggedIn, token, user } = storeToRefs(authStore)
 const previewMode = ref(false)
 const isSubmitting = ref(false)
 const isUploading = ref(false)
@@ -76,11 +81,166 @@ let loadRequestSeq = 0
 let submitRequestSeq = 0
 let uploadRequestSeq = 0
 let activeUploadId: number | null = null
-const likeRequestSeqByComment = new Map<string, number>()
+let likeRequestSeq = 0
+const likeRequestByComment = new Map<string, LikeRequestContext>()
 let disposed = false
 let threadGeneration = 0
+let sessionEpoch = 0
 let applyingLoadResponse = false
 let loadScheduled = false
+let boundaryLoadPending = false
+const listRevisionByQuery = new Map<string, number>()
+let activeLoadRequestSeq: number | null = null
+let activeLoadQueryKey: string | null = null
+
+type SessionContext = Readonly<{
+  memoryToken: string
+  persistedToken: string
+  ownerId: string
+}>
+
+type RequestSessionContext = SessionContext & { epoch: number }
+
+type QueryContext = Readonly<{
+  page: number
+  size: number
+  sortKey: string
+  sortOrder: string
+}>
+
+type LikeRequestContext = RequestSessionContext & {
+  requestSeq: number
+  threadId: number
+  commentKey: string
+  queryKey: string
+}
+
+function normalizeSessionToken(value: unknown): string {
+  const tokenValue = typeof value === 'string' ? value : ''
+  return hasRealToken(tokenValue) ? tokenValue : ''
+}
+
+function getKnownOwnerId(): string {
+  for (const owner of [user.value?.id, user.value?.userId]) {
+    if (typeof owner === 'number' && Number.isSafeInteger(owner) && owner > 0) return String(owner)
+    if (typeof owner === 'string' && /^[1-9]\d*$/.test(owner.trim())) return owner.trim()
+  }
+  return ''
+}
+
+function readSessionContext(): SessionContext {
+  return Object.freeze({
+    memoryToken: normalizeSessionToken(token.value),
+    persistedToken: normalizeSessionToken(getStoredAccessToken()),
+    ownerId: getKnownOwnerId(),
+  })
+}
+
+let observedSession = readSessionContext()
+
+function sameTokenPair(left: SessionContext, right: SessionContext): boolean {
+  return left.memoryToken === right.memoryToken && left.persistedToken === right.persistedToken
+}
+
+function requiresSessionBoundary(previous: SessionContext, next: SessionContext): boolean {
+  if (!sameTokenPair(previous, next)) return true
+  // A token can be hydrated with its known identity after the component has
+  // already started loading or uploading. Treat unknown -> known as the same
+  // session; every other known-owner transition is a new owner boundary.
+  return !!previous.ownerId && previous.ownerId !== next.ownerId
+}
+
+function isPairUsable(session: SessionContext): boolean {
+  return session.memoryToken === session.persistedToken
+}
+
+function getQueryContext(): QueryContext {
+  return Object.freeze({
+    page: page.value,
+    size: size.value,
+    sortKey: sortKey.value,
+    sortOrder: sortOrder.value,
+  })
+}
+
+function getQueryKey(query: QueryContext): string {
+  return [query.page, query.size, query.sortKey, query.sortOrder].join('|')
+}
+
+function scheduleBoundaryLoad(): void {
+  if (boundaryLoadPending || disposed) return
+  boundaryLoadPending = true
+  scheduleLoad()
+}
+
+function clearSessionOwnedState(next: SessionContext): void {
+  sessionEpoch += 1
+  observedSession = next
+  loadRequestSeq += 1
+  submitRequestSeq += 1
+  uploadRequestSeq += 1
+  activeUploadId = null
+  likeRequestByComment.clear()
+  activeLoadRequestSeq = null
+  activeLoadQueryKey = null
+  listRevisionByQuery.clear()
+  loading.value = false
+  isSubmitting.value = false
+  isUploading.value = false
+  items.value = []
+  total.value = 0
+  content.value = ''
+  replyToPostId.value = null
+  submissionUnconfirmed.value = false
+  previewMode.value = false
+  groupPageMap.value = {}
+  collapsedMap.value = {}
+  error.value = '账号状态已变更，请刷新后重试'
+  loadError.value = ''
+  scheduleBoundaryLoad()
+}
+
+function reconcileSession(forceBoundary = false): SessionContext {
+  const next = readSessionContext()
+  if (forceBoundary || requiresSessionBoundary(observedSession, next)) {
+    clearSessionOwnedState(next)
+  } else {
+    observedSession = next
+  }
+  return next
+}
+
+function captureRequestSession(): RequestSessionContext | null {
+  const current = readSessionContext()
+  const boundary = requiresSessionBoundary(observedSession, current)
+  if (boundary) clearSessionOwnedState(current)
+  else observedSession = current
+  if (!isPairUsable(current)) {
+    if (!boundary) clearSessionOwnedState(current)
+    return null
+  }
+  return { ...current, epoch: sessionEpoch }
+}
+
+function isRequestSessionCurrent(session: RequestSessionContext): boolean {
+  const current = captureRequestSession()
+  if (!current) return false
+  return session.epoch === sessionEpoch
+    && sameTokenPair(session, current)
+    && (!session.ownerId || session.ownerId === current.ownerId)
+}
+
+function markMutationAccepted(queryKey: string): void {
+  listRevisionByQuery.set(queryKey, (listRevisionByQuery.get(queryKey) || 0) + 1)
+  if (activeLoadRequestSeq !== null
+    && activeLoadRequestSeq === loadRequestSeq
+    && activeLoadQueryKey === queryKey) {
+    loadRequestSeq += 1
+    activeLoadRequestSeq = null
+    activeLoadQueryKey = null
+    loading.value = false
+  }
+}
 
 function isCurrentThread(threadId: number, generation = threadGeneration): boolean {
   return !disposed
@@ -88,20 +248,28 @@ function isCurrentThread(threadId: number, generation = threadGeneration): boole
     && String(props.threadId) === String(threadId)
 }
 
-function isCurrentLoad(requestSeq: number, threadId: number): boolean {
-  return isCurrentThread(threadId) && requestSeq === loadRequestSeq
+function isCurrentLoad(requestSeq: number, threadId: number, session: RequestSessionContext, queryKey: string, revision: number): boolean {
+  return isCurrentThread(threadId)
+    && requestSeq === loadRequestSeq
+    && revision === (listRevisionByQuery.get(queryKey) || 0)
+    && isRequestSessionCurrent(session)
 }
 
-function isCurrentSubmit(requestSeq: number, threadId: number): boolean {
-  return isCurrentThread(threadId) && requestSeq === submitRequestSeq
+function isCurrentSubmit(requestSeq: number, threadId: number, session: RequestSessionContext): boolean {
+  return isCurrentThread(threadId)
+    && requestSeq === submitRequestSeq
+    && isRequestSessionCurrent(session)
 }
 
-function isCurrentLike(requestSeq: number, threadId: number, commentKey: string, generation: number): boolean {
-  return isCurrentThread(threadId, generation) && likeRequestSeqByComment.get(commentKey) === requestSeq
+function isCurrentLike(request: LikeRequestContext): boolean {
+  return isCurrentThread(request.threadId)
+    && likeRequestByComment.get(request.commentKey) === request
+    && request.queryKey === getQueryKey(getQueryContext())
+    && isRequestSessionCurrent(request)
 }
 
-function isCurrentUpload(uploadId: number, threadId: number, generation: number, authGeneration: number): boolean {
-  return activeUploadId === uploadId && isCurrentThread(threadId, generation) && authGeneration === authStore.getAuthGeneration()
+function isCurrentUpload(uploadId: number, threadId: number, session: RequestSessionContext): boolean {
+  return activeUploadId === uploadId && isCurrentThread(threadId) && isRequestSessionCurrent(session)
 }
 
 function scheduleLoad(): void {
@@ -109,7 +277,10 @@ function scheduleLoad(): void {
   loadScheduled = true
   nextTick(() => {
     loadScheduled = false
-    if (!disposed) void load()
+    if (disposed) return
+    const current = readSessionContext()
+    boundaryLoadPending = false
+    if (isPairUsable(current)) void load()
   })
 }
 
@@ -117,30 +288,38 @@ function scheduleLoad(): void {
 function onProfileUpdated(evt: Event) {
   try {
     const detail = (evt as CustomEvent<ProfileUpdatedDetail>).detail
-    const next = detail?.avatarUrl || ''
-    const myId = Number(user?.value?.id || 0)
-    if (!myId || !next) return
-    const apply = (arr: CommentItem[]) => (arr || []).map(it => (Number(it?.authorId || 0) === myId ? { ...it, authorAvatarUrl: next } : it))
+    const myId = user.value?.id ?? user.value?.userId
+    if (!isLoggedIn.value || myId == null || detail?.id == null || String(detail.id) !== String(myId) || typeof detail.avatarUrl !== 'string') return
+    const next = detail.avatarUrl
+    const apply = (arr: CommentItem[]) => (arr || []).map(it => (String(it?.authorId ?? '') === String(myId) ? { ...it, authorAvatarUrl: next } : it))
     items.value = apply(items.value)
   } catch (_) {}
 }
 
 async function load(): Promise<void> {
-  const requestSeq = ++loadRequestSeq
   const threadId = props.threadId
   const requestedPage = page.value
   const requestedSize = size.value
   const requestedSortKey = sortKey.value
   const requestedSortOrder = sortOrder.value
+  const query = getQueryContext()
+  const queryKey = getQueryKey(query)
+  const session = captureRequestSession()
+  if (!session) return
+  const requestSeq = ++loadRequestSeq
+  const requestedRevision = listRevisionByQuery.get(queryKey) || 0
+  activeLoadRequestSeq = requestSeq
+  activeLoadQueryKey = queryKey
   loading.value = true
   error.value = ''
+  loadError.value = ''
   try {
     const data = await listPosts(threadId, {
       page: requestedPage,
       size: requestedSize,
       sort: requestedSortKey === 'likes' ? 'likeCount' : 'time',
     })
-    if (!isCurrentLoad(requestSeq, threadId)) return
+    if (!isCurrentLoad(requestSeq, threadId, session, queryKey, requestedRevision)) return
     if (
       page.value !== requestedPage
       || size.value !== requestedSize
@@ -155,13 +334,26 @@ async function load(): Promise<void> {
     applyingLoadResponse = false
     tryScrollToId(props.scrollToPostId)
   } catch (_) {
-    if (isCurrentLoad(requestSeq, threadId)) error.value = '加载评论失败'
+    if (isCurrentLoad(requestSeq, threadId, session, queryKey, requestedRevision)) {
+      loadError.value = '加载评论失败'
+      error.value = loadError.value
+    }
   } finally {
-    if (isCurrentLoad(requestSeq, threadId)) loading.value = false
+    if (activeLoadRequestSeq === requestSeq) {
+      activeLoadRequestSeq = null
+      activeLoadQueryKey = null
+    }
+    if (isCurrentLoad(requestSeq, threadId, session, queryKey, requestedRevision)) loading.value = false
   }
 }
 
+function retryLoad(): void {
+  if (!loading.value && !disposed) void load()
+}
+
 async function toggleLike(comment: CommentItem): Promise<void> {
+  const session = captureRequestSession()
+  if (!session) return
   if (!isLoggedIn.value) {
     error.value = '请先登录后再点赞'
     return
@@ -170,24 +362,39 @@ async function toggleLike(comment: CommentItem): Promise<void> {
     return
   }
   const threadId = props.threadId
-  const generation = threadGeneration
+  const queryKey = getQueryKey(getQueryContext())
   const commentKey = String(comment.id)
-  const requestSeq = (likeRequestSeqByComment.get(commentKey) || 0) + 1
-  likeRequestSeqByComment.set(commentKey, requestSeq)
+  if (likeRequestByComment.has(commentKey)) return
+  error.value = ''
+  const request: LikeRequestContext = {
+    ...session,
+    requestSeq: ++likeRequestSeq,
+    threadId,
+    commentKey,
+    queryKey,
+  }
+  likeRequestByComment.set(commentKey, request)
   try {
     const state = comment.liked ? await unlikePost(comment.id) : await likePost(comment.id)
-    if (!isCurrentLike(requestSeq, threadId, commentKey, generation)) return
+    if (!isCurrentLike(request)) return
+    markMutationAccepted(queryKey)
     items.value = items.value.map((item) => (
       item.id === comment.id
         ? { ...item, liked: state.liked, likeCount: state.likeCount }
         : item
     ))
-  } catch (_) {
-    if (isCurrentLike(requestSeq, threadId, commentKey, generation)) error.value = '点赞操作失败，请稍后再试'
+  } catch (cause: unknown) {
+    if (isCurrentLike(request)) {
+      error.value = cause instanceof InteractionResponseError ? unconfirmedLikeMessage : '点赞操作失败，请稍后再试'
+    }
+  } finally {
+    if (likeRequestByComment.get(commentKey) === request) likeRequestByComment.delete(commentKey)
   }
 }
 
 async function submit(): Promise<void> {
+  const session = captureRequestSession()
+  if (!session) return
   if (isSubmitting.value) return
   if (isUploading.value) {
     error.value = '请等待图片上传完成'
@@ -195,6 +402,7 @@ async function submit(): Promise<void> {
   }
   const requestSeq = ++submitRequestSeq
   const threadId = props.threadId
+  const queryKey = getQueryKey(getQueryContext())
   isSubmitting.value = true
   error.value = ''
   if (!isLoggedIn.value) {
@@ -213,13 +421,14 @@ async function submit(): Promise<void> {
     isSubmitting.value = false
     return
   }
+  submissionUnconfirmed.value = false
   const optimistic: CommentItem = {
     id: 'temp_' + Math.random().toString(36).slice(2),
-    threadId: props.threadId,
-    authorId: Number(user.value?.id || 0),
+    threadId,
+    authorId: session.ownerId || undefined,
     authorUsername: user.value?.username || '我',
-    authorNickname: user.value?.username || '我',
-    authorAvatarUrl: '',
+    authorNickname: user.value?.nickname || user.value?.username || '我',
+    authorAvatarUrl: user.value?.avatarUrl || '',
     content: text,
     parentAuthorId: null,
     parentAuthorUsername: null,
@@ -234,19 +443,23 @@ async function submit(): Promise<void> {
   total.value = Number(total.value || 0) + 1
   try {
     const created = await createPost(threadId, { contentMd: text, replyToPostId: replyToPostId.value || null })
-    if (!isCurrentSubmit(requestSeq, threadId)) return
+    if (!isCurrentSubmit(requestSeq, threadId, session)) return
+    markMutationAccepted(queryKey)
     items.value = items.value.map(it => (it.id === optimistic.id ? created : it))
     content.value = ''
     replyToPostId.value = null
+    if (!isCurrentSubmit(requestSeq, threadId, session)) return
     await load()
   } catch (e: unknown) {
-    if (!isCurrentSubmit(requestSeq, threadId)) return
+    if (!isCurrentSubmit(requestSeq, threadId, session)) return
     const err = e as { response?: { data?: { message?: string } } } | null
-    error.value = err?.response?.data?.message || '发布失败'
+    submissionUnconfirmed.value = isPostCreationUnconfirmedError(e)
+    error.value = submissionUnconfirmed.value ? '' : err?.response?.data?.message || '发布失败'
+    const hadOptimisticRow = items.value.some(it => it.id === optimistic.id)
     items.value = items.value.filter(it => it.id !== optimistic.id)
-    total.value = Math.max(0, Number(total.value || 0) - 1)
+    if (hadOptimisticRow) total.value = Math.max(0, Number(total.value || 0) - 1)
   } finally {
-    if (isCurrentSubmit(requestSeq, threadId)) isSubmitting.value = false
+    if (isCurrentSubmit(requestSeq, threadId, session)) isSubmitting.value = false
   }
 }
 
@@ -277,9 +490,9 @@ function getUploadErrorMessage(reason: unknown): string {
 }
 
 async function handleUploadImage(file: File, onProgress?: (percent: number) => void): Promise<void> {
+  const session = captureRequestSession()
+  if (!session) return
   const threadId = props.threadId
-  const generation = threadGeneration
-  const authGeneration = authStore.getAuthGeneration()
   if (isSubmitting.value || isUploading.value) {
     if (!isUploading.value) error.value = '请等待评论发送完成'
     return
@@ -288,13 +501,17 @@ async function handleUploadImage(file: File, onProgress?: (percent: number) => v
   activeUploadId = uploadId
   isUploading.value = true
   try {
-    const token = getStoredAccessToken()
-    if (!hasRealToken(token)) {
-      if (isCurrentUpload(uploadId, threadId, generation, authGeneration)) error.value = '请先登录后再上传图片'
+    if (!hasRealToken(session.memoryToken)) {
+      if (isCurrentUpload(uploadId, threadId, session)) error.value = '请先登录后再上传图片'
       return
     }
-    const resp: UploadImageResponse = await uploadImage(file, token, onProgress)
-    if (!isCurrentUpload(uploadId, threadId, generation, authGeneration)) return
+    const guardedProgress = onProgress
+      ? (percent: number) => {
+        if (isCurrentUpload(uploadId, threadId, session)) onProgress(percent)
+      }
+      : undefined
+    const resp: UploadImageResponse = await uploadImage(file, session.memoryToken, guardedProgress)
+    if (!isCurrentUpload(uploadId, threadId, session)) return
     const normalized = normalizeImageUrl(resp?.url || resp?.path || '')
     if (!normalized) {
       error.value = '图片上传失败：服务器未返回有效图片地址'
@@ -303,7 +520,7 @@ async function handleUploadImage(file: File, onProgress?: (percent: number) => v
     content.value = (content.value || '') + `\n\n![](${normalized})\n\n`
     error.value = ''
   } catch (reason: unknown) {
-    if (isCurrentUpload(uploadId, threadId, generation, authGeneration)) error.value = getUploadErrorMessage(reason)
+    if (isCurrentUpload(uploadId, threadId, session)) error.value = getUploadErrorMessage(reason)
   } finally {
     if (activeUploadId === uploadId) {
       activeUploadId = null
@@ -340,7 +557,10 @@ function updatePageInput(event: Event): void {
 }
 
 function setReplyTo(id: Id, rootId?: Id) {
-  replyToPostId.value = id
+  if (isSubmitting.value || isUploading.value) return
+  const target = items.value.find(item => String(item.id) === String(id))
+  if (!target || target._optimistic) return
+  replyToPostId.value = target.id
   // 如果传入了 rootId（子回复），确保所在页可见，并展开楼层
   if (rootId) {
     const g = (groups.value || []).find(x => x.root?.id === rootId)
@@ -397,8 +617,21 @@ function goNextGroupPage(rootId: Id): void {
   groupPageMap.value[String(rootId)] = Number(groupPageMap.value[String(rootId)] || 1) + 1
 }
 
-onMounted(() => { void load() })
-onMounted(() => { window.addEventListener('profile-updated', onProfileUpdated) })
+function onAuthStateChanged(): void {
+  reconcileSession(true)
+}
+
+function onStorageChanged(event: StorageEvent): void {
+  if (event.key !== null && event.key !== 'accessToken' && event.key !== 'currentUser') return
+  reconcileSession(true)
+}
+
+onMounted(() => {
+  window.addEventListener('profile-updated', onProfileUpdated)
+  window.addEventListener('auth-state-changed', onAuthStateChanged)
+  window.addEventListener('storage', onStorageChanged)
+  void load()
+})
 watch(() => props.threadId, () => {
   threadGeneration += 1
   const previousPage = page.value
@@ -409,12 +642,19 @@ watch(() => props.threadId, () => {
   groupPageMap.value = {}
   collapsedMap.value = {}
   submitRequestSeq += 1
-  likeRequestSeqByComment.clear()
+  likeRequestByComment.clear()
   isSubmitting.value = false
   activeUploadId = null
   uploadRequestSeq += 1
   isUploading.value = false
+  activeLoadRequestSeq = null
+  activeLoadQueryKey = null
+  listRevisionByQuery.clear()
+  loading.value = false
   content.value = ''
+  error.value = ''
+  loadError.value = ''
+  submissionUnconfirmed.value = false
   if (previousPage === 1) void load()
 })
 
@@ -426,9 +666,18 @@ onBeforeUnmount(() => {
   activeUploadId = null
   uploadRequestSeq += 1
   isUploading.value = false
-  likeRequestSeqByComment.clear()
-  try { window.removeEventListener('profile-updated', onProfileUpdated) } catch (_) {}
+  likeRequestByComment.clear()
+  activeLoadRequestSeq = null
+  try {
+    window.removeEventListener('profile-updated', onProfileUpdated)
+    window.removeEventListener('auth-state-changed', onAuthStateChanged)
+    window.removeEventListener('storage', onStorageChanged)
+  } catch (_) {}
 })
+
+watch([token, getKnownOwnerId], () => {
+  if (!disposed) reconcileSession()
+}, { flush: 'sync' })
 
 watch(page, () => {
   if (applyingLoadResponse || disposed) return
@@ -477,15 +726,24 @@ watch([sortKey, sortOrder], () => {
         @upload-image="onSelectUploadImage"
       />
     </div>
+    <p v-if="error && error !== loadError" class="mx-4 my-3 text-sm text-red-600 dark:text-red-300 sm:mx-6" role="alert">{{ error }}</p>
+    <div v-if="submissionUnconfirmed" class="mx-4 my-3 text-sm sm:mx-6" role="alert">
+      <p>评论发送结果暂未确认，当前输入已保留。请先刷新评论核对，避免重复发送。</p>
+      <button type="button" class="ui-button mt-2 min-h-11 px-3 py-2 text-sm" :disabled="loading" @click="retryLoad">刷新评论核对</button>
+    </div>
+    <div v-if="error === unconfirmedLikeMessage" class="px-4 pb-3 sm:px-6">
+      <button type="button" class="ui-button" :disabled="loading" @click="retryLoad">刷新评论状态</button>
+    </div>
     <CommentsList
       :child-page-size="Number(props.childPageSize || 10)"
       :collapsed-map="collapsedMap"
-      :error="error"
+      :error="loadError"
       :get-children-page="getChildrenPage"
       :group-page-map="groupPageMap"
       :has-pagination="hasPagination"
       :highlighted-post-id="highlightedPostId"
       :is-logged-in="isLoggedIn"
+      :is-submitting="isSubmitting"
       :is-uploading="isUploading"
       :loading="loading"
       :model-value="content"
@@ -521,6 +779,9 @@ watch([sortKey, sortOrder], () => {
       @update:showTimeMenu="showTimeMenu = $event"
       @upload-image="onSelectUploadImage"
     />
+    <div v-if="loadError && !loading" class="px-4 pb-5 sm:px-6">
+      <button type="button" class="ui-button" @click="retryLoad">重试加载评论</button>
+    </div>
   </section>
 </template>
 

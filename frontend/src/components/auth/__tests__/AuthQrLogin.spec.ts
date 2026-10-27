@@ -53,14 +53,14 @@ function makeSession(qrId: string, pollToken: string): QrLoginSession {
 }
 
 function makeStatus(session: QrLoginSession, status: QrLoginSession['status']): QrLoginStatusResponse {
-  return { ...session, status, user: null }
+  return { ...session, status }
 }
 
 function makeLogin(accessToken: string, user: User): LoginResponse {
   return { accessToken, user }
 }
 
-function mountQr() {
+function mountQr(onNotify?: () => void) {
   const pinia = createPinia()
   setActivePinia(pinia)
   return mount(AuthQrLogin, {
@@ -68,6 +68,7 @@ function mountQr() {
       plugins: [pinia],
       stubs: { AuthQrCode: true },
     },
+    attrs: onNotify ? { onNotify } : {},
   })
 }
 
@@ -191,6 +192,65 @@ describe('AuthQrLogin lifecycle races', () => {
     wrapper.unmount()
   })
 
+  it('stops a confirmed poll from exchanging when the persisted owner changes before its reply', async () => {
+    const first = makeSession('qr-storage-poll', 'poll-storage-poll')
+    const poll = deferred<QrLoginStatusResponse>()
+    apiMocks.createQrLoginSession.mockResolvedValueOnce(first)
+    apiMocks.getQrLoginStatus.mockReturnValueOnce(poll.promise)
+
+    const wrapper = mountQr()
+    await flushPromises()
+    vi.advanceTimersByTime(2000)
+    await flushPromises()
+
+    localStorage.setItem('accessToken', 'storage-owner')
+    poll.resolve(makeStatus(first, 'CONFIRMED'))
+    await flushPromises()
+
+    expect(apiMocks.exchangeQrLoginSession).not.toHaveBeenCalled()
+    expect(useAuthStore().isLoggedIn).toBe(false)
+    expect(wrapper.emitted('success')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('stops a QR exchange when the persisted owner changes before its reply', async () => {
+    const first = makeSession('qr-storage-exchange', 'poll-storage-exchange')
+    const exchange = deferred<LoginResponse>()
+    apiMocks.createQrLoginSession.mockResolvedValueOnce(first)
+    apiMocks.getQrLoginStatus.mockResolvedValueOnce(makeStatus(first, 'CONFIRMED'))
+    apiMocks.exchangeQrLoginSession.mockReturnValueOnce(exchange.promise)
+
+    const wrapper = mountQr()
+    await flushPromises()
+    vi.advanceTimersByTime(2000)
+    await flushPromises()
+    expect(apiMocks.exchangeQrLoginSession).toHaveBeenCalledWith(first.qrId, first.pollToken)
+
+    localStorage.setItem('accessToken', 'storage-owner')
+    exchange.resolve(makeLogin('token-late-qr', { id: 9, username: 'late-qr' }))
+    await flushPromises()
+
+    expect(useAuthStore().isLoggedIn).toBe(false)
+    expect(wrapper.emitted('success')).toBeUndefined()
+    expect(wrapper.emitted('notify')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('does not continue QR work after a notify handler closes the component', async () => {
+    const first = makeSession('qr-close-notify', 'poll-close-notify')
+    apiMocks.createQrLoginSession.mockResolvedValueOnce(first)
+    apiMocks.getQrLoginStatus.mockRejectedValueOnce(new Error('network unavailable'))
+    const notify = vi.fn(() => wrapper.unmount())
+    const wrapper = mountQr(notify)
+    await flushPromises()
+    vi.advanceTimersByTime(2000)
+    await flushPromises()
+
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(apiMocks.getQrLoginStatus).toHaveBeenCalledTimes(1)
+    expect(apiMocks.exchangeQrLoginSession).not.toHaveBeenCalled()
+  })
+
   it.each(['login', 'pending attempt'] as const)('ignores an old poll after another %s changes the auth generation', async (change) => {
     const first = makeSession('qr-login-during-poll', 'poll-login')
     const poll = deferred<QrLoginStatusResponse>()
@@ -254,6 +314,19 @@ describe('AuthQrLogin lifecycle races', () => {
     expect(wrapper.emitted('success')).toHaveLength(1)
     vi.advanceTimersByTime(4000)
     expect(apiMocks.getQrLoginStatus).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('does not emit success when its notification handler replaces the committed session', async () => {
+    const first = makeSession('qr-reentrant', 'poll-reentrant')
+    apiMocks.createQrLoginSession.mockResolvedValueOnce(first)
+    apiMocks.getQrLoginStatus.mockResolvedValueOnce(makeStatus(first, 'CONFIRMED'))
+    const wrapper = mountQr(() => useAuthStore().applyAuthState({ accessToken: 'newer-token', user: { id: 2, username: 'bob' } }))
+    await flushPromises()
+    vi.advanceTimersByTime(2000)
+    await flushPromises()
+    expect(useAuthStore().token).toBe('newer-token')
+    expect(wrapper.emitted('success')).toBeUndefined()
     wrapper.unmount()
   })
 })

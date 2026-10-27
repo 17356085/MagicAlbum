@@ -35,6 +35,7 @@ export async function readNotificationStream(
   let eventName = ''
   let eventId = ''
   let data: string[] = []
+  let dataLength = 0
   const dispatch = () => {
     if (!data.length) { eventName = ''; eventId = ''; return }
     if (!/^(0|[1-9]\d{0,18})$/.test(eventId) || BigInt(eventId) > 9223372036854775807n) throw new NotificationStreamError(0)
@@ -51,14 +52,13 @@ export async function readNotificationStream(
       onChange({ cursor: eventId, kind: event.kind as NotificationChange['kind'], notificationId: event.notificationId as string | undefined })
       lastCursor = eventId
     }
-    data = []; eventName = ''; eventId = ''
+    data = []; dataLength = 0; eventName = ''; eventId = ''
   }
   try {
     while (!signal.aborted) {
       const chunk = await reader.read()
       if (chunk.done) break
       pending += decoder.decode(chunk.value, { stream: true })
-      if (pending.length > 65536) throw new NotificationStreamError(0)
       let end: number
       while ((end = pending.indexOf('\n')) >= 0) {
         let line = pending.slice(0, end)
@@ -72,9 +72,16 @@ export async function readNotificationStream(
         const value = colon < 0 ? '' : line.slice(colon + 1).replace(/^ /, '')
         if (field === 'event') eventName = value
         if (field === 'id') eventId = value
-        if (field === 'data') data.push(value)
-        if (data.join('\n').length > 16384) throw new NotificationStreamError(0)
+        if (field === 'data') {
+          dataLength += value.length + (data.length ? 1 : 0)
+          if (dataLength > 16384) throw new NotificationStreamError(0)
+          data.push(value)
+        }
       }
+      // Fetch chunks can contain many complete events. Bound the unfinished
+      // line and each event instead of rejecting a valid coalesced chunk.
+      // Allow a trailing CR until the next chunk supplies its LF.
+      if (pending.length > 8193) throw new NotificationStreamError(0)
     }
   } finally {
     await reader.cancel().catch(() => {})

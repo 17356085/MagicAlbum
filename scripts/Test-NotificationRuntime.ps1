@@ -72,7 +72,7 @@ function Start-App([string]$Name, [string]$Jar, [int]$Port, [string]$Database, [
     if (-not (Test-Path -LiteralPath $source)) { throw "Build $Jar before verification" }
     $snapshot = Join-Path $ArtifactDirectory "$Name-$verificationId.jar"
     Copy-Item -LiteralPath $source -Destination $snapshot -Force
-    $databaseUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$Database`?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8"
+    $databaseUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$Database`?useSSL=false&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8"
     $childEnvironment = @{
         SPRING_DATASOURCE_URL=$databaseUrl; SPRING_DATASOURCE_USERNAME='root'; SPRING_DATASOURCE_PASSWORD=$databasePassword
         NOTIFICATION_DATASOURCE_URL=$databaseUrl; NOTIFICATION_DATASOURCE_USERNAME='root'; NOTIFICATION_DATASOURCE_PASSWORD=$databasePassword
