@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { useAuthStore } from '@/stores/auth'
-import { hydrateMediaAssets, mediaAssets, type MediaAssetState } from '@/composables/mediaProcessingState'
+import { hydrateMediaAssets, mediaAssets, updateMediaAsset, type MediaAssetState } from '@/composables/mediaProcessingState'
+import { persistAuthState } from '@/utils/authStorage'
 import MediaProcessingStatus from '../MediaProcessingStatus.vue'
 
 const change = vi.hoisted(() => vi.fn())
-vi.mock('@/api/uploads', () => ({ changeMediaJob: change }))
+const getAsset = vi.hoisted(() => vi.fn())
+vi.mock('@/api/uploads', () => ({ changeMediaJob: change, getMediaAsset: getAsset }))
 const original = { assetId: 'd2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/original.png', status: 'READY', processingStatus: 'PENDING' as const }
 let wrapper: VueWrapper | undefined
 
@@ -26,7 +28,7 @@ function deferred<T>(): {
 
 describe('media status actions', () => {
   beforeEach(() => {
-    localStorage.clear(); setActivePinia(createPinia()); change.mockReset(); vi.stubEnv('VITE_API_BASE_URL', '/api/v1')
+    localStorage.clear(); setActivePinia(createPinia()); change.mockReset(); getAsset.mockReset(); vi.stubEnv('VITE_API_BASE_URL', '/api/v1')
     useAuthStore().applyAuthState({ accessToken: 'owner', user: { id: 1, username: 'owner' } })
     hydrateMediaAssets('owner'); mediaAssets.value = [{ ...original }]
   })
@@ -110,8 +112,8 @@ describe('media status actions', () => {
     await flushPromises()
 
     const message = wrapper.get('[role="alert"]').text()
-    expect(message).toContain('操作结果未能确认')
-    expect(message).toContain('刷新页面核对状态')
+    expect(message).toContain('操作结果未确认')
+    expect(message).toContain('刷新状态')
     expect(message).not.toContain('操作未完成')
     expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
     expect(wrapper.findAll('button').some(button => button.text() === '停止处理' && button.attributes('disabled') === undefined)).toBe(true)
@@ -200,5 +202,263 @@ describe('media status actions', () => {
     await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(mediaAssets.value).toEqual([])
+  })
+
+  it('shows a row-local refresh button after an unknown action without reading automatically', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+
+    expect(getAsset).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('刷新状态')
+    expect(wrapper.get('[role="alert"]').text()).toContain('刷新状态')
+  })
+
+  it('reads once only after clicking refresh and keeps the result uncertain', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    const refresh = wrapper.findAll('button').find(button => button.text() === '刷新状态')!
+    await refresh.trigger('click')
+    expect(getAsset).toHaveBeenCalledTimes(1)
+    expect(getAsset).toHaveBeenCalledWith(original.assetId, 'owner', expect.any(AbortSignal))
+    expect(change).toHaveBeenCalledTimes(1)
+    expect(refresh.attributes('aria-label')).toBe('刷新图片 1 状态')
+    expect(refresh.attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').find(button => button.text() === '停止处理')!.attributes('disabled')).toBeDefined()
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/preview.png' })
+    await flushPromises()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('SUCCEEDED')
+    expect(wrapper.text()).toContain('预览已就绪')
+    expect(wrapper.find('a[href="/uploads/preview.png"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('已获取状态，之前的操作仍可能完成，请稍后再次核对。')
+    expect(wrapper.text()).toContain('刷新状态')
+  })
+
+  it('retains separate refresh controls when actions on two images have unknown results', async () => {
+    change.mockRejectedValue({ response: { status: 503 } })
+    const second = { ...original, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/second.png' }
+    mediaAssets.value = [original, second]
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').filter(button => button.text() === '停止处理')[0]!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').filter(button => button.text() === '停止处理')[1]!.trigger('click')
+    await flushPromises()
+
+    const refreshes = wrapper.findAll('button').filter(button => button.text() === '刷新状态')
+    expect(refreshes.map(button => button.attributes('aria-label'))).toEqual(['刷新图片 1 状态', '刷新图片 2 状态'])
+    expect(wrapper.findAll('[role="alert"]')).toHaveLength(2)
+    expect(getAsset).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed manual read and allows another click', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    getAsset.mockRejectedValueOnce(new Error('read failed')).mockResolvedValueOnce({ ...original, processingStatus: 'CANCELLED' })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('无法读取最新状态')
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    expect(getAsset).toHaveBeenCalledTimes(2)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已获取状态，之前的操作仍可能完成，请稍后再次核对。')
+  })
+
+  it('aborts a manual read and ignores its response after an account switch', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    useAuthStore().applyAuthState({ accessToken: 'other', user: { id: 2, username: 'other' } })
+    hydrateMediaAssets('other')
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mediaAssets.value).toEqual([])
+    expect(wrapper.find('[role="status"]').exists()).toBe(false)
+  })
+
+  it('ignores a manual read when the auth generation changes under the same token', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    useAuthStore().invalidateAuthOperations()
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(false)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(wrapper.text()).not.toContain('已获取状态，之前的操作仍可能完成')
+  })
+
+  it('does not claim a manual read succeeded after persisted auth storage drifts', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    localStorage.setItem('accessToken', 'drifted')
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(wrapper.text()).not.toContain('已获取状态，之前的操作仍可能完成')
+  })
+
+  it('rejects a manual read when the stored owner changes under the same token', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+
+    persistAuthState({ accessToken: 'owner', user: { id: 2, username: 'other' } })
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号或图片记录已变化')
+    expect(wrapper.text()).not.toContain('已获取状态，之前的操作仍可能完成')
+  })
+
+  it('reports an auth change instead of starting a read when context is already invalid', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+
+    localStorage.setItem('accessToken', 'drifted-before-refresh')
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    await flushPromises()
+
+    expect(getAsset).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+  })
+
+  it('keeps feedback when storage drift rejects removing the record', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('操作结果未确认')
+
+    localStorage.setItem('accessToken', 'drifted-before-remove')
+    await wrapper.findAll('button').find(button => button.attributes('aria-label')?.startsWith('移除图片'))!.trigger('click')
+    await flushPromises()
+
+    expect(mediaAssets.value).toHaveLength(1)
+    expect(wrapper.get('[role="alert"]').text()).toContain('操作结果未确认')
+  })
+
+  it('aborts a manual read when its row is removed and clears its feedback', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    await wrapper.findAll('button').find(button => button.attributes('aria-label')?.startsWith('移除图片'))!.trigger('click')
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mediaAssets.value).toEqual([])
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('aborts a manual read when the panel unmounts', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    wrapper.unmount()
+    wrapper = undefined
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+  })
+
+  it('does not overwrite a row replaced by polling while manual read is pending', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    const response = deferred<MediaAssetState>()
+    getAsset.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+
+    updateMediaAsset({ ...original, processingStatus: 'PROCESSING' }, 'owner')
+    response.resolve({ ...original, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/stale.png' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PROCESSING')
+    expect(mediaAssets.value[0]?.previewUrl).toBeUndefined()
+    expect(wrapper.get('[role="alert"]').text()).toContain('状态已变化，请先查看；之前的操作仍可能完成')
+  })
+
+  it('releases a pending write when an unrelated row is removed', async () => {
+    const response = deferred<MediaAssetState>()
+    change.mockReturnValue(response.promise)
+    const second = { ...original, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/second.png' }
+    mediaAssets.value = [original, second]
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    const stopButtons = wrapper.findAll('button').filter(button => button.text() === '停止处理')
+    await stopButtons[0]!.trigger('click')
+    expect(stopButtons[0]!.attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[aria-label="移除图片 2 的状态记录"]').trigger('click')
+    response.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(mediaAssets.value.map(item => item.assetId)).toEqual([original.assetId])
+    expect(wrapper.findAll('button').some(button => button.text() === '重试预览' && button.attributes('disabled') === undefined)).toBe(true)
   })
 })

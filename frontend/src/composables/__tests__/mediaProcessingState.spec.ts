@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { persistAuthState } from '@/utils/authStorage'
-import { decodeMediaAsset, dismissMediaAsset, hydrateMediaAssets, mediaAssets, trackMediaUpload, updateMediaAsset } from '../mediaProcessingState'
+import { decodeMediaAsset, dismissMediaAsset, hydrateMediaAssets, mediaAssets, trackMediaUpload, updateMediaAsset, updateMediaAssetIfCurrent } from '../mediaProcessingState'
 
 const asset = { assetId: 'd2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/original.png', processingStatus: 'PENDING' as const }
 function owner(id: number, token: string) {
@@ -94,6 +94,35 @@ describe('owner-scoped media status', () => {
     expect(mediaAssets.value).toHaveLength(20)
     hydrateMediaAssets('token')
     expect(mediaAssets.value).toHaveLength(20)
+  })
+
+  it('conditionally replaces the exact current record and persists only for its owner', () => {
+    owner(1, 'cas-token')
+    trackMediaUpload(asset, 'cas-token')
+    const expected = mediaAssets.value[0]!
+    const latest = { ...asset, processingStatus: 'SUCCEEDED' as const, previewUrl: '/uploads/preview.png' }
+
+    expect(updateMediaAssetIfCurrent(expected, latest, 'cas-token')).toBe(true)
+    expect(mediaAssets.value[0]).toEqual(latest)
+    expect(localStorage.getItem('bluealbum:media:1')).toContain('preview.png')
+
+    expect(updateMediaAssetIfCurrent(expected, { ...latest, processingStatus: 'FAILED' }, 'cas-token')).toBe(false)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('SUCCEEDED')
+
+    localStorage.setItem('accessToken', 'different-token')
+    expect(updateMediaAssetIfCurrent(mediaAssets.value[0]!, { ...latest, processingStatus: 'FAILED' }, 'cas-token')).toBe(false)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('SUCCEEDED')
+  })
+
+  it('rejects a conditional update when the response asset id does not match', () => {
+    owner(1, 'cas-id-token')
+    trackMediaUpload(asset, 'cas-id-token')
+    const expected = mediaAssets.value[0]!
+    const otherAsset = { ...asset, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', processingStatus: 'SUCCEEDED' as const }
+
+    expect(updateMediaAssetIfCurrent(expected, otherAsset, 'cas-id-token')).toBe(false)
+    expect(mediaAssets.value[0]).toBe(expected)
+    expect(localStorage.getItem('bluealbum:media:1')).not.toContain(otherAsset.assetId)
   })
   it('deduplicates decoded cache entries without letting invalid records claim an id', () => {
     owner(1, 'token')

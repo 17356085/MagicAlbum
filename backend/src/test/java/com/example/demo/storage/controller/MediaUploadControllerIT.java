@@ -29,8 +29,10 @@ import java.security.MessageDigest;
 import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -91,7 +93,8 @@ class MediaUploadControllerIT {
                 .andReturn().getResponse().getContentAsByteArray();
         assertThat(downloaded).isEqualTo(bytes);
         mvc.perform(get("/api/v1/uploads/assets/" + assetId).header("Authorization", "Bearer " + ownerToken))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.assetId").value(assetId))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andExpect(jsonPath("$.assetId").value(assetId))
                 .andExpect(jsonPath("$.jobId").value(jobId)).andExpect(jsonPath("$.objectKey").doesNotExist())
                 .andExpect(jsonPath("$.ownerId").doesNotExist()).andExpect(jsonPath("$.sha256").doesNotExist());
         mvc.perform(get("/api/v1/uploads/assets/" + assetId).header("Authorization", "Bearer " + otherToken))

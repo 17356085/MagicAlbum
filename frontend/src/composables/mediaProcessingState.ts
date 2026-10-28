@@ -91,6 +91,20 @@ export function updateMediaAsset(item: MediaAssetState, token: string, insert = 
   persist()
 }
 
+/**
+ * Replace a media record only when the caller still owns the current cache
+ * entry it originally read. Polling and user actions replace records by
+ * reference, so a late manual response cannot overwrite newer state.
+ */
+export function updateMediaAssetIfCurrent(expected: MediaAssetState, latest: MediaAssetState, token: string): boolean {
+  if (!token || cacheOwnerToken !== token || !isCurrentCacheOwner() || latest.assetId !== expected.assetId) return false
+  const index = mediaAssets.value.findIndex(item => item.assetId === expected.assetId)
+  if (index < 0 || mediaAssets.value[index] !== expected) return false
+  mediaAssets.value[index] = latest
+  persist()
+  return true
+}
+
 export function dismissMediaAsset(assetId: string): void {
   if (!isCurrentCacheOwner()) return
   mediaAssets.value = mediaAssets.value.filter(item => item.assetId !== assetId)
