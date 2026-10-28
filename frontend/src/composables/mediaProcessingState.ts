@@ -53,7 +53,14 @@ export function hydrateMediaAssets(token: string): void {
   cacheOwnerId = ownerId
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(cacheKey) || '[]')
-    if (Array.isArray(parsed)) mediaAssets.value = parsed.slice(0, 20).map(decodeMediaAsset).filter((item): item is MediaAssetState => !!item)
+    if (Array.isArray(parsed)) {
+      const seenAssetIds = new Set<string>()
+      mediaAssets.value = parsed.slice(0, 20).map(decodeMediaAsset).filter((item): item is MediaAssetState => {
+        if (!item || seenAssetIds.has(item.assetId)) return false
+        seenAssetIds.add(item.assetId)
+        return true
+      })
+    }
   } catch { /* An invalid local cache never affects server ownership. */ }
 }
 

@@ -188,6 +188,27 @@ describe('useMediaProcessing idle-stop and event-wakeup contract', () => {
     expect(scheduledPolls()).toBe(0)
   })
 
+  it('does not keep polling a duplicate id when the first cache record is terminal', async () => {
+    const duplicatePendingAsset = { ...terminalAsset, url: '/uploads/original-terminal-pending.png', processingStatus: 'PENDING' as const }
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([terminalAsset, duplicatePendingAsset]))
+    mocks.getMediaAsset.mockResolvedValue({ ...terminalAsset })
+    activate(1, 'token-duplicate-pending')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(scheduledPolls()).toBe(0)
+
+    for (const windowIndex of [1, 2, 3]) {
+      await vi.advanceTimersByTimeAsync(POLL_DELAY)
+      await settle()
+      measure('duplicate-terminal-pending-cache', `after-${windowIndex}-window`)
+    }
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(scheduledPolls()).toBe(0)
+  })
+
   it('wakes immediately for a new upload and a retry without waiting for 2500ms', async () => {
     mocks.getMediaAsset.mockImplementation(async (assetId: string) => {
       if (assetId === uploadAsset.assetId) return { ...uploadAsset, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/upload-preview.png' }

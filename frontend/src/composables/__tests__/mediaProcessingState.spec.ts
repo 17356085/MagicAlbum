@@ -95,6 +95,36 @@ describe('owner-scoped media status', () => {
     hydrateMediaAssets('token')
     expect(mediaAssets.value).toHaveLength(20)
   })
+  it('deduplicates decoded cache entries without letting invalid records claim an id', () => {
+    owner(1, 'token')
+    const firstValid = { ...asset, url: '/uploads/first-valid.png' }
+    const firstDuplicate = { ...firstValid, url: '/uploads/first-duplicate.png', processingStatus: 'SUCCEEDED' as const }
+    const secondValid = { ...asset, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/second-valid.png' }
+    const thirdValid = { ...asset, assetId: 'f2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/third-valid.png' }
+    const invalidFirst = { ...firstValid, processingStatus: 'invalid' }
+    const invalidSecond = { ...secondValid, url: 'javascript:alert(1)' }
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([
+      invalidFirst,
+      firstValid,
+      firstDuplicate,
+      secondValid,
+      invalidSecond,
+      thirdValid,
+    ]))
+
+    hydrateMediaAssets('token')
+
+    expect(mediaAssets.value.map(item => item.assetId)).toEqual([
+      firstValid.assetId,
+      secondValid.assetId,
+      thirdValid.assetId,
+    ])
+    expect(mediaAssets.value.map(item => item.url)).toEqual([
+      firstValid.url,
+      secondValid.url,
+      thirdValid.url,
+    ])
+  })
   it('rejects executable URLs and suppresses an unsafe preview', () => {
     expect(decodeMediaAsset({ ...asset, url: 'javascript:alert(1)' })).toBeNull()
     expect(decodeMediaAsset({ ...asset, previewUrl: 'data:text/html,unsafe' })?.previewUrl).toBeNull()
