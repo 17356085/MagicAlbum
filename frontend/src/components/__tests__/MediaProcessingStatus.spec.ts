@@ -78,6 +78,319 @@ describe('media status actions', () => {
     await flushPromises()
     expect(change).toHaveBeenLastCalledWith(original.assetId, 'retry', 'owner')
     expect(wrapper.get('a').attributes('href')).toBe(original.url)
+    expect(getAsset).not.toHaveBeenCalled()
+  })
+
+  it('reconciles a late cancel success against a newer pending job instead of applying the stale DTO', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const newer = { ...original, processingStatus: 'PENDING' as const, jobId: 'e2a1665b-60b1-40f9-85a5-3632148fda39' }
+    updateMediaAsset(newer, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(change).toHaveBeenCalledTimes(1)
+    expect(getAsset).toHaveBeenCalledTimes(1)
+    expect(getAsset).toHaveBeenCalledWith(original.assetId, 'owner', expect.any(AbortSignal))
+    expect(mediaAssets.value[0]).toEqual(newer)
+    expect(wrapper.findAll('[role="status"]').some(node => node.text() === '正在核对图片状态…')).toBe(true)
+
+    read.resolve(newer)
+    await flushPromises()
+
+    expect(mediaAssets.value[0]).toEqual(newer)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(mediaAssets.value[0]?.processingStatus).not.toBe('CANCELLED')
+  })
+
+  it('continues a retry reconciliation from an old FAILED poll to the current PENDING snapshot', async () => {
+    const failed = { ...original, processingStatus: 'FAILED' as const, errorCode: 'old-failure' }
+    mediaAssets.value = [failed]
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').find(button => button.text() === '重试预览')!.trigger('click')
+    const polledFailed = { ...failed, errorCode: 'poll-failure' }
+    updateMediaAsset(polledFailed, 'owner')
+    post.resolve({ ...failed, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/stale-preview.png' })
+    await flushPromises()
+
+    expect(getAsset).toHaveBeenCalledTimes(1)
+    read.resolve({ ...polledFailed, processingStatus: 'PENDING', jobId: 'f2a1665b-60b1-40f9-85a5-3632148fda39' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(mediaAssets.value[0]?.previewUrl).toBeUndefined()
+    expect(wrapper.text()).not.toContain('stale-preview')
+  })
+
+  it('keeps a replacement made while reconciliation is pending and exposes a manual refresh', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const duringRead = { ...original, processingStatus: 'PROCESSING' as const, jobId: 'e2a1665b-60b1-40f9-85a5-3632148fda39' }
+    updateMediaAsset(duringRead, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    const latest = { ...duringRead, processingStatus: 'PENDING' as const, jobId: 'f2a1665b-60b1-40f9-85a5-3632148fda39' }
+    updateMediaAsset(latest, 'owner')
+    read.resolve({ ...duringRead, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/stale-preview.png' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]).toEqual(latest)
+    expect(wrapper.get('[role="alert"]').text()).toContain('操作已处理，但暂时无法核对状态，请点击刷新状态')
+    expect(wrapper.findAll('button').some(button => button.text() === '刷新状态')).toBe(true)
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a later replacement and exposes manual refresh when reconciliation then fails', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const duringRead = { ...original, processingStatus: 'PROCESSING' as const, jobId: 'e2a1665b-60b1-40f9-85a5-3632148fda39' }
+    updateMediaAsset(duringRead, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    const latest = { ...duringRead, processingStatus: 'PENDING' as const, jobId: 'f2a1665b-60b1-40f9-85a5-3632148fda39' }
+    updateMediaAsset(latest, 'owner')
+    read.reject(new Error('read failed'))
+    await flushPromises()
+
+    expect(mediaAssets.value[0]).toEqual(latest)
+    expect(wrapper.get('[role="alert"]').text()).toContain('操作已处理，但暂时无法核对状态，请点击刷新状态')
+    expect(wrapper.findAll('button').some(button => button.text() === '刷新状态')).toBe(true)
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a failed reconciliation and lets manual refresh recover without repeating the POST', async () => {
+    const post = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockRejectedValueOnce(new Error('read failed')).mockResolvedValueOnce({ ...original, processingStatus: 'CANCELLED' })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    updateMediaAsset({ ...original, processingStatus: 'PROCESSING' }, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('操作已处理，但暂时无法核对状态，请点击刷新状态')
+    expect(change).toHaveBeenCalledTimes(1)
+    await wrapper.findAll('button').find(button => button.text() === '刷新状态')!.trigger('click')
+    await flushPromises()
+
+    expect(getAsset).toHaveBeenCalledTimes(2)
+    expect(change).toHaveBeenCalledTimes(1)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('CANCELLED')
+  })
+
+  it('does not start reconciliation when the clicked record remains current', async () => {
+    change.mockResolvedValueOnce({ ...original, processingStatus: 'CANCELLED' })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+
+    expect(change).toHaveBeenCalledTimes(1)
+    expect(getAsset).not.toHaveBeenCalled()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('CANCELLED')
+  })
+
+  it('does not read back or reinsert a row removed before the action response', async () => {
+    const post = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await wrapper.find('[aria-label="移除图片 1 的状态记录"]').trigger('click')
+
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(mediaAssets.value).toEqual([])
+    expect(getAsset).not.toHaveBeenCalled()
+  })
+
+  it('keeps the current row and offers refresh if the readback has another asset id', async () => {
+    const post = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockResolvedValueOnce({ ...original, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', processingStatus: 'SUCCEEDED' })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const current = { ...original, processingStatus: 'PROCESSING' as const }
+    updateMediaAsset(current, 'owner')
+
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]).toEqual(current)
+    expect(wrapper.get('[role="alert"]').text()).toContain('暂时无法核对状态')
+    expect(wrapper.findAll('button').some(button => button.text() === '刷新状态')).toBe(true)
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts reconciliation when the target row is removed and never reinserts it', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    updateMediaAsset({ ...original, processingStatus: 'PROCESSING' }, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    await wrapper.findAll('button').find(button => button.attributes('aria-label')?.startsWith('移除图片'))!.trigger('click')
+    read.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mediaAssets.value).toEqual([])
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts reconciliation after an account switch and ignores the old response', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    updateMediaAsset({ ...original, processingStatus: 'PROCESSING' }, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    useAuthStore().applyAuthState({ accessToken: 'other', user: { id: 2, username: 'other' } })
+    hydrateMediaAssets('other')
+    read.resolve({ ...original, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/late.png' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mediaAssets.value).toEqual([])
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores reconciliation after same-token owner drift', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const replacement = { ...original, processingStatus: 'PROCESSING' as const }
+    updateMediaAsset(replacement, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    persistAuthState({ accessToken: 'owner', user: { id: 2, username: 'other' } })
+    read.resolve({ ...replacement, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/late.png' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]).toEqual(replacement)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PROCESSING')
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a late reconciliation after same-token auth invalidation and releases loading', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const replacement = { ...original, processingStatus: 'PROCESSING' as const }
+    updateMediaAsset(replacement, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(wrapper.findAll('[role="status"]').some(node => node.text() === '正在核对图片状态…')).toBe(true)
+    useAuthStore().invalidateAuthOperations()
+    expect((getAsset.mock.calls[0]?.[2] as AbortSignal).aborted).toBe(false)
+    read.resolve({ ...replacement, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/late.png' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]).toEqual(replacement)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PROCESSING')
+    expect(wrapper.findAll('[role="status"]').some(node => node.text() === '正在核对图片状态…')).toBe(false)
+    expect(wrapper.findAll('button').some(button => button.text() === '停止处理' && button.attributes('disabled') === undefined)).toBe(true)
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts reconciliation on unmount and ignores its late response', async () => {
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    updateMediaAsset({ ...original, processingStatus: 'PROCESSING' }, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    wrapper.unmount()
+    wrapper = undefined
+    read.resolve({ ...original, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/late.png' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PROCESSING')
+    expect(change).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps reconciliation alive when another image is removed', async () => {
+    const second = { ...original, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/second.png' }
+    mediaAssets.value = [original, second]
+    const post = deferred<MediaAssetState>()
+    const read = deferred<MediaAssetState>()
+    change.mockReturnValue(post.promise)
+    getAsset.mockReturnValue(read.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    const replacement = { ...original, processingStatus: 'PROCESSING' as const }
+    updateMediaAsset(replacement, 'owner')
+    post.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    const signal = getAsset.mock.calls[0]?.[2] as AbortSignal
+
+    await wrapper.find('[aria-label="移除图片 2 的状态记录"]').trigger('click')
+    read.resolve({ ...replacement, processingStatus: 'PENDING' })
+    await flushPromises()
+
+    expect(signal.aborted).toBe(false)
+    expect(mediaAssets.value).toHaveLength(1)
+    expect(mediaAssets.value[0]?.assetId).toBe(original.assetId)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(change).toHaveBeenCalledTimes(1)
   })
 
   it('shows a permission message for a message-less 403 and keeps the action retryable', async () => {

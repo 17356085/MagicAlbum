@@ -19,9 +19,19 @@ type RefreshOperation = {
   context: ReturnType<typeof auth.captureAuthOperationContext>
   controller: AbortController
 }
+type ActionReconciliation = {
+  actionSequence: number
+  assetId: string
+  token: string
+  context: ReturnType<typeof auth.captureAuthOperationContext>
+  controller: AbortController
+  expected: MediaAssetState
+}
 const feedback = ref<Record<string, RowFeedback>>({})
 const refreshingAssetId = ref('')
+const reconcilingAssetId = ref('')
 let activeRefresh: RefreshOperation | null = null
+let activeActionReconciliation: ActionReconciliation | null = null
 let actionSequence = 0
 let refreshSequence = 0
 
@@ -43,10 +53,20 @@ function cancelRefresh(): void {
   refreshSequence += 1
   refreshingAssetId.value = ''
 }
+function cancelActionReconciliation(): void {
+  const assetId = activeActionReconciliation?.assetId
+  if (activeActionReconciliation) activeActionReconciliation.controller.abort()
+  activeActionReconciliation = null
+  reconcilingAssetId.value = ''
+  if (assetId && pendingAction.value === assetId) pendingAction.value = ''
+}
 function isRefreshPending(assetId: string): boolean {
   return refreshingAssetId.value === assetId
 }
-const statusCheckPending = computed(() => refreshingAssetId.value !== '')
+function isActionReconciliationPending(assetId: string): boolean {
+  return reconcilingAssetId.value === assetId
+}
+const statusCheckPending = computed(() => refreshingAssetId.value !== '' || reconcilingAssetId.value !== '')
 function currentItem(assetId: string): MediaAssetState | undefined {
   return mediaAssets.value.find(item => item.assetId === assetId)
 }
@@ -59,6 +79,7 @@ function isAuthContextCurrent(context: ReturnType<typeof auth.captureAuthOperati
 watch(() => auth.token, () => {
   actionSequence += 1
   cancelRefresh()
+  cancelActionReconciliation()
   clearFeedback()
   pendingAction.value = ''
   error.value = ''
@@ -67,6 +88,7 @@ watch(() => auth.token, () => {
 watch(() => mediaAssets.value.map(item => item.assetId), (assetIds) => {
   const ids = new Set(assetIds)
   if (activeRefresh && !ids.has(activeRefresh.assetId)) cancelRefresh()
+  if (activeActionReconciliation && !ids.has(activeActionReconciliation.assetId)) cancelActionReconciliation()
   const next = { ...feedback.value }
   let changed = false
   for (const assetId of Object.keys(next)) {
@@ -99,7 +121,7 @@ function mediaHref(url?: string | null): string {
   return url?.startsWith('/uploads/') ? normalizeImageUrl(url) : url || ''
 }
 async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<void> {
-  if (pendingAction.value || activeRefresh) return
+  if (pendingAction.value || activeRefresh || activeActionReconciliation) return
   const context = auth.captureAuthOperationContext()
   const token = context.memoryToken
   if (currentItem(item.assetId) !== item) {
@@ -116,7 +138,53 @@ async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<
   clearFeedback(item.assetId)
   try {
     const updated = await changeMediaJob(item.assetId, kind, token)
-    if (actionSequence === operationSequence && isAuthContextCurrent(context) && isCurrentMediaCacheOwner(token)) updateMediaAsset(updated, token)
+    if (actionSequence === operationSequence && isAuthContextCurrent(context) && isCurrentMediaCacheOwner(token)) {
+      const current = currentItem(item.assetId)
+      if (!current) return
+      if (current === item) {
+        updateMediaAsset(updated, token)
+        return
+      }
+
+      const reconciliation: ActionReconciliation = {
+        actionSequence: operationSequence,
+        assetId: item.assetId,
+        token,
+        context,
+        controller: new AbortController(),
+        expected: current,
+      }
+      activeActionReconciliation = reconciliation
+      reconcilingAssetId.value = item.assetId
+      try {
+        const latest = await getMediaAsset(item.assetId, token, reconciliation.controller.signal)
+        const stillCurrent = actionSequence === reconciliation.actionSequence
+          && activeActionReconciliation === reconciliation
+          && !reconciliation.controller.signal.aborted
+          && isAuthContextCurrent(reconciliation.context)
+          && isCurrentMediaCacheOwner(reconciliation.token)
+        if (!stillCurrent) return
+        const latestCurrent = currentItem(reconciliation.assetId)
+        if (!latestCurrent) return
+        if (latestCurrent !== reconciliation.expected || !updateMediaAssetIfCurrent(reconciliation.expected, latest, reconciliation.token)) {
+          setFeedback(reconciliation.assetId, { kind: 'error', message: '操作已处理，但暂时无法核对状态，请点击刷新状态。' })
+        }
+      } catch {
+        if (actionSequence === reconciliation.actionSequence
+          && activeActionReconciliation === reconciliation
+          && !reconciliation.controller.signal.aborted
+          && isAuthContextCurrent(reconciliation.context)
+          && isCurrentMediaCacheOwner(reconciliation.token)
+          && !!currentItem(reconciliation.assetId)) {
+          setFeedback(reconciliation.assetId, { kind: 'error', message: '操作已处理，但暂时无法核对状态，请点击刷新状态。' })
+        }
+      } finally {
+        if (activeActionReconciliation === reconciliation) {
+          activeActionReconciliation = null
+          reconcilingAssetId.value = ''
+        }
+      }
+    }
   } catch (cause: unknown) {
     if (actionSequence === operationSequence && isAuthContextCurrent(context) && isCurrentMediaCacheOwner(token)) {
       if (!currentItem(item.assetId)) return
@@ -178,10 +246,12 @@ function remove(item: MediaAssetState): void {
   dismissMediaAsset(item.assetId)
   if (currentItem(item.assetId)) return
   if (activeRefresh?.assetId === item.assetId) cancelRefresh()
+  if (activeActionReconciliation?.assetId === item.assetId) cancelActionReconciliation()
   clearFeedback(item.assetId)
 }
 onBeforeUnmount(() => {
   cancelRefresh()
+  cancelActionReconciliation()
 })
 </script>
 
@@ -197,6 +267,7 @@ onBeforeUnmount(() => {
         <li v-for="(item, index) in mediaAssets" :key="item.assetId">
           <div class="media-status-label"><span>图片 {{ index + 1 }}</span><button type="button" :aria-label="`移除图片 ${index + 1} 的状态记录`" @click="remove(item)">移除</button></div>
           <p role="status">{{ label(item) }}</p>
+          <p v-if="isActionReconciliationPending(item.assetId)" role="status">正在核对图片状态…</p>
           <p v-if="feedback[item.assetId]" :role="feedback[item.assetId].kind === 'error' ? 'alert' : 'status'" :class="{ 'media-status-error': feedback[item.assetId].kind === 'error' }">{{ feedback[item.assetId].message }}</p>
           <div class="media-status-actions">
             <a v-if="!['UPLOADING', 'UPLOAD_FAILED'].includes(item.status || '')" :href="mediaHref(item.url)" target="_blank" rel="noopener noreferrer">查看原图</a>
