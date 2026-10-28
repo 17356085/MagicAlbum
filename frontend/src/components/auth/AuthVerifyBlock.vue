@@ -76,6 +76,7 @@ import type { AuthVerifyPayload, AuthVerifyScene } from '@/types'
 
 const TURNSTILE_SCRIPT_ID = 'cf-turnstile-script'
 const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+const MAX_TIMEOUT_DELAY = 2_147_483_647
 
 let turnstileScriptPromise: Promise<void> | null = null
 
@@ -97,6 +98,7 @@ const turnstileSiteKey = getTurnstileSiteKey()
 const status = ref<AuthVerifyStatus>('idle')
 const result = ref<AuthVerifyResult | null>(null)
 const message = ref('')
+const verificationClock = ref(0)
 const turnstileContainerRef = ref<HTMLDivElement | null>(null)
 const widgetId = ref<string | null>(null)
 let disposed = false
@@ -104,6 +106,7 @@ let lifecycleGeneration = 0
 let turnstileRenderPromise: Promise<void> | null = null
 let turnstileRenderGeneration: number | null = null
 let manualVerification: { generation: number; promise: Promise<AuthVerifyResult | null> } | null = null
+let verificationExpiryTimer: ReturnType<typeof setTimeout> | null = null
 
 const verifyHint = computed(() => {
   if (isTurnstileMode) {
@@ -116,7 +119,11 @@ const verifyHint = computed(() => {
     : '当前环境未启用人工验证。'
 })
 
-const verified = computed(() => isVerified(result.value))
+function isCurrentResultValid(_verificationTick?: number): boolean {
+  return Boolean(result.value && isVerified(result.value))
+}
+
+const verified = computed(() => isCurrentResultValid(verificationClock.value))
 
 const statusLabel = computed(() => {
   if (status.value === 'verified') return '已通过'
@@ -187,6 +194,40 @@ function removeTurnstileWidget(): void {
     window.turnstile.remove(widgetId.value)
   }
   widgetId.value = null
+}
+
+function clearVerificationExpiryTimer(): void {
+  if (verificationExpiryTimer !== null) {
+    clearTimeout(verificationExpiryTimer)
+    verificationExpiryTimer = null
+  }
+}
+
+function scheduleVerificationExpiryTimer(verifyResult: AuthVerifyResult, generation: number): void {
+  clearVerificationExpiryTimer()
+  if (verifyResult.expiresAt === undefined) return
+
+  const expiryTime = Date.parse(verifyResult.expiresAt)
+  if (!Number.isFinite(expiryTime)) {
+    verificationClock.value += 1
+    return
+  }
+
+  const delay = Math.min(Math.max(0, expiryTime - Date.now()), MAX_TIMEOUT_DELAY)
+  verificationExpiryTimer = setTimeout(() => {
+    verificationExpiryTimer = null
+    if (!isLifecycleCurrent(generation) || toRaw(result.value) !== toRaw(verifyResult)) return
+
+    verificationClock.value += 1
+    if (isVerified(verifyResult)) {
+      scheduleVerificationExpiryTimer(verifyResult, generation)
+      return
+    }
+
+    resetState()
+    status.value = 'expired'
+    message.value = '验证已过期，请重新完成验证。'
+  }, delay)
 }
 
 function renderTurnstileWidget(): Promise<void> {
@@ -280,6 +321,13 @@ function renderTurnstileWidget(): Promise<void> {
 }
 
 async function startManualVerify(): Promise<AuthVerifyResult | null> {
+  if (!isLifecycleCurrent(lifecycleGeneration)) return null
+  if (result.value && !isCurrentResultValid()) {
+    resetState()
+    status.value = 'expired'
+    message.value = '验证已过期，请重新完成验证。'
+  }
+
   const generation = lifecycleGeneration
   if (!isLifecycleCurrent(generation)) return null
   if (!isMockVerifyEnabled()) {
@@ -287,7 +335,7 @@ async function startManualVerify(): Promise<AuthVerifyResult | null> {
     message.value = '当前验证模式不支持手动验证。'
     return null
   }
-  if (verified.value && result.value) return result.value
+  if (result.value && isCurrentResultValid()) return result.value
   if (manualVerification?.generation === generation) return manualVerification.promise
 
   status.value = 'verifying'
@@ -296,7 +344,13 @@ async function startManualVerify(): Promise<AuthVerifyResult | null> {
     try {
       const verifyResult = await startVerify({ scene: props.scene })
       if (!isLifecycleCurrent(generation)) return null
+      if (!isVerified(verifyResult)) {
+        status.value = 'expired'
+        message.value = '验证票据无效或已过期，请重试。'
+        return null
+      }
       result.value = verifyResult
+      scheduleVerificationExpiryTimer(verifyResult, generation)
       status.value = 'verified'
       message.value = `验证完成，票据已就绪：${getVerifyToken(verifyResult).slice(0, 18)}...`
       emit('verified', verifyResult)
@@ -319,6 +373,8 @@ async function startManualVerify(): Promise<AuthVerifyResult | null> {
 function resetState(): void {
   if (disposed) return
   lifecycleGeneration += 1
+  clearVerificationExpiryTimer()
+  verificationClock.value += 1
   resetVerify()
   result.value = null
   status.value = 'idle'
@@ -351,14 +407,21 @@ function resetIfMatches(expected: AuthVerifyResult): boolean {
 }
 
 async function ensureVerified(): Promise<AuthVerifyResult | null> {
+  if (!isLifecycleCurrent(lifecycleGeneration)) return null
+  if (result.value && !isCurrentResultValid()) {
+    resetState()
+    status.value = 'expired'
+    message.value = '验证已过期，请重新完成验证。'
+  }
+
   const generation = lifecycleGeneration
   if (!isLifecycleCurrent(generation)) return null
-  if (verified.value && result.value) return result.value
+  if (result.value && isCurrentResultValid()) return result.value
 
   if (isTurnstileMode) {
     if (!widgetId.value) await renderTurnstileWidget()
     if (!isLifecycleCurrent(generation)) return null
-    if (!verified.value) {
+    if (!isCurrentResultValid()) {
       message.value = turnstileSiteKey ? '请先完成 Turnstile 验证。' : '当前未配置 Turnstile site key。'
       if (!turnstileSiteKey) status.value = 'unavailable'
       return null
@@ -378,6 +441,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true
   lifecycleGeneration += 1
+  clearVerificationExpiryTimer()
   removeTurnstileWidget()
 })
 
@@ -385,8 +449,8 @@ defineExpose({
   ensureVerified,
   reset: resetState,
   resetIfMatches,
-  isVerified: () => verified.value,
-  getVerifyResult: () => result.value,
+  isVerified: () => isCurrentResultValid(),
+  getVerifyResult: () => (isCurrentResultValid() ? result.value : null),
   getVerifyPayload: (): AuthVerifyPayload => toVerifyPayload(result.value),
 })
 </script>

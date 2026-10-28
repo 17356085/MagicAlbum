@@ -7,6 +7,7 @@ type VerifyResult = {
   provider: 'mock-manual'
   scene: 'login'
   verifiedAt: string
+  expiresAt?: string
 }
 
 type Deferred<T> = {
@@ -30,15 +31,24 @@ const apiMocks = vi.hoisted(() => ({
   startPhoneCodeLogin: vi.fn(),
 }))
 
-const verifyMocks = vi.hoisted(() => ({
-  ensureVerified: vi.fn(),
-  reset: vi.fn(),
-  resetIfMatches: vi.fn(),
-  isAuthVerifyEnabled: vi.fn(() => true),
-  toVerifyPayload: vi.fn((result: VerifyResult | null | undefined) => result?.token
-    ? { verifyToken: result.token, verifyProvider: result.provider, verifyScene: result.scene }
-    : {}),
-}))
+const verifyMocks = vi.hoisted(() => {
+  const isUsable = (result: VerifyResult | null | undefined): boolean => {
+    if (!result?.token) return false
+    if (result.expiresAt === undefined) return true
+    const expiryTime = Date.parse(result.expiresAt)
+    return Number.isFinite(expiryTime) && Date.now() < expiryTime
+  }
+
+  return {
+    ensureVerified: vi.fn(),
+    reset: vi.fn(),
+    resetIfMatches: vi.fn(),
+    isAuthVerifyEnabled: vi.fn(() => true),
+    toVerifyPayload: vi.fn((result: VerifyResult | null | undefined) => result && isUsable(result)
+      ? { verifyToken: result.token, verifyProvider: result.provider, verifyScene: result.scene }
+      : {}),
+  }
+})
 
 const authMocks = vi.hoisted(() => {
   let generation = 0
@@ -135,9 +145,14 @@ describe('AuthLoginForm async lifecycle', () => {
     localStorage.clear()
     sessionStorage.clear()
     verifyMocks.isAuthVerifyEnabled.mockReturnValue(true)
-    verifyMocks.toVerifyPayload.mockImplementation((result: VerifyResult | null | undefined) => result?.token
-      ? { verifyToken: result.token, verifyProvider: result.provider, verifyScene: result.scene }
-      : {})
+    verifyMocks.toVerifyPayload.mockImplementation((result: VerifyResult | null | undefined) => {
+      if (!result?.token) return {}
+      if (result.expiresAt !== undefined) {
+        const expiryTime = Date.parse(result.expiresAt)
+        if (!Number.isFinite(expiryTime) || expiryTime <= Date.now()) return {}
+      }
+      return { verifyToken: result.token, verifyProvider: result.provider, verifyScene: result.scene }
+    })
     verifyMocks.resetIfMatches.mockReturnValue(true)
     verifyMocks.ensureVerified.mockResolvedValue(proof())
     apiMocks.startEmailCodeLogin.mockResolvedValue({
@@ -327,6 +342,38 @@ describe('AuthLoginForm async lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('blocks password login when the proof expires before payload construction', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const expiringProof: VerifyResult = {
+      ...proof('expiring-password-proof'),
+      expiresAt: new Date(now + 100).toISOString(),
+    }
+    const verification = deferred<VerifyResult>()
+    verifyMocks.ensureVerified.mockReturnValueOnce(verification.promise)
+    const wrapper = mountLogin()
+    try {
+      await wrapper.get('#auth-login-phone').setValue('13800000000')
+      await wrapper.get('#auth-login-password').setValue('Password1')
+      const pending = wrapper.get('form').trigger('submit')
+      await settle()
+
+      verification.resolve(expiringProof)
+      vi.setSystemTime(now + 100)
+      await pending
+      await settle()
+
+      expect(authMocks.store.loginWithPhonePassword).not.toHaveBeenCalled()
+      expect(authMocks.store.getAuthGeneration()).toBe(0)
+      expect(verifyMocks.resetIfMatches).toHaveBeenCalledWith(expiringProof)
+      expect(wrapper.emitted('notify')).toContainEqual(['验证已过期，请重新完成验证'])
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   it('suppresses a late send result after unmount', async () => {
     const send = deferred<{ channel: 'email'; maskedAddress: string; session: string; expireSeconds: number; cooldownSeconds: number }>()
     apiMocks.startEmailCodeLogin.mockReturnValueOnce(send.promise)
@@ -341,6 +388,37 @@ describe('AuthLoginForm async lifecycle', () => {
     send.resolve({ channel: 'email', maskedAddress: 'u***', session: 'late', expireSeconds: 300, cooldownSeconds: 60 })
     await settle()
     expect(wrapper.emitted('notify')).toBeUndefined()
+  })
+
+  it('blocks code start when the proof expires before payload construction', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const expiringProof: VerifyResult = {
+      ...proof('expiring-code-start-proof'),
+      expiresAt: new Date(now + 100).toISOString(),
+    }
+    const verification = deferred<VerifyResult>()
+    verifyMocks.ensureVerified.mockReturnValueOnce(verification.promise)
+    const wrapper = mountLogin()
+    try {
+      await useEmailCodeMode(wrapper)
+      await wrapper.get('#auth-login-email').setValue('expired-code-start@example.com')
+      const pending = wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+      await settle()
+
+      verification.resolve(expiringProof)
+      vi.setSystemTime(now + 100)
+      await pending
+      await settle()
+
+      expect(apiMocks.startEmailCodeLogin).not.toHaveBeenCalled()
+      expect(verifyMocks.resetIfMatches).toHaveBeenCalledWith(expiringProof)
+      expect(wrapper.emitted('notify')).toContainEqual(['验证已过期，请重新完成验证'])
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('clears the old email OTP session when a resend response has the wrong channel', async () => {
@@ -398,6 +476,7 @@ describe('AuthLoginForm async lifecycle', () => {
     vi.advanceTimersByTime(1000)
     await settle()
     await wrapper.get('#auth-login-code').setValue('2468')
+    verifyMocks.resetIfMatches.mockClear()
 
     start.mockRejectedValueOnce({
       response: {
@@ -411,6 +490,11 @@ describe('AuthLoginForm async lifecycle', () => {
     expect(wrapper.text()).toContain(maskedAddress)
     expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('2468')
     expect(wrapper.emitted('notify')).toContainEqual(['验证码 provider 尚未调用'])
+    expect(verifyMocks.resetIfMatches).not.toHaveBeenCalled()
+
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    expect(start).toHaveBeenCalledTimes(3)
     wrapper.unmount()
     vi.useRealTimers()
   })

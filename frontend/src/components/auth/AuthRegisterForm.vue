@@ -354,6 +354,11 @@ async function runSubmit(submitId: number, snapshot: RegisterSnapshot): Promise<
     let registerRequestIssued = false
     try {
       const verifyPayload = toVerifyPayload(submission.verifyResult)
+      if (verifyEnabled && !verifyPayload.verifyToken) {
+        invalidateConsumedVerification(submitId, submission)
+        emit('notify', '验证已过期，请重新完成验证')
+        return
+      }
       registerRequestIssued = true
       await registerUser({
         username: snapshot.username,

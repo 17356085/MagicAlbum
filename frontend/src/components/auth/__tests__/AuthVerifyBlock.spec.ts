@@ -1,37 +1,46 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const verifyState = vi.hoisted(() => ({ mode: 'mock' as 'mock' | 'turnstile' }))
-const verifyMocks = vi.hoisted(() => ({
-  createVerifyResult: vi.fn(({ token, provider, scene, expiresAt }: {
-    token: string
-    provider: 'mock-manual' | 'turnstile'
-    scene: 'login' | 'register'
-    expiresAt?: string
-  }) => ({
-    token,
-    provider,
-    scene,
-    verifiedAt: '2026-01-01T00:00:00.000Z',
-    expiresAt,
-  })),
-  getAuthVerifyMode: vi.fn(() => verifyState.mode),
-  getTurnstileSiteKey: vi.fn(() => 'test-site-key'),
-  getVerifyToken: vi.fn((result: { token?: string } | null | undefined) => result?.token || ''),
-  isMockVerifyEnabled: vi.fn(() => verifyState.mode === 'mock'),
-  isTurnstileVerifyEnabled: vi.fn(() => verifyState.mode === 'turnstile'),
-  isVerified: vi.fn((result: { token?: string } | null | undefined) => Boolean(result?.token)),
-  resetVerify: vi.fn(),
-  startVerify: vi.fn(),
-  toVerifyPayload: vi.fn((result: { token?: string; provider?: string; scene?: string } | null | undefined) => {
-    if (!result?.token) return {}
-    return {
-      verifyToken: result.token,
-      verifyProvider: result.provider,
-      verifyScene: result.scene,
-    }
-  }),
-}))
+const verifyMocks = vi.hoisted(() => {
+  const isUsable = (result: { token?: string; expiresAt?: string } | null | undefined): boolean => {
+    if (!result || !result.token) return false
+    if (result.expiresAt === undefined) return true
+    const expiryTime = Date.parse(result.expiresAt)
+    return Number.isFinite(expiryTime) && Date.now() < expiryTime
+  }
+
+  return {
+    createVerifyResult: vi.fn(({ token, provider, scene, expiresAt }: {
+      token: string
+      provider: 'mock-manual' | 'turnstile'
+      scene: 'login' | 'register'
+      expiresAt?: string
+    }) => ({
+      token,
+      provider,
+      scene,
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt,
+    })),
+    getAuthVerifyMode: vi.fn(() => verifyState.mode),
+    getTurnstileSiteKey: vi.fn(() => 'test-site-key'),
+    getVerifyToken: vi.fn((result: { token?: string } | null | undefined) => result?.token || ''),
+    isMockVerifyEnabled: vi.fn(() => verifyState.mode === 'mock'),
+    isTurnstileVerifyEnabled: vi.fn(() => verifyState.mode === 'turnstile'),
+    isVerified: vi.fn(isUsable),
+    resetVerify: vi.fn(),
+    startVerify: vi.fn(),
+    toVerifyPayload: vi.fn((result: { token?: string; provider?: string; scene?: string; expiresAt?: string } | null | undefined) => {
+      if (!result || !isUsable(result)) return {}
+      return {
+        verifyToken: result.token,
+        verifyProvider: result.provider,
+        verifyScene: result.scene,
+      }
+    }),
+  }
+})
 
 vi.mock('@/services/authVerify', () => verifyMocks)
 
@@ -49,6 +58,7 @@ type VerifyBlockExposed = {
   resetIfMatches: (expected: VerifyResult) => boolean
   isVerified: () => boolean
   getVerifyResult: () => VerifyResult | null
+  getVerifyPayload: () => Record<string, unknown>
 }
 
 type Deferred<T> = {
@@ -96,6 +106,175 @@ describe('AuthVerifyBlock lifecycle', () => {
     })
     delete window.turnstile
     document.getElementById('cf-turnstile-script')?.remove()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('rechecks expiry on exposed validation and retries instead of returning an expired proof', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const AuthVerifyBlock = await loadAuthVerifyBlock('mock')
+    const firstProof: VerifyResult = {
+      token: 'expiring-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: new Date(now + 1_000).toISOString(),
+    }
+    const replacementProof: VerifyResult = {
+      token: 'replacement-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:01.000Z',
+    }
+    verifyMocks.startVerify.mockResolvedValueOnce(firstProof).mockResolvedValueOnce(replacementProof)
+
+    const wrapper = mount(AuthVerifyBlock, { props: { scene: 'register' } })
+    try {
+      const block = exposed(wrapper)
+      expect(await block.ensureVerified()).toBe(firstProof)
+      expect(block.isVerified()).toBe(true)
+      expect(block.getVerifyPayload()).toMatchObject({ verifyToken: 'expiring-proof' })
+
+      vi.setSystemTime(now + 1_000)
+      expect(block.isVerified()).toBe(false)
+      expect(block.getVerifyResult()).toBeNull()
+      expect(block.getVerifyPayload()).toEqual({})
+
+      expect(await block.ensureVerified()).toBe(replacementProof)
+      expect(verifyMocks.startVerify).toHaveBeenCalledTimes(2)
+      expect(wrapper.emitted('reset')).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('expires a future-dated proof at the exact timer boundary', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const AuthVerifyBlock = await loadAuthVerifyBlock('mock')
+    const proof: VerifyResult = {
+      token: 'timer-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: new Date(now + 100).toISOString(),
+    }
+    verifyMocks.startVerify.mockResolvedValueOnce(proof)
+
+    const wrapper = mount(AuthVerifyBlock, { props: { scene: 'register' } })
+    try {
+      const block = exposed(wrapper)
+      expect(await block.ensureVerified()).toBe(proof)
+      vi.advanceTimersByTime(99)
+      expect(block.getVerifyResult()).toMatchObject(proof)
+      vi.advanceTimersByTime(1)
+      await settle()
+
+      expect(block.isVerified()).toBe(false)
+      expect(block.getVerifyResult()).toBeNull()
+      expect(block.getVerifyPayload()).toEqual({})
+      expect(wrapper.emitted('reset')).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('rechecks a clamped far-future timer instead of overflowing its delay', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    const farDelay = 3_000_000_000
+    const maxDelay = 2_147_483_647
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const AuthVerifyBlock = await loadAuthVerifyBlock('mock')
+    const proof: VerifyResult = {
+      token: 'far-future-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: new Date(now + farDelay).toISOString(),
+    }
+    verifyMocks.startVerify.mockResolvedValueOnce(proof)
+
+    const wrapper = mount(AuthVerifyBlock, { props: { scene: 'register' } })
+    try {
+      const block = exposed(wrapper)
+      expect(await block.ensureVerified()).toBe(proof)
+      vi.advanceTimersByTime(maxDelay)
+      expect(block.isVerified()).toBe(true)
+      expect(block.getVerifyResult()).toMatchObject(proof)
+      vi.advanceTimersByTime(farDelay - maxDelay)
+      await settle()
+
+      expect(block.isVerified()).toBe(false)
+      expect(block.getVerifyResult()).toBeNull()
+      expect(wrapper.emitted('reset')).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('cancels an old expiry timer when reset starts a replacement verification', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const AuthVerifyBlock = await loadAuthVerifyBlock('mock')
+    const firstProof: VerifyResult = {
+      token: 'short-lived-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: new Date(now + 100).toISOString(),
+    }
+    const replacementProof: VerifyResult = {
+      token: 'replacement-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:00.100Z',
+    }
+    verifyMocks.startVerify.mockResolvedValueOnce(firstProof).mockResolvedValueOnce(replacementProof)
+
+    const wrapper = mount(AuthVerifyBlock, { props: { scene: 'register' } })
+    try {
+      const block = exposed(wrapper)
+      expect(await block.ensureVerified()).toBe(firstProof)
+      block.reset()
+      expect(await block.ensureVerified()).toBe(replacementProof)
+
+      vi.advanceTimersByTime(100)
+      expect(block.getVerifyResult()).toMatchObject(replacementProof)
+      expect(block.isVerified()).toBe(true)
+      expect(wrapper.emitted('reset')).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('does not publish an invalidly dated mock proof', async () => {
+    const AuthVerifyBlock = await loadAuthVerifyBlock('mock')
+    const invalidProof: VerifyResult = {
+      token: 'invalid-proof',
+      provider: 'mock-manual',
+      scene: 'register',
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: 'not-a-date',
+    }
+    verifyMocks.startVerify.mockResolvedValueOnce(invalidProof)
+
+    const wrapper = mount(AuthVerifyBlock, { props: { scene: 'register' } })
+    try {
+      const block = exposed(wrapper)
+      expect(await block.ensureVerified()).toBeNull()
+      expect(block.isVerified()).toBe(false)
+      expect(block.getVerifyResult()).toBeNull()
+      expect(wrapper.emitted('verified')).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('resets only when the expected proof is still current', async () => {

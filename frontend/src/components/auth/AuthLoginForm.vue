@@ -221,6 +221,7 @@ type CodeSessionSnapshot = Readonly<{
 
 const CODE_FINISH_UNKNOWN_RESULT_MESSAGE = '验证码验证结果未知，请重新获取验证码'
 const CODE_SEND_UNKNOWN_RESULT_MESSAGE = '验证码发送结果未知，请重新获取验证码'
+const AUTH_VERIFY_EXPIRED_MESSAGE = '验证已过期，请重新完成验证'
 const OTP_PROVIDER_NOT_CALLED_CODE = 'OTP_PROVIDER_NOT_CALLED'
 
 const props = withDefaults(defineProps<{
@@ -664,10 +665,18 @@ async function runPasswordLogin(operation: LoginOperation): Promise<void> {
     }
     if (!isAuthBoundaryCurrent(authStore, boundary)) return
 
+    const verifyPayload = toVerifyPayload(submission?.result)
+    if (!isOperationContextCurrent(operation) || !isAuthBoundaryCurrent(authStore, boundary)) return
+    if (verifyEnabled && !verifyPayload.verifyToken) {
+      settleConsumedVerification(operation, submission)
+      emit('notify', AUTH_VERIFY_EXPIRED_MESSAGE)
+      return
+    }
+
     requestIssued = true
     const request = snapshot.mode === 'phone-password'
-      ? authStore.loginWithPhonePassword({ phone: snapshot.address, password: snapshot.password || '', ...toVerifyPayload(submission?.result) })
-      : authStore.loginWithEmailPassword({ email: snapshot.address, password: snapshot.password || '', ...toVerifyPayload(submission?.result) })
+      ? authStore.loginWithPhonePassword({ phone: snapshot.address, password: snapshot.password || '', ...verifyPayload })
+      : authStore.loginWithEmailPassword({ email: snapshot.address, password: snapshot.password || '', ...verifyPayload })
     issuedGeneration = authStore.getAuthGeneration()
     ownIssuedAuth = { operationId: operation.id, store: authStore, generation: issuedGeneration }
     await request
@@ -756,8 +765,15 @@ async function runCodeStart(operation: LoginOperation): Promise<void> {
     }
     if (!isAuthBoundaryCurrent(authStore, boundary)) return
 
-    requestIssued = true
     const verifyPayload = toVerifyPayload(submission?.result)
+    if (!isOperationContextCurrent(operation) || !isAuthBoundaryCurrent(authStore, boundary)) return
+    if (verifyEnabled && !verifyPayload.verifyToken) {
+      settleConsumedVerification(operation, submission)
+      emit('notify', AUTH_VERIFY_EXPIRED_MESSAGE)
+      return
+    }
+
+    requestIssued = true
     const response = snapshot.channel === 'email'
       ? await startEmailCodeLogin({ channel: 'email', address: snapshot.address, ...verifyPayload })
       : await startPhoneCodeLogin({ channel: 'phone', address: snapshot.address, ...verifyPayload })
@@ -781,7 +797,9 @@ async function runCodeStart(operation: LoginOperation): Promise<void> {
     emit('notify', snapshot.channel === 'email' ? '验证码已发送，请查收邮件' : '验证码已发送，请查收短信')
   } catch (error: unknown) {
     if (!isOperationActive(operation)) return
-    if (requestIssued) settleConsumedVerification(operation, submission)
+    if (requestIssued && !isOtpProviderNotCalledFailure(error)) {
+      settleConsumedVerification(operation, submission)
+    }
     if (!isAuthBoundaryCurrent(authStore, boundary)) return
     if (requestIssued
       && isUnknownCodeSendFailure(error)

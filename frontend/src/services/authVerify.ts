@@ -70,12 +70,21 @@ export function getVerifyToken(result: AuthVerifyResult | null | undefined): str
   return result?.token || ''
 }
 
+function hasValidExpiry(result: AuthVerifyResult): boolean {
+  if (result.expiresAt === undefined) return true
+  if (typeof result.expiresAt !== 'string') return false
+
+  const expiryTime = Date.parse(result.expiresAt)
+  return Number.isFinite(expiryTime) && Date.now() < expiryTime
+}
+
 export function isVerified(result: AuthVerifyResult | null | undefined): boolean {
-  return Boolean(result?.token)
+  if (!result?.token) return false
+  return hasValidExpiry(result)
 }
 
 export function toVerifyPayload(result: AuthVerifyResult | null | undefined): AuthVerifyPayload {
-  if (!result?.token) return {}
+  if (!result || !isVerified(result)) return {}
   return {
     verifyToken: result.token,
     verifyProvider: result.provider,

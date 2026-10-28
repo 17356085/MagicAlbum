@@ -1,21 +1,32 @@
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMocks = vi.hoisted(() => ({
   checkUsernameAvailable: vi.fn(),
   registerUser: vi.fn(),
 }))
 
-const verifyMocks = vi.hoisted(() => ({
-  ensureVerified: vi.fn(),
-  reset: vi.fn(),
-  resetIfMatches: vi.fn(),
-  isAuthVerifyEnabled: vi.fn(() => true),
-  toVerifyPayload: vi.fn((result: { token?: string } | null | undefined) => {
-    return result?.token ? { verifyToken: result.token, verifyProvider: 'mock-manual', verifyScene: 'register' } : {}
-  }),
-}))
+const verifyMocks = vi.hoisted(() => {
+  const isUsable = (result: { token?: string; expiresAt?: string } | null | undefined): boolean => {
+    if (!result || !result.token) return false
+    if (result.expiresAt === undefined) return true
+    const expiryTime = Date.parse(result.expiresAt)
+    return Number.isFinite(expiryTime) && Date.now() < expiryTime
+  }
+
+  return {
+    ensureVerified: vi.fn(),
+    reset: vi.fn(),
+    resetIfMatches: vi.fn(),
+    isAuthVerifyEnabled: vi.fn(() => true),
+    toVerifyPayload: vi.fn((result: { token?: string; provider?: string; scene?: string; expiresAt?: string } | null | undefined) => {
+      return result && isUsable(result)
+        ? { verifyToken: result.token, verifyProvider: 'mock-manual', verifyScene: 'register' }
+        : {}
+    }),
+  }
+})
 
 vi.mock('@/api/users', () => apiMocks)
 vi.mock('@/services/authVerify', () => verifyMocks)
@@ -89,7 +100,7 @@ describe('AuthRegisterForm async lifecycle', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     verifyMocks.isAuthVerifyEnabled.mockReturnValue(true)
-    verifyMocks.toVerifyPayload.mockImplementation(result => result?.token
+    verifyMocks.toVerifyPayload.mockImplementation(result => result && (!result.expiresAt || Date.parse(result.expiresAt) > Date.now())
       ? { verifyToken: result.token, verifyProvider: 'mock-manual', verifyScene: 'register' }
       : {})
     apiMocks.checkUsernameAvailable.mockResolvedValue(true)
@@ -106,6 +117,10 @@ describe('AuthRegisterForm async lifecycle', () => {
       verifiedAt: '2026-01-01T00:00:00.000Z',
     })
     verifyMocks.resetIfMatches.mockReturnValue(true)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('locks duplicate submits before the first asynchronous availability check', async () => {
@@ -461,6 +476,40 @@ describe('AuthRegisterForm async lifecycle', () => {
     expect(apiMocks.registerUser).not.toHaveBeenCalled()
     expect(verifyMocks.resetIfMatches).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+
+  it('blocks registration when the proof expires before the payload is built', async () => {
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    const proof = {
+      token: 'expiring-proof',
+      provider: 'mock-manual' as const,
+      scene: 'register' as const,
+      verifiedAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: new Date(now + 100).toISOString(),
+    }
+    verifyMocks.ensureVerified.mockImplementationOnce(async () => {
+      vi.setSystemTime(now + 100)
+      return proof
+    })
+    const wrapper = mountRegister()
+    try {
+      await fillValidForm(wrapper, {
+        username: 'expired_proof',
+        phone: '13800000006',
+        email: 'expired-proof@example.com',
+      })
+
+      await wrapper.get('form').trigger('submit')
+      await settle()
+
+      expect(apiMocks.registerUser).not.toHaveBeenCalled()
+      expect(verifyMocks.resetIfMatches).toHaveBeenCalledWith(proof)
+      expect(wrapper.emitted('notify')).toContainEqual(['验证已过期，请重新完成验证'])
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('preserves user input after a server error and retries with a fresh availability request', async () => {

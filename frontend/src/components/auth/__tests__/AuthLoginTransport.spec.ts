@@ -494,7 +494,23 @@ describe('AuthLoginForm transport ownership', () => {
     { channel: 'email' as const, address: 'provider-not-called@example.test', maskedAddress: 'p***@example.test' },
     { channel: 'phone' as const, address: '13800138000', maskedAddress: '138****0000' },
   ])('keeps an existing $channel OTP session when resend fails before the provider is called', async ({ channel, address, maskedAddress }) => {
-    verifyMocks.ensureVerified.mockResolvedValue(proof)
+    let currentProof: typeof proof | null = null
+    let manualVerificationCount = 0
+    verifyMocks.ensureVerified.mockImplementation(async () => {
+      if (!currentProof) {
+        currentProof = {
+          ...proof,
+          token: manualVerificationCount === 0 ? 'initial-proof' : `resend-proof-${manualVerificationCount}`,
+        }
+        manualVerificationCount += 1
+      }
+      return currentProof
+    })
+    verifyMocks.resetIfMatches.mockImplementation((expected: typeof proof) => {
+      if (currentProof !== expected) return false
+      currentProof = null
+      return true
+    })
     wrapper = mountLogin()
     if (channel === 'email') {
       await findButton(wrapper, /切换到邮箱登录/).trigger('click')
@@ -510,6 +526,7 @@ describe('AuthLoginForm transport ownership', () => {
     await settle()
     vi.advanceTimersByTime(1000)
     await settle()
+    verifyMocks.resetIfMatches.mockClear()
 
     await wrapper.get('#auth-login-code').setValue('2468')
     await findButton(wrapper, /获取验证码/).trigger('click')
@@ -520,10 +537,25 @@ describe('AuthLoginForm transport ownership', () => {
       response: { status: 503, data: { code: 'OTP_PROVIDER_NOT_CALLED', message: '验证码 provider 尚未调用' } },
     })
     await settle()
+    const failedResend = findRequest('post', '/auth/code/start', 1)
 
     expect(wrapper.text()).toContain(maskedAddress)
     expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('2468')
     expect(wrapper.emitted('notify')).toContainEqual(['验证码 provider 尚未调用'])
+    expect(manualVerificationCount).toBe(2)
+    expect(verifyMocks.resetIfMatches).not.toHaveBeenCalled()
+
+    await findButton(wrapper, /获取验证码/).trigger('click')
+    await settle()
+    const retriedResend = findRequest('post', '/auth/code/start', 2)
+    expect(retriedResend.body).toMatchObject({
+      verifyToken: failedResend.body.verifyToken,
+      verifyProvider: failedResend.body.verifyProvider,
+      verifyScene: failedResend.body.verifyScene,
+    })
+    expect(manualVerificationCount).toBe(2)
+    resolveCodeStart(retriedResend, `retry-${channel}-session`, maskedAddress)
+    await settle()
   })
 
   it('clears an existing phone OTP session when a resend times out', async () => {
