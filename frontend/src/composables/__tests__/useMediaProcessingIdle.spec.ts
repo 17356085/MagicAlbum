@@ -62,6 +62,20 @@ async function settle(): Promise<void> {
   await nextTick()
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+  reject: (reason?: unknown) => void
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
+}
+
 function scheduledPolls(): number {
   return timerSpy.mock.calls.filter(call => Number(call[1]) === POLL_DELAY).length
 }
@@ -158,6 +172,19 @@ describe('useMediaProcessing idle-stop and event-wakeup contract', () => {
 
     expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
     expect(observedControllers).toHaveLength(1)
+    expect(scheduledPolls()).toBe(0)
+  })
+
+  it('confirms the first object when the initial cache repeats an asset id', async () => {
+    const duplicateTerminalAsset = { ...terminalAsset, url: '/uploads/original-terminal-duplicate.png' }
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([terminalAsset, duplicateTerminalAsset]))
+    mocks.getMediaAsset.mockResolvedValue({ ...terminalAsset })
+    activate(1, 'token-duplicate-terminal')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(mocks.getMediaAsset.mock.calls[0]?.[0]).toBe(terminalAsset.assetId)
     expect(scheduledPolls()).toBe(0)
   })
 
@@ -288,6 +315,88 @@ describe('useMediaProcessing idle-stop and event-wakeup contract', () => {
     await settle()
     expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
     expect(mocks.getMediaAsset.mock.calls[0]?.[0]).toBe(uploadAsset.assetId)
+  })
+
+  it('does not apply a stale pending response after a successful cancel update', async () => {
+    const pendingResponse = deferred<MediaAssetState>()
+    mocks.getMediaAsset.mockReturnValue(pendingResponse.promise)
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([uploadAsset]))
+    activate(1, 'token-stale-cancel')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    updateMediaAsset({ ...uploadAsset, processingStatus: 'CANCELLED' }, 'token-stale-cancel')
+    await settle()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('CANCELLED')
+
+    pendingResponse.resolve({ ...uploadAsset, processingStatus: 'PENDING' })
+    await settle()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('CANCELLED')
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(scheduledPolls()).toBe(0)
+  })
+
+  it('keeps a retried pending object active when a stale failed response arrives', async () => {
+    const failedResponse = deferred<MediaAssetState>()
+    mocks.getMediaAsset.mockReturnValueOnce(failedResponse.promise).mockResolvedValueOnce({ ...retryAsset, processingStatus: 'PENDING' })
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([retryAsset]))
+    activate(1, 'token-stale-retry')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    updateMediaAsset({ ...retryAsset, processingStatus: 'PENDING' }, 'token-stale-retry')
+    await settle()
+    failedResponse.resolve({ ...retryAsset, processingStatus: 'FAILED' })
+    await settle()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(scheduledPolls()).toBe(1)
+    await vi.advanceTimersByTimeAsync(POLL_DELAY)
+    await settle()
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(2)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+  })
+
+  it('does not let a stale success replace an asset reinserted after removal', async () => {
+    const oldResponse = deferred<MediaAssetState>()
+    mocks.getMediaAsset.mockReturnValue(oldResponse.promise)
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([uploadAsset]))
+    activate(1, 'token-stale-reinsert')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    dismissMediaAsset(uploadAsset.assetId)
+    trackMediaUpload({ ...uploadAsset, processingStatus: 'PENDING' }, 'token-stale-reinsert')
+    await settle()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+
+    oldResponse.resolve({ ...uploadAsset, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/stale-preview.png' })
+    await settle()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(mediaAssets.value[0]?.previewUrl).toBeNull()
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not mark a newly updated object unavailable when an old request rejects', async () => {
+    const oldResponse = deferred<MediaAssetState>()
+    mocks.getMediaAsset.mockReturnValue(oldResponse.promise)
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([uploadAsset]))
+    activate(1, 'token-stale-reject')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    updateMediaAsset({ ...uploadAsset, processingStatus: 'PENDING' }, 'token-stale-reject')
+    await settle()
+    oldResponse.reject(new Error('stale failure'))
+    await settle()
+
+    expect(mediaAssets.value[0]?.unavailable).not.toBe(true)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(scheduledPolls()).toBe(1)
   })
 
   it('clears a queued timer when the last pending record is removed', async () => {

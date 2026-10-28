@@ -11,7 +11,7 @@ type PollSession = {
   current: number
   token: string
   offset: number
-  initial: Set<string>
+  initial: Map<string, typeof mediaAssets.value[number]>
   running: boolean
   timer: ReturnType<typeof setTimeout> | undefined
   request: AbortController | undefined
@@ -39,11 +39,15 @@ export function useMediaProcessing(): void {
     hydrateMediaAssets(auth.token)
     if (!auth.isLoggedIn) return
 
+    const initial = new Map<string, typeof mediaAssets.value[number]>()
+    for (const item of mediaAssets.value) {
+      if (!initial.has(item.assetId)) initial.set(item.assetId, item)
+    }
     const session: PollSession = {
       current: generation,
       token: auth.token,
       offset: 0,
-      initial: new Set(mediaAssets.value.map(item => item.assetId)),
+      initial,
       running: false,
       timer: undefined,
       request: undefined,
@@ -52,8 +56,13 @@ export function useMediaProcessing(): void {
     }
     const currentSession = (): boolean => !disposed && !session.disposed && session.current === generation
     const isCandidate = (item: typeof mediaAssets.value[number]): boolean => (
-      session.initial.has(item.assetId) || ACTIVE_STATUSES.includes(item.processingStatus as typeof ACTIVE_STATUSES[number])
+      session.initial.get(item.assetId) === item || ACTIVE_STATUSES.includes(item.processingStatus as typeof ACTIVE_STATUSES[number])
     )
+    const isCurrentItem = (item: typeof mediaAssets.value[number]): boolean => {
+      const current = mediaAssets.value.find(value => value.assetId === item.assetId)
+      // This identity guard relies on mediaProcessingState replacing records on updates.
+      return current === item
+    }
     const candidates = (): typeof mediaAssets.value => mediaAssets.value.filter(isCandidate)
     const scheduleNext = (): void => {
       if (!currentSession() || session.running || session.timer !== undefined || candidates().length === 0) return
@@ -81,14 +90,13 @@ export function useMediaProcessing(): void {
           if (!item || !isCandidate(item)) continue
           try {
             const latest = await getMediaAsset(item.assetId, session.token, controller.signal)
-            if (currentSession() && !controller.signal.aborted && mediaAssets.value.some(value => value.assetId === item.assetId)) {
+            if (currentSession() && !controller.signal.aborted && isCurrentItem(item)) {
               updateMediaAsset(latest, session.token)
               session.initial.delete(item.assetId)
             }
           } catch {
-            if (currentSession() && !controller.signal.aborted) {
-              const unavailable = mediaAssets.value.find(value => value.assetId === item.assetId)
-              if (unavailable) unavailable.unavailable = true
+            if (currentSession() && !controller.signal.aborted && isCurrentItem(item)) {
+              item.unavailable = true
             }
           }
         }
