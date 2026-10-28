@@ -100,6 +100,119 @@ describe('media status actions', () => {
     expect(wrapper.text()).toContain('已停止处理')
   })
 
+  it('does not send an action after the persisted token changes before the click', async () => {
+    change.mockResolvedValueOnce({ ...original, processingStatus: 'CANCELLED' })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    localStorage.setItem('accessToken', 'other-token')
+    const stop = wrapper.findAll('button').find(button => button.text() === '停止处理')!
+    await stop.trigger('click')
+    await flushPromises()
+
+    expect(change).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+    expect(stop.attributes('disabled')).toBeUndefined()
+    expect(wrapper.findAll('button').some(button => button.text() === '刷新状态')).toBe(false)
+  })
+
+  it('does not send an action after the persisted owner changes under the same token', async () => {
+    change.mockResolvedValueOnce({ ...original, processingStatus: 'CANCELLED' })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    persistAuthState({ accessToken: 'owner', user: { id: 2, username: 'other' } })
+    const stop = wrapper.findAll('button').find(button => button.text() === '停止处理')!
+    await stop.trigger('click')
+    await flushPromises()
+
+    expect(change).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+    expect(stop.attributes('disabled')).toBeUndefined()
+    expect(wrapper.findAll('button').some(button => button.text() === '刷新状态')).toBe(false)
+  })
+
+  it('keeps an existing unknown-result feedback when the next action sees an account change', async () => {
+    change.mockRejectedValueOnce({ response: { status: 503 } })
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('操作结果未确认')
+
+    localStorage.setItem('accessToken', 'other-token')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+
+    expect(change).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+    expect(wrapper.text()).toContain('操作结果未确认')
+    expect(wrapper.findAll('button').filter(button => button.text() === '刷新状态')).toHaveLength(1)
+  })
+
+  it.each([
+    ['token', () => localStorage.setItem('accessToken', 'other-token')],
+    ['owner', () => persistAuthState({ accessToken: 'owner', user: { id: 2, username: 'other' } })],
+  ])('ignores a late failure after the %s changes and releases pending', async (_kind, drift) => {
+    const response = deferred<MediaAssetState>()
+    change.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    const stop = () => wrapper!.findAll('button').find(button => button.text() === '停止处理')!
+    await stop().trigger('click')
+    expect(stop().attributes('disabled')).toBeDefined()
+
+    drift()
+    response.reject({ response: { status: 503 } })
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(stop().attributes('disabled')).toBeUndefined()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+  })
+
+  it.each([
+    ['token', () => localStorage.setItem('accessToken', 'other-token')],
+    ['owner', () => persistAuthState({ accessToken: 'owner', user: { id: 2, username: 'other' } })],
+  ])('ignores a late success after the %s changes and releases pending', async (_kind, drift) => {
+    const response = deferred<MediaAssetState>()
+    change.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    const stop = () => wrapper!.findAll('button').find(button => button.text() === '停止处理')!
+    await stop().trigger('click')
+    expect(stop().attributes('disabled')).toBeDefined()
+
+    drift()
+    response.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(stop().attributes('disabled')).toBeUndefined()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+  })
+
+  it('does not send a stale row action when polling replaces the image before the click handler runs', async () => {
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    const stop = wrapper.findAll('button').find(button => button.text() === '停止处理')!
+    const replacement = { ...original, processingStatus: 'PROCESSING' as const }
+    stop.element.addEventListener('click', () => {
+      updateMediaAsset(replacement, 'owner')
+    }, { capture: true, once: true })
+
+    await stop.trigger('click')
+    await flushPromises()
+
+    expect(change).not.toHaveBeenCalled()
+    expect(mediaAssets.value[0]).toEqual(replacement)
+    expect(wrapper.get('[role="alert"]').text()).toContain('状态已变化，请先查看')
+    expect(wrapper.findAll('button').some(button => button.text() === '刷新状态')).toBe(false)
+    expect(wrapper.findAll('button').some(button => button.text() === '停止处理' && button.attributes('disabled') === undefined)).toBe(true)
+  })
+
   it.each([
     ['timeout', { code: 'ECONNABORTED' }],
     ['server error', { response: { status: 503 } }],

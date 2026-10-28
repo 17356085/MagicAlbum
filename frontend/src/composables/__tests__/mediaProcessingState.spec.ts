@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { persistAuthState } from '@/utils/authStorage'
-import { decodeMediaAsset, dismissMediaAsset, hydrateMediaAssets, mediaAssets, trackMediaUpload, updateMediaAsset, updateMediaAssetIfCurrent } from '../mediaProcessingState'
+import { decodeMediaAsset, dismissMediaAsset, hydrateMediaAssets, isCurrentMediaCacheOwner, mediaAssets, trackMediaUpload, updateMediaAsset, updateMediaAssetIfCurrent } from '../mediaProcessingState'
 
 const asset = { assetId: 'd2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/original.png', processingStatus: 'PENDING' as const }
 function owner(id: number, token: string) {
@@ -72,6 +72,15 @@ describe('owner-scoped media status', () => {
     expect(mediaAssets.value).toEqual([expect.objectContaining(asset)])
     expect(localStorage.getItem('bluealbum:media:1')).toBe(firstCache)
     expect(localStorage.getItem('bluealbum:media:2')).toBeNull()
+  })
+
+  it('exposes only the current token-bound media cache owner', () => {
+    owner(1, 'stable-token')
+    expect(isCurrentMediaCacheOwner('stable-token')).toBe(true)
+    expect(isCurrentMediaCacheOwner('other-token')).toBe(false)
+
+    persistAuthState({ accessToken: 'stable-token', user: { id: 2, username: 'owner-2' } })
+    expect(isCurrentMediaCacheOwner('stable-token')).toBe(false)
   })
 
   it('rejects a cache hydration when the token is paired with another owner', () => {

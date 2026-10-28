@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { changeMediaJob, getMediaAsset } from '@/api/uploads'
-import { dismissMediaAsset, mediaAssets, updateMediaAsset, updateMediaAssetIfCurrent, type MediaAssetState } from '@/composables/mediaProcessingState'
+import { dismissMediaAsset, isCurrentMediaCacheOwner, mediaAssets, updateMediaAsset, updateMediaAssetIfCurrent, type MediaAssetState } from '@/composables/mediaProcessingState'
 import { hasRealToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
 
@@ -100,17 +100,25 @@ function mediaHref(url?: string | null): string {
 }
 async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<void> {
   if (pendingAction.value || activeRefresh) return
+  const context = auth.captureAuthOperationContext()
+  const token = context.memoryToken
+  if (currentItem(item.assetId) !== item) {
+    error.value = '状态已变化，请先查看最新状态。'
+    return
+  }
+  if (!isAuthContextCurrent(context) || !isCurrentMediaCacheOwner(token)) {
+    error.value = '账号状态已变化，请重新登录后再操作。'
+    return
+  }
   const operationSequence = ++actionSequence
-  const token = auth.token
-  const generation = auth.getAuthGeneration()
   pendingAction.value = item.assetId
   error.value = ''
   clearFeedback(item.assetId)
   try {
     const updated = await changeMediaJob(item.assetId, kind, token)
-    if (actionSequence === operationSequence && auth.token === token && auth.isAuthGenerationCurrent(generation)) updateMediaAsset(updated, token)
+    if (actionSequence === operationSequence && isAuthContextCurrent(context) && isCurrentMediaCacheOwner(token)) updateMediaAsset(updated, token)
   } catch (cause: unknown) {
-    if (actionSequence === operationSequence && auth.token === token && auth.isAuthGenerationCurrent(generation)) {
+    if (actionSequence === operationSequence && isAuthContextCurrent(context) && isCurrentMediaCacheOwner(token)) {
       if (!currentItem(item.assetId)) return
       if (errorStatus(cause) === 403) {
         error.value = '当前账号没有管理此图片处理任务的权限，请刷新后重试。原图不受影响。'

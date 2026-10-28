@@ -71,6 +71,10 @@ function isCurrentCacheOwner(): boolean {
   return !!user?.id && !!String(user.username || '').trim() && String(user.id) === cacheOwnerId
 }
 
+export function isCurrentMediaCacheOwner(token: string): boolean {
+  return !!token && cacheOwnerToken === token && isCurrentCacheOwner()
+}
+
 function persist(): void {
   if (!isCurrentCacheOwner()) return
   try { localStorage.setItem(cacheKey, JSON.stringify(mediaAssets.value.slice(0, 20))) } catch { /* Quota does not prevent using the original image. */ }
