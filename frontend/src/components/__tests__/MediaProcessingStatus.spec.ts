@@ -2,13 +2,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { useAuthStore } from '@/stores/auth'
-import { hydrateMediaAssets, mediaAssets } from '@/composables/mediaProcessingState'
+import { hydrateMediaAssets, mediaAssets, type MediaAssetState } from '@/composables/mediaProcessingState'
 import MediaProcessingStatus from '../MediaProcessingStatus.vue'
 
 const change = vi.hoisted(() => vi.fn())
 vi.mock('@/api/uploads', () => ({ changeMediaJob: change }))
 const original = { assetId: 'd2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/original.png', status: 'READY', processingStatus: 'PENDING' as const }
 let wrapper: VueWrapper | undefined
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+  reject: (reason?: unknown) => void
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, resolve, reject }
+}
 
 describe('media status actions', () => {
   beforeEach(() => {
@@ -82,6 +96,77 @@ describe('media status actions', () => {
     await flushPromises()
     expect(change).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('已停止处理')
+  })
+
+  it('releases a same-token action after invalidation without applying stale success', async () => {
+    const response = deferred<MediaAssetState>()
+    change.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    const stopButton = () => wrapper!.findAll('button').find(button => button.text() === '停止处理')!
+    await stopButton().trigger('click')
+    expect(stopButton().attributes('disabled')).toBeDefined()
+
+    useAuthStore().invalidateAuthOperations()
+    response.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(stopButton().attributes('disabled')).toBeUndefined()
+  })
+
+  it('releases a same-token action after invalidation without applying stale failure', async () => {
+    const response = deferred<MediaAssetState>()
+    change.mockReturnValue(response.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    const stopButton = () => wrapper!.findAll('button').find(button => button.text() === '停止处理')!
+    await stopButton().trigger('click')
+    expect(stopButton().attributes('disabled')).toBeDefined()
+
+    useAuthStore().invalidateAuthOperations()
+    response.reject({ response: { status: 403, data: {} } })
+    await flushPromises()
+
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(stopButton().attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps a new account action pending when the old account finally settles', async () => {
+    const oldResponse = deferred<MediaAssetState>()
+    const newResponse = deferred<MediaAssetState>()
+    change.mockImplementation((_assetId: string, _kind: string, token: string) => token === 'owner' ? oldResponse.promise : newResponse.promise)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    const oldStopButton = () => wrapper!.findAll('button').find(button => button.text() === '停止处理')!
+    await oldStopButton().trigger('click')
+
+    const nextAsset = { ...original, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', url: '/uploads/next.png' }
+    useAuthStore().applyAuthState({ accessToken: 'other', user: { id: 2, username: 'other' } })
+    hydrateMediaAssets('other')
+    await wrapper.vm.$nextTick()
+    mediaAssets.value = [nextAsset]
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    const newStopButton = () => wrapper!.findAll('button').find(button => button.text() === '停止处理')!
+    await newStopButton().trigger('click')
+    expect(newStopButton().attributes('disabled')).toBeDefined()
+
+    oldResponse.resolve({ ...original, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(newStopButton().attributes('disabled')).toBeDefined()
+
+    newResponse.resolve({ ...nextAsset, processingStatus: 'CANCELLED' })
+    await flushPromises()
+    expect(mediaAssets.value[0]?.processingStatus).toBe('CANCELLED')
+    expect(wrapper.findAll('button').some(button => button.text() === '重试预览' && !button.attributes('disabled'))).toBe(true)
   })
 
   it('does not apply an old action or error to the next account', async () => {

@@ -10,7 +10,13 @@ defineProps<{ raised?: boolean }>()
 const expanded = ref(false)
 const pendingAction = ref('')
 const error = ref('')
-watch(() => auth.token, () => { pendingAction.value = ''; error.value = ''; expanded.value = false })
+let actionSequence = 0
+watch(() => auth.token, () => {
+  actionSequence += 1
+  pendingAction.value = ''
+  error.value = ''
+  expanded.value = false
+})
 const pending = computed(() => mediaAssets.value.filter(item => ['PENDING', 'PROCESSING'].includes(item.processingStatus)).length)
 const summary = computed(() => pending.value ? `图片预览处理中 · ${pending.value}` : '图片状态')
 function label(item: MediaAssetState): string {
@@ -34,6 +40,7 @@ function mediaHref(url?: string | null): string {
 }
 async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<void> {
   if (pendingAction.value) return
+  const operationSequence = ++actionSequence
   const token = auth.token
   const generation = auth.getAuthGeneration()
   pendingAction.value = item.assetId
@@ -48,7 +55,9 @@ async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<
         : '操作未完成，请稍后重试。原图不受影响。'
     }
   }
-  finally { if (auth.token === token && auth.isAuthGenerationCurrent(generation)) pendingAction.value = '' }
+  finally {
+    if (actionSequence === operationSequence) pendingAction.value = ''
+  }
 }
 </script>
 
