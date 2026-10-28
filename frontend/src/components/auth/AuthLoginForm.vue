@@ -211,6 +211,18 @@ type AuthBoundary = Readonly<{
   persistedToken: string
 }>
 
+type CodeSessionSnapshot = Readonly<{
+  channel: 'email' | 'phone' | ''
+  address: string
+  session: string
+  maskedAddress: string
+  authBoundary: AuthBoundary | null
+}>
+
+const CODE_FINISH_UNKNOWN_RESULT_MESSAGE = '验证码验证结果未知，请重新获取验证码'
+const CODE_SEND_UNKNOWN_RESULT_MESSAGE = '验证码发送结果未知，请重新获取验证码'
+const OTP_PROVIDER_NOT_CALLED_CODE = 'OTP_PROVIDER_NOT_CALLED'
+
 const props = withDefaults(defineProps<{
   initialPhone?: string
   initialEmail?: string
@@ -372,6 +384,42 @@ function getLoginErrorMessage(error: unknown): string {
   )
 }
 
+function getApiErrorStatus(error: unknown): number | undefined {
+  const status = (error as ApiError | null | undefined)?.response?.status
+  return typeof status === 'number' ? status : undefined
+}
+
+function isOtpProviderNotCalledFailure(error: unknown): boolean {
+  const apiError = error as ApiError | null | undefined
+  return getApiErrorStatus(error) === 503
+    && apiError?.response?.data?.code === OTP_PROVIDER_NOT_CALLED_CODE
+}
+
+function isUnknownCodeSendFailure(error: unknown): boolean {
+  const status = getApiErrorStatus(error)
+  return !isOtpProviderNotCalledFailure(error)
+    && (status === undefined || (status >= 500 && status <= 599))
+}
+
+function isRetryableCodeFinishFailure(error: unknown): boolean {
+  const status = getApiErrorStatus(error)
+  return isOtpProviderNotCalledFailure(error) || status === 401 || status === 429
+}
+
+function getCodeFinishFailureMessage(error: unknown): string {
+  const status = getApiErrorStatus(error)
+  if (isOtpProviderNotCalledFailure(error)) {
+    return getLoginErrorMessage(error) || '登录失败，请稍后再试'
+  }
+  if (status === 401 || status === 429) {
+    return getLoginErrorMessage(error) || '登录失败，请稍后再试'
+  }
+  if (status === 409) {
+    return getLoginErrorMessage(error) || CODE_FINISH_UNKNOWN_RESULT_MESSAGE
+  }
+  return CODE_FINISH_UNKNOWN_RESULT_MESSAGE
+}
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
@@ -468,6 +516,49 @@ function clearCodeSession(): void {
   codeSession.authBoundary = null
   form.code = ''
   clearCountdown()
+}
+
+function captureCodeSession(): CodeSessionSnapshot {
+  return Object.freeze({
+    channel: codeSession.channel,
+    address: codeSession.address,
+    session: codeSession.session,
+    maskedAddress: codeSession.maskedAddress,
+    authBoundary: codeSession.authBoundary ? Object.freeze({ ...codeSession.authBoundary }) : null,
+  })
+}
+
+function clearCodeSessionIfSendSnapshotOwnedBy(
+  operation: LoginOperation,
+  snapshot: CodeSessionSnapshot,
+  boundary: AuthBoundary,
+  authStore: ReturnType<typeof useAuthStore>,
+): boolean {
+  if (!snapshot.session || snapshot.channel !== operation.snapshot.channel || snapshot.address !== operation.snapshot.address) return false
+  if (!isOperationContextCurrent(operation) || !isAuthBoundaryCurrent(authStore, boundary)) return false
+  if (!authBoundariesEqual(snapshot.authBoundary, boundary)) return false
+  if (codeSession.channel !== snapshot.channel
+    || codeSession.address !== snapshot.address
+    || codeSession.session !== snapshot.session
+    || !authBoundariesEqual(codeSession.authBoundary, snapshot.authBoundary)) {
+    return false
+  }
+  clearCodeSession()
+  return true
+}
+
+function isCodeSessionOwnedBy(operation: LoginOperation): boolean {
+  const snapshot = operation.snapshot
+  return snapshot.kind === 'finish-code'
+    && codeSession.channel === snapshot.channel
+    && codeSession.address === snapshot.address
+    && codeSession.session === snapshot.session
+}
+
+function clearCodeSessionIfOwnedBy(operation: LoginOperation): boolean {
+  if (!isOperationContextCurrent(operation) || !isCodeSessionOwnedBy(operation)) return false
+  clearCodeSession()
+  return true
 }
 
 function cancelForContextChange(): void {
@@ -605,6 +696,7 @@ async function runCodeFinish(operation: LoginOperation): Promise<void> {
   const authStore = getAuthStore()
   const boundary = snapshot.sessionBoundary
   let issuedGeneration: number | null = null
+  let requestIssued = false
   try {
     if (!boundary || !isOperationContextCurrent(operation) || !isAuthBoundaryCurrent(authStore, boundary)) {
       if (isOperationContextCurrent(operation)) {
@@ -617,6 +709,7 @@ async function runCodeFinish(operation: LoginOperation): Promise<void> {
       ? authStore.loginWithEmailCode({ channel: 'email', address: snapshot.address, code: snapshot.code || '', session: snapshot.session || '' })
       : authStore.loginWithPhoneCode({ channel: 'phone', address: snapshot.address, code: snapshot.code || '', session: snapshot.session || '' })
     issuedGeneration = authStore.getAuthGeneration()
+    requestIssued = true
     ownIssuedAuth = { operationId: operation.id, store: authStore, generation: issuedGeneration }
     if (isOperationContextCurrent(operation)
       && codeSession.channel === snapshot.channel
@@ -636,10 +729,11 @@ async function runCodeFinish(operation: LoginOperation): Promise<void> {
     if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
     if (!isOperationContextCurrent(operation)) return
     if (issuedGeneration !== null && !authStore.isAuthGenerationCurrent(issuedGeneration)) {
-      clearCodeSession()
+      clearCodeSessionIfOwnedBy(operation)
       return
     }
-    if (!isAuthOperationSuperseded(error)) emit('notify', getLoginErrorMessage(error) || '登录失败，请稍后再试')
+    if (requestIssued && !isRetryableCodeFinishFailure(error)) clearCodeSessionIfOwnedBy(operation)
+    if (!isAuthOperationSuperseded(error)) emit('notify', getCodeFinishFailureMessage(error))
   } finally {
     if (ownIssuedAuth?.operationId === operation.id) ownIssuedAuth = null
   }
@@ -649,6 +743,7 @@ async function runCodeStart(operation: LoginOperation): Promise<void> {
   const snapshot = operation.snapshot
   const authStore = getAuthStore()
   const boundary = captureAuthBoundary(authStore)
+  const previousCodeSession = captureCodeSession()
   let submission: VerificationSubmission | null = null
   let requestIssued = false
   try {
@@ -668,7 +763,12 @@ async function runCodeStart(operation: LoginOperation): Promise<void> {
       : await startPhoneCodeLogin({ channel: 'phone', address: snapshot.address, ...verifyPayload })
     if (!isOperationContextCurrent(operation)) return
     settleConsumedVerification(operation, submission)
-    if (response.channel !== snapshot.channel) return
+    if (response.channel !== snapshot.channel) {
+      if (clearCodeSessionIfSendSnapshotOwnedBy(operation, previousCodeSession, boundary, authStore)) {
+        emit('notify', CODE_SEND_UNKNOWN_RESULT_MESSAGE)
+      }
+      return
+    }
     if (!isAuthBoundaryCurrent(authStore, boundary)) return
     if (!isOperationContextCurrent(operation)) return
     codeSession.channel = snapshot.channel
@@ -683,6 +783,12 @@ async function runCodeStart(operation: LoginOperation): Promise<void> {
     if (!isOperationActive(operation)) return
     if (requestIssued) settleConsumedVerification(operation, submission)
     if (!isAuthBoundaryCurrent(authStore, boundary)) return
+    if (requestIssued
+      && isUnknownCodeSendFailure(error)
+      && clearCodeSessionIfSendSnapshotOwnedBy(operation, previousCodeSession, boundary, authStore)) {
+      emit('notify', CODE_SEND_UNKNOWN_RESULT_MESSAGE)
+      return
+    }
     emit('notify', getLoginErrorMessage(error) || '验证码发送失败')
   } finally {
     if (activeOperation?.id === operation.id) sendingCode.value = false
@@ -753,6 +859,7 @@ function clearCountdown(): void {
     window.clearInterval(countdownTimer.value)
     countdownTimer.value = null
   }
+  codeCountdown.value = 0
 }
 
 onBeforeUnmount(() => {

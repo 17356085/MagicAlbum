@@ -45,11 +45,11 @@ class UserProfilePage(BasePage):
     @property
     def follow_btn(self) -> Locator:
         """关注/取关按钮"""
-        return self.page.get_by_role("button", name="关注")
+        return self.page.get_by_role("button", name="关注", exact=True)
 
     @property
     def unfollow_btn(self) -> Locator:
-        return self.page.get_by_role("button", name="已关注")
+        return self.page.get_by_role("button", name="已关注", exact=True)
 
     @property
     def following_count(self) -> Locator:

@@ -11,15 +11,22 @@ import com.example.demo.common.DistributedRateLimiter;
 import com.example.demo.common.RequestIdentity;
 import jakarta.validation.Valid;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
+    private static final String OTP_RATE_LIMIT_UNAVAILABLE_MESSAGE = "限流服务暂不可用";
+    private static final String OTP_PROVIDER_NOT_CALLED_CODE = "OTP_PROVIDER_NOT_CALLED";
 
     private final AuthService authService;
     private final CognitoOtpAuthService cognitoOtpAuthService;
@@ -49,9 +56,16 @@ public class AuthController {
     public ResponseEntity<AuthCodeStartResponse> startCodeLogin(@Valid @RequestBody AuthCodeStartRequest req,
                                                                 HttpServletRequest httpRequest) {
         String address = isBlank(req.getAddress()) ? "missing" : req.getAddress().trim().toLowerCase();
-        rateLimiter.enforce("otp-start-ip", RequestIdentity.clientIp(httpRequest), 60, 20);
-        rateLimiter.enforce("otp-start-address", address, 300, 5);
-        rateLimiter.enforce("otp-start-device", RequestIdentity.device(httpRequest), 300, 10);
+        try {
+            rateLimiter.enforce("otp-start-ip", RequestIdentity.clientIp(httpRequest), 60, 20);
+            rateLimiter.enforce("otp-start-address", address, 300, 5);
+            rateLimiter.enforce("otp-start-device", RequestIdentity.device(httpRequest), 300, 10);
+        } catch (ResponseStatusException ex) {
+            if (ex.getStatusCode().value() == HttpStatus.SERVICE_UNAVAILABLE.value()) {
+                throw new OtpRateLimitUnavailableException();
+            }
+            throw ex;
+        }
         return ResponseEntity.ok(cognitoOtpAuthService.start(req));
     }
 
@@ -60,11 +74,30 @@ public class AuthController {
                                                          HttpServletRequest httpRequest) {
         String address = isBlank(req.getAddress()) ? "missing" : req.getAddress().trim().toLowerCase();
         String session = isBlank(req.getSession()) ? "missing" : req.getSession().trim();
-        rateLimiter.enforce("otp-verify-ip", RequestIdentity.clientIp(httpRequest), 300, 30);
-        rateLimiter.enforce("otp-verify-address", address, 300, 10);
-        rateLimiter.enforce("otp-verify-session", session, 300, 10);
-        rateLimiter.enforce("otp-verify-device", RequestIdentity.device(httpRequest), 300, 20);
+        try {
+            rateLimiter.enforce("otp-verify-ip", RequestIdentity.clientIp(httpRequest), 300, 30);
+            rateLimiter.enforce("otp-verify-address", address, 300, 10);
+            rateLimiter.enforce("otp-verify-session", session, 300, 10);
+            rateLimiter.enforce("otp-verify-device", RequestIdentity.device(httpRequest), 300, 20);
+        } catch (ResponseStatusException ex) {
+            if (ex.getStatusCode().value() == HttpStatus.SERVICE_UNAVAILABLE.value()) {
+                throw new OtpRateLimitUnavailableException();
+            }
+            throw ex;
+        }
         return ResponseEntity.ok(cognitoOtpAuthService.finish(req));
+    }
+
+    @ExceptionHandler(OtpRateLimitUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleOtpRateLimitUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                "status", HttpStatus.SERVICE_UNAVAILABLE.value(),
+                "message", OTP_RATE_LIMIT_UNAVAILABLE_MESSAGE,
+                "code", OTP_PROVIDER_NOT_CALLED_CODE
+        ));
+    }
+
+    private static final class OtpRateLimitUnavailableException extends RuntimeException {
     }
 
     private boolean isBlank(String value) {

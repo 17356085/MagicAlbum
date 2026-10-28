@@ -12,8 +12,6 @@ import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserProfileRepository;
 import com.example.demo.user.repo.UserRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -26,7 +24,10 @@ import java.util.UUID;
 
 @Service
 public class CognitoOtpAuthService {
-    private static final Logger log = LoggerFactory.getLogger(CognitoOtpAuthService.class);
+    private static final String EMAIL_INVALID_CODE_MESSAGE = "邮箱验证码无效或已过期";
+    private static final String PHONE_INVALID_CODE_MESSAGE = "手机验证码无效、已过期或 Cognito 校验失败";
+    private static final String EMAIL_UNAVAILABLE_MESSAGE = "邮箱验证码服务暂不可用，请稍后重试";
+    private static final String PHONE_UNAVAILABLE_MESSAGE = "手机验证码服务暂不可用，请稍后重试";
 
     private final CognitoOtpClient cognitoOtpClient;
     private final UserRepository userRepository;
@@ -100,7 +101,7 @@ public class CognitoOtpAuthService {
         try {
             response = initiateOtpChallenge(email, "EMAIL_OTP");
         } catch (Exception ex) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱验证码服务暂不可用，请检查 Cognito 配置", ex);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, EMAIL_UNAVAILABLE_MESSAGE);
         }
         if (response == null || !"EMAIL_OTP".equals(response.getChallengeName())
                 || trimToEmpty(response.getSession()).isBlank()) {
@@ -116,8 +117,7 @@ public class CognitoOtpAuthService {
         try {
             response = initiateOtpChallenge(phone, "SMS_OTP");
         } catch (Exception ex) {
-            log.error("Failed to start Cognito SMS_OTP challenge for phone={}", maskPhone(phone), ex);
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Phone OTP 发起失败，请检查 Cognito 配置与短信通道");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, PHONE_UNAVAILABLE_MESSAGE);
         }
 
         if (response == null || !"SMS_OTP".equals(trimToEmpty(response.getChallengeName())) || trimToEmpty(response.getSession()).isBlank()) {
@@ -140,10 +140,15 @@ public class CognitoOtpAuthService {
         try {
             response = cognitoOtpClient.respondToChallenge("EMAIL_OTP", email,
                     Map.of("EMAIL_OTP_CODE", trimToEmpty(request.getCode())), trimToEmpty(request.getSession()));
+        } catch (CognitoOtpProviderException ex) {
+            if (ex.isInvalidCode()) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, EMAIL_INVALID_CODE_MESSAGE);
+            }
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, EMAIL_UNAVAILABLE_MESSAGE);
         } catch (Exception ex) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "邮箱验证码无效或已过期", ex);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, EMAIL_UNAVAILABLE_MESSAGE);
         }
-        requireAuthenticationResult(response, "邮箱验证码登录未完成");
+        requireAuthenticationResult(response, EMAIL_UNAVAILABLE_MESSAGE);
 
         User user = provision(() -> resolveOrCreateLocalUserByEmail(email), () -> findVerifiedEmailWinner(email));
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
@@ -161,12 +166,16 @@ public class CognitoOtpAuthService {
                     Map.of("SMS_OTP_CODE", trimToEmpty(request.getCode())),
                     trimToEmpty(request.getSession())
             );
+        } catch (CognitoOtpProviderException ex) {
+            if (ex.isInvalidCode()) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, PHONE_INVALID_CODE_MESSAGE);
+            }
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, PHONE_UNAVAILABLE_MESSAGE);
         } catch (Exception ex) {
-            log.warn("Failed to finish Cognito SMS_OTP challenge for phone={}", maskPhone(phone), ex);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机验证码无效、已过期或 Cognito 校验失败");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, PHONE_UNAVAILABLE_MESSAGE);
         }
 
-        requireAuthenticationResult(response, "手机验证码登录未完成");
+        requireAuthenticationResult(response, PHONE_UNAVAILABLE_MESSAGE);
 
         User user = provision(() -> resolveOrCreateLocalUserByPhone(phone), () -> findVerifiedPhoneWinner(phone));
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
@@ -307,7 +316,7 @@ public class CognitoOtpAuthService {
     private CognitoAuthFlowResponse requireAuthenticationResult(CognitoAuthFlowResponse response, String message) {
         if (response == null || response.getAuthenticationResult() == null
                 || trimToEmpty(response.getAuthenticationResult().getAccessToken()).isBlank()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, message);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, message);
         }
         return response;
     }

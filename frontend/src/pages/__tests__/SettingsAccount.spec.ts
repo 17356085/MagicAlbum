@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsAccount from '../SettingsAccount.vue'
 import { getMyBasicInfo, updateMyBasicInfo, updateMyPassword } from '@/api/settings'
 import { useAuthStore } from '@/stores/auth'
+import type { BasicInfoPayload, BasicInfoResponse } from '@/types'
 
 const mocks = vi.hoisted(() => ({
   getMyBasicInfo: vi.fn(),
@@ -21,8 +22,32 @@ const getMyBasicInfoMock = vi.mocked(getMyBasicInfo)
 const updateMyBasicInfoMock = vi.mocked(updateMyBasicInfo)
 const updateMyPasswordMock = vi.mocked(updateMyPassword)
 
-const account = { username: 'blue_user', phone: '13800138000', email: 'blue@example.com' }
-const accountB = { username: 'green_user', phone: '13900139000', email: 'green@example.com' }
+const account: BasicInfoResponse = { id: 1, username: 'blue_user', phone: '13800138000', email: 'blue@example.com' }
+const accountB: BasicInfoResponse = { id: 2, username: 'green_user', phone: '13900139000', email: 'green@example.com' }
+
+function accountPayload(value: Pick<BasicInfoResponse, 'username' | 'phone' | 'email'>): BasicInfoPayload {
+  return { username: value.username, phone: value.phone, email: value.email }
+}
+
+function serverAccount(overrides: Partial<BasicInfoResponse> = {}): BasicInfoResponse {
+  return { ...account, ...overrides }
+}
+
+const malformedAccountResponses: Array<[string, unknown]> = [
+  ['non-object response', []],
+  ['missing id', (() => { const { id: _id, ...rest } = account; return rest })()],
+  ['missing username', (() => { const { username: _username, ...rest } = account; return rest })()],
+  ['missing phone', (() => { const { phone: _phone, ...rest } = account; return rest })()],
+  ['missing email', (() => { const { email: _email, ...rest } = account; return rest })()],
+  ['empty username', { ...account, username: '   ' }],
+  ['non-string phone', { ...account, phone: 13800138000 }],
+  ['empty email', { ...account, email: '' }],
+  ['zero id', { ...account, id: 0 }],
+  ['fractional id', { ...account, id: 1.5 }],
+  ['unsafe numeric id', { ...account, id: Number.MAX_SAFE_INTEGER + 1 }],
+  ['non-canonical string id', { ...account, id: '01' }],
+  ['out-of-range decimal string id', { ...account, id: '9223372036854775808' }],
+]
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -92,6 +117,38 @@ describe('SettingsAccount', () => {
     expect((wrapper.find('#settings-account-username').element as HTMLInputElement).value).toBe('blue_user')
   })
 
+  it.each(malformedAccountResponses)('keeps the account unloaded for a malformed GET response (%s)', async (_label, response) => {
+    getMyBasicInfoMock.mockResolvedValueOnce(response as BasicInfoResponse)
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户信息响应无效')
+    expect(wrapper.get('[role="alert"] button').text()).toContain('重试')
+    expect(wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').filter((button) => button.text().includes('修改密码'))[0].attributes('disabled')).toBeDefined()
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('clears state for a GET response belonging to another known owner', async () => {
+    getMyBasicInfoMock.mockResolvedValueOnce(serverAccount({ id: 2, username: 'wrong_owner' }))
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户归属不一致')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').filter((button) => button.text().includes('修改密码'))[0].attributes('disabled')).toBeDefined()
+  })
+
+  it('accepts a canonical Java-long string id without hydrating a token-only owner', async () => {
+    getMyBasicInfoMock.mockResolvedValueOnce(serverAccount({ id: '9223372036854775807' }))
+    const { wrapper, auth } = createWrapper({ user: null })
+    await flushPromises()
+
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('blue_user')
+    expect(auth.user).toBeNull()
+  })
+
   it('warns before changing a contact and clears the warning when reverted or saved', async () => {
     const { wrapper } = createWrapper()
     await flushPromises()
@@ -107,6 +164,92 @@ describe('SettingsAccount', () => {
     await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain(warning)
+  })
+
+  it('does not claim or synthesize a successful save when PATCH returns a malformed UserDto', async () => {
+    const response = serverAccount({ email: '' })
+    updateMyBasicInfoMock.mockResolvedValueOnce(response)
+    const eventSpy = vi.fn()
+    window.addEventListener('profile-updated', eventSpy)
+    const { wrapper, auth } = createWrapper()
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('server_may_have_written')
+    await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
+    await flushPromises()
+
+    expect(updateMyBasicInfoMock).toHaveBeenCalledTimes(1)
+    expect(getMyBasicInfoMock).toHaveBeenCalledTimes(1)
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('server_may_have_written')
+    expect(wrapper.text()).toContain('保存结果无法确认，请重新加载账户信息核实')
+    expect(auth.user).toEqual({ id: 1, username: 'blue_user' })
+    expect(eventSpy).not.toHaveBeenCalled()
+    const dirtyEventsAfterInvalidSave = wrapper.emitted('dirty-change') || []
+    expect(dirtyEventsAfterInvalidSave[dirtyEventsAfterInvalidSave.length - 1]).toEqual([true])
+
+    await wrapper.get('#settings-account-username').setValue('blue_user')
+    const dirtyEventsAfterRevert = wrapper.emitted('dirty-change') || []
+    expect(dirtyEventsAfterRevert[dirtyEventsAfterRevert.length - 1]).toEqual([false])
+    window.removeEventListener('profile-updated', eventSpy)
+  })
+
+  it('clears account and password drafts when PATCH returns another owner', async () => {
+    updateMyBasicInfoMock.mockResolvedValueOnce(serverAccount({ id: 2, username: 'wrong_owner', phone: '13900139000', email: 'green@example.com' }))
+    const { wrapper } = createWrapper()
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('draft_user')
+    await wrapper.get('#settings-account-current-password').setValue('CurrentA1')
+    await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
+    await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
+    await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户归属不一致')
+    expect(wrapper.text()).not.toContain('保存结果无法确认，请重新加载账户信息核实')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#settings-account-current-password').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].attributes('disabled')).toBeDefined()
+  })
+
+  it('prioritizes a valid mismatched owner over missing PATCH fields', async () => {
+    updateMyBasicInfoMock.mockResolvedValueOnce({ id: 2, username: 'wrong_owner' } as unknown as BasicInfoResponse)
+    const { wrapper } = createWrapper()
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('draft_user')
+    await wrapper.get('#settings-account-current-password').setValue('CurrentA1')
+    await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
+    await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
+    await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户归属不一致')
+    expect(wrapper.text()).not.toContain('保存结果无法确认，请重新加载账户信息核实')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#settings-account-current-password').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('checks the hydrated owner before accepting a token-only PATCH response', async () => {
+    const response = deferred<BasicInfoResponse>()
+    updateMyBasicInfoMock.mockReturnValueOnce(response.promise)
+    getMyBasicInfoMock.mockReset()
+    getMyBasicInfoMock.mockResolvedValueOnce(account).mockResolvedValueOnce(accountB)
+    const eventSpy = vi.fn()
+    window.addEventListener('profile-updated', eventSpy)
+    const { wrapper, auth } = createWrapper({ user: null })
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('token_only_draft')
+    await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
+
+    expect(auth.hydrateCurrentUser({ id: 2, username: 'green_user' }, 'token-a')).toBe(true)
+    response.resolve(serverAccount({ id: 1, username: 'server_user' }))
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('保存结果无法确认，请重新加载账户信息核实')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('green_user')
+    expect(auth.user).toEqual(expect.objectContaining({ id: 2, username: 'green_user' }))
+    expect(eventSpy).not.toHaveBeenCalled()
+    window.removeEventListener('profile-updated', eventSpy)
   })
 
   it('associates account labels, emits dirty state, and exposes live validation feedback', async () => {
@@ -131,7 +274,7 @@ describe('SettingsAccount', () => {
     expect(updateMyBasicInfoMock).not.toHaveBeenCalled()
 
     await wrapper.get('#settings-account-username').setValue('new_user')
-    updateMyBasicInfoMock.mockResolvedValueOnce({ username: 'new_user', phone: '13800138000', email: 'blue@example.com' })
+    updateMyBasicInfoMock.mockResolvedValueOnce(serverAccount({ username: 'new_user' }))
     await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
     await flushPromises()
     expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: 'new_user', phone: '13800138000', email: 'blue@example.com' })
@@ -197,7 +340,7 @@ describe('SettingsAccount', () => {
     await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
     await flushPromises()
 
-    expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ ...account, username, phone: '13900000000' })
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith(accountPayload({ ...account, username, phone: '13900000000' }))
     expect(wrapper.text()).toContain('保存成功')
   })
 
@@ -208,6 +351,40 @@ describe('SettingsAccount', () => {
     await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
     expect(updateMyBasicInfoMock).not.toHaveBeenCalled()
     expect(wrapper.get('#settings-account-username-error').text()).toContain('3-64')
+  })
+
+  it('allows a 255-character email when saving account profile', async () => {
+    const email = `${'a'.repeat(63)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}`
+    expect(email).toHaveLength(255)
+    updateMyBasicInfoMock.mockResolvedValueOnce({ ...account, email })
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    await wrapper.get('#settings-account-email').setValue(email)
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('#settings-account-email').attributes('maxlength')).toBeUndefined()
+    expect((wrapper.get('#settings-account-email').element as HTMLInputElement).value).toBe(email)
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith(accountPayload({ ...account, email }))
+    expect(wrapper.text()).toContain('保存成功')
+  })
+
+  it('rejects a 256-character email before saving without truncating the input', async () => {
+    const email = `${'a'.repeat(64)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}`
+    expect(email).toHaveLength(256)
+    const response = deferred<typeof account>()
+    updateMyBasicInfoMock.mockReturnValueOnce(response.promise)
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    await wrapper.get('#settings-account-email').setValue(email)
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+
+    expect(updateMyBasicInfoMock).not.toHaveBeenCalled()
+    expect(wrapper.get('#settings-account-email').attributes('maxlength')).toBeUndefined()
+    expect((wrapper.get('#settings-account-email').element as HTMLInputElement).value).toBe(email)
+    expect(wrapper.get('#settings-account-email-error').text()).toBe('邮箱长度不能超过 255 个字符')
   })
 
   it('ignores old loads across account switches and ABA, then applies only the final load', async () => {
@@ -315,12 +492,39 @@ describe('SettingsAccount', () => {
     const { wrapper, auth } = createWrapper({ user: null })
     await flushPromises()
     await wrapper.get('#settings-account-username').setValue('继续编辑')
+    await wrapper.get('#settings-account-current-password').setValue('CurrentA1')
+    await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
+    await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
 
     expect(auth.hydrateCurrentUser({ id: 1, username: 'blue_user' }, 'token-a')).toBe(true)
     await flushPromises()
 
     expect(getMyBasicInfoMock).toHaveBeenCalledTimes(1)
     expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('继续编辑')
+    expect((wrapper.get('#settings-account-current-password').element as HTMLInputElement).value).toBe('CurrentA1')
+  })
+
+  it('clears a loaded response owner mismatch and safely reloads for same-token hydration', async () => {
+    vi.useFakeTimers()
+    getMyBasicInfoMock.mockReset()
+    getMyBasicInfoMock.mockResolvedValueOnce(account).mockResolvedValueOnce(accountB)
+    const { wrapper, auth } = createWrapper({ user: null })
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('继续编辑')
+    await wrapper.get('#settings-account-current-password').setValue('CurrentA1')
+    await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
+    await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
+
+    expect(auth.hydrateCurrentUser({ id: 2, username: 'green_user' }, 'token-a')).toBe(true)
+    await flushPromises()
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#settings-account-current-password').element as HTMLInputElement).value).toBe('')
+
+    await vi.runOnlyPendingTimersAsync()
+    await flushPromises()
+
+    expect(getMyBasicInfoMock).toHaveBeenCalledTimes(2)
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('green_user')
   })
 
   it('continues an in-flight request when only authGeneration advances', async () => {
@@ -374,14 +578,14 @@ describe('SettingsAccount', () => {
     updateMyBasicInfoMock.mockReset()
     updateMyBasicInfoMock
       .mockReturnValueOnce(response.promise)
-      .mockResolvedValueOnce({ username: 'mixeduser', phone: '13900000000', email: 'draft@example.com' })
+      .mockResolvedValueOnce(serverAccount({ username: 'mixeduser', phone: '13900000000', email: 'draft@example.com' }))
     const { wrapper } = createWrapper()
     await flushPromises()
     await wrapper.get('#settings-account-username').setValue('MixedUser')
     await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
     await wrapper.get('#settings-account-email').setValue('draft@example.com')
 
-    response.resolve({ username: 'mixeduser', phone: '13900000000', email: 'canonical@example.com' })
+    response.resolve(serverAccount({ username: 'mixeduser', phone: '13900000000', email: 'canonical@example.com' }))
     await flushPromises()
 
     expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('mixeduser')
@@ -398,7 +602,7 @@ describe('SettingsAccount', () => {
   it('syncs known-owner saved values and emits only the server username', async () => {
     const eventSpy = vi.fn()
     window.addEventListener('profile-updated', eventSpy)
-    updateMyBasicInfoMock.mockResolvedValueOnce({ username: 'server_user', phone: '13900139000', email: 'server@example.com' })
+    updateMyBasicInfoMock.mockResolvedValueOnce(serverAccount({ username: 'server_user', phone: '13900139000', email: 'server@example.com' }))
     const { wrapper, auth } = createWrapper()
     await flushPromises()
     await wrapper.get('#settings-account-username').setValue('draft_user')
@@ -414,7 +618,7 @@ describe('SettingsAccount', () => {
   it('does not infer an owner or emit profile updates for an unknown token-only session', async () => {
     const eventSpy = vi.fn()
     window.addEventListener('profile-updated', eventSpy)
-    updateMyBasicInfoMock.mockResolvedValueOnce({ username: 'server_user', phone: '13900139000', email: 'server@example.com' })
+    updateMyBasicInfoMock.mockResolvedValueOnce(serverAccount({ username: 'server_user', phone: '13900139000', email: 'server@example.com' }))
     const { wrapper } = createWrapper({ user: null })
     await flushPromises()
     await wrapper.get('#settings-account-username').setValue('draft_user')
@@ -436,7 +640,7 @@ describe('SettingsAccount', () => {
     await wrapper.findAll('button').filter((button) => button.text().includes('保存修改'))[0].trigger('click')
 
     expect(auth.hydrateCurrentUser({ id: 1, username: 'blue_user' }, 'token-a')).toBe(true)
-    response.resolve({ username: 'server_user', phone: '13900139000', email: 'server@example.com' })
+    response.resolve(serverAccount({ username: 'server_user', phone: '13900139000', email: 'server@example.com' }))
     await flushPromises()
 
     expect(auth.user).toEqual(expect.objectContaining({ username: 'server_user', phone: '13900139000', email: 'server@example.com' }))

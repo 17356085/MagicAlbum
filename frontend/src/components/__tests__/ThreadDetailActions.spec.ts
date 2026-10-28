@@ -118,6 +118,22 @@ describe('ThreadDetailActions request ownership and retry handling', () => {
     expect(mocks.getThreadLikeState).toHaveBeenCalledWith(7)
   })
 
+  it('exposes the unlike action for a liked thread and updates its state after the write', async () => {
+    mocks.getThreadLikeState.mockResolvedValueOnce({ liked: true, likeCount: 1 })
+    mocks.unlikeThread.mockResolvedValueOnce({ liked: false, likeCount: 0 })
+    wrapper = createWrapper()
+    await flushPromises()
+
+    const unlikeButton = wrapper.get('button[aria-label="取消点赞"]')
+    expect(unlikeButton.attributes('aria-pressed')).toBe('true')
+    expect(unlikeButton.text()).toContain('已点赞')
+    await unlikeButton.trigger('click')
+    await flushPromises()
+
+    expect(mocks.unlikeThread).toHaveBeenCalledWith(7)
+    expect(wrapper.get('button[aria-label="点赞"]').attributes('aria-pressed')).toBe('false')
+  })
+
   it('does not let an old like read patch a newly displayed thread', async () => {
     const oldRead = deferred<{ liked: boolean; likeCount: number }>()
     mocks.getThreadLikeState.mockReturnValueOnce(oldRead.promise)

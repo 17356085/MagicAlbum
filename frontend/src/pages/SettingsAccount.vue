@@ -5,7 +5,7 @@ import { getMyBasicInfo, updateMyBasicInfo, updateMyPassword } from '@/api/setti
 import { useAuthStore } from '@/stores/auth'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { isValidUsername, isValidPhone, isValidEmail, isStrongPassword, getPasswordError } from '@/utils/validators'
-import type { ApiError, BasicInfoPayload, Id } from '@/types'
+import type { ApiError, BasicInfoPayload, BasicInfoResponse, Id } from '@/types'
 
 interface PasswordForm {
   current: string
@@ -35,6 +35,30 @@ interface SessionContext {
 }
 
 const EMPTY_ACCOUNT: AccountForm = { username: '', phone: '', email: '' }
+const DECIMAL_ID_PATTERN = /^[1-9]\d*$/
+// JSON numbers must stay within JavaScript's safe range. Decimal strings do
+// not lose precision and may represent the backend's signed Java long range.
+const MAX_DECIMAL_ID_STRING = '9223372036854775807'
+const BASIC_INFO_RESPONSE_ERROR = '账户信息响应无效，请重试'
+const PROFILE_RESPONSE_UNCONFIRMED = '保存结果无法确认，请重新加载账户信息核实'
+const ACCOUNT_OWNER_MISMATCH = '账号状态已变更，账户归属不一致，请刷新页面后重试'
+
+class BasicInfoResponseError extends Error {
+  constructor() {
+    super(BASIC_INFO_RESPONSE_ERROR)
+    this.name = 'BasicInfoResponseError'
+    Object.setPrototypeOf(this, new.target.prototype)
+  }
+}
+
+class BasicInfoResponseOwnerMismatchError extends Error {
+  constructor() {
+    super(ACCOUNT_OWNER_MISMATCH)
+    this.name = 'BasicInfoResponseOwnerMismatchError'
+    Object.setPrototypeOf(this, new.target.prototype)
+  }
+}
+
 const authStore = useAuthStore()
 const { token, user } = storeToRefs(authStore)
 const profile = reactive<AccountForm>({ ...EMPTY_ACCOUNT })
@@ -64,6 +88,7 @@ let passwordMessageVersion = 0
 let observedToken = ''
 let observedStoredToken = ''
 let observedOwnerKey: string | null = null
+let confirmedOwnerKey: string | null = null
 
 const emit = defineEmits<{
   'dirty-change': [dirty: boolean]
@@ -77,11 +102,60 @@ function accountSnapshot(value: Partial<AccountForm>): string {
   })
 }
 
-function normalizeAccount(value: Partial<BasicInfoPayload> | null | undefined, fallback: Partial<AccountForm> = EMPTY_ACCOUNT): AccountForm {
+function normalizeAccount(value: Partial<BasicInfoPayload> | null | undefined): AccountForm {
   return {
-    username: String(value?.username ?? fallback.username ?? ''),
-    phone: String(value?.phone ?? fallback.phone ?? ''),
-    email: String(value?.email ?? fallback.email ?? ''),
+    username: String(value?.username ?? ''),
+    phone: String(value?.phone ?? ''),
+    email: String(value?.email ?? ''),
+  }
+}
+
+function normalizeResponseId(value: unknown): Id | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null
+  if (typeof value !== 'string'
+    || !DECIMAL_ID_PATTERN.test(value)
+    || value.length > MAX_DECIMAL_ID_STRING.length
+    || (value.length === MAX_DECIMAL_ID_STRING.length && value > MAX_DECIMAL_ID_STRING)) return null
+  return value
+}
+
+interface BasicInfoResponseIdentity {
+  record: Record<string, unknown>
+  id: Id
+}
+
+function parseBasicInfoResponseIdentity(value: unknown): BasicInfoResponseIdentity {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new BasicInfoResponseError()
+  const record = value as Record<string, unknown>
+  const hasOwn = (field: string): boolean => Object.prototype.hasOwnProperty.call(record, field)
+  const id = hasOwn('id') ? normalizeResponseId(record.id) : null
+  if (id === null) throw new BasicInfoResponseError()
+
+  return { record, id }
+}
+
+function validateBasicInfoResponse(value: unknown): BasicInfoResponse {
+  const { record, id } = parseBasicInfoResponseIdentity(value)
+  const hasOwn = (field: string): boolean => Object.prototype.hasOwnProperty.call(record, field)
+  if (!hasOwn('username') || typeof record.username !== 'string' || !record.username.trim()
+    || !hasOwn('phone') || typeof record.phone !== 'string' || !record.phone.trim()
+    || !hasOwn('email') || typeof record.email !== 'string' || !record.email.trim()) {
+    throw new BasicInfoResponseError()
+  }
+
+  return {
+    id,
+    username: record.username,
+    phone: record.phone,
+    email: record.email,
+  }
+}
+
+function assertResponseOwner(value: unknown): void {
+  const { id } = parseBasicInfoResponseIdentity(value)
+  const expectedOwnerKey = idKey(currentOwnerId()) ?? confirmedOwnerKey
+  if (expectedOwnerKey !== null && expectedOwnerKey !== idKey(id)) {
+    throw new BasicInfoResponseOwnerMismatchError()
   }
 }
 
@@ -227,6 +301,7 @@ function resetAccountStateForSession(): void {
   accountLoading.value = false
   accountLoaded.value = false
   accountLoadError.value = ''
+  confirmedOwnerKey = null
   savingProfile.value = false
   savingPassword.value = false
   pwd.current = ''
@@ -255,7 +330,10 @@ function observeSessionChange(): boolean {
   const nextOwnerKey = idKey(currentOwnerId())
   const tokenChanged = nextToken !== observedToken || nextStoredToken !== observedStoredToken
   const sameTokenHydration = !tokenChanged && observedOwnerKey === null && nextOwnerKey !== null
-  const ownerChanged = !sameTokenHydration && nextOwnerKey !== observedOwnerKey
+  const hydratedOwnerMismatch = sameTokenHydration
+    && confirmedOwnerKey !== null
+    && nextOwnerKey !== confirmedOwnerKey
+  const ownerChanged = (!sameTokenHydration && nextOwnerKey !== observedOwnerKey) || hydratedOwnerMismatch
   observedToken = nextToken
   observedStoredToken = nextStoredToken
   observedOwnerKey = nextOwnerKey
@@ -289,6 +367,11 @@ function clearStateOnSessionDrift(context: SessionContext, sequence: number, cur
   clearUnavailableSession()
 }
 
+function clearStateOnOwnerMismatch(): void {
+  resetAccountStateForSession()
+  accountLoadError.value = ACCOUNT_OWNER_MISMATCH
+}
+
 async function reloadProfile(): Promise<void> {
   if (disposed) return
   if (savingProfile.value) {
@@ -307,16 +390,21 @@ async function reloadProfile(): Promise<void> {
   try {
     const data = await getMyBasicInfo()
     if (!isCurrentOperation(context, sequence, profileLoadSeq)) return
-    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) throw new Error('账户信息为空，请稍后重试')
-    const normalized = normalizeAccount(data)
-    profile.username = normalized.username
-    profile.phone = normalized.phone
-    profile.email = normalized.email
-    profileBaseline.value = accountSnapshot(normalized)
+    assertResponseOwner(data)
+    const response = validateBasicInfoResponse(data)
+    confirmedOwnerKey = idKey(response.id)
+    profile.username = response.username
+    profile.phone = response.phone
+    profile.email = response.email
+    profileBaseline.value = accountSnapshot(response)
     accountLoaded.value = true
     clearErrors()
   } catch (error: unknown) {
     if (!isCurrentOperation(context, sequence, profileLoadSeq)) return
+    if (error instanceof BasicInfoResponseOwnerMismatchError) {
+      clearStateOnOwnerMismatch()
+      return
+    }
     accountLoaded.value = false
     accountLoadError.value = getApiErrorMessage(error, '账户信息加载失败，请重试')
   } finally {
@@ -334,6 +422,7 @@ function validateProfile(): boolean {
   if (!phone) { errors.phone = '请输入手机号'; ok = false }
   else if (!isValidPhone(phone)) { errors.phone = '请输入有效手机号（1 开头的 11 位）'; ok = false }
   if (!email) { errors.email = '请输入邮箱'; ok = false }
+  else if (email.length > 255) { errors.email = '邮箱长度不能超过 255 个字符'; ok = false }
   else if (!isValidEmail(email)) { errors.email = '邮箱格式不正确'; ok = false }
   return ok
 }
@@ -359,8 +448,9 @@ async function onSaveProfile(): Promise<void> {
   try {
     const data = await updateMyBasicInfo(submitted)
     if (!isCurrentOperation(context, sequence, profileSaveSeq)) return
-    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) throw new Error('保存结果为空，请稍后重试')
-    const server = normalizeAccount(data, submitted)
+    assertResponseOwner(data)
+    const server = validateBasicInfoResponse(data)
+    confirmedOwnerKey = idKey(server.id)
     const current = normalizeAccount(profile)
     profile.username = current.username !== submitted.username ? current.username : server.username
     profile.phone = current.phone !== submitted.phone ? current.phone : server.phone
@@ -380,6 +470,14 @@ async function onSaveProfile(): Promise<void> {
     setProfileMessage('保存成功')
   } catch (error: unknown) {
     if (!isCurrentOperation(context, sequence, profileSaveSeq)) return
+    if (error instanceof BasicInfoResponseOwnerMismatchError) {
+      clearStateOnOwnerMismatch()
+      return
+    }
+    if (error instanceof BasicInfoResponseError) {
+      setProfileMessage(PROFILE_RESPONSE_UNCONFIRMED, true)
+      return
+    }
     const msg = getApiErrorMessage(error)
     if (/用户名/.test(msg)) errors.username = msg
     if (/邮箱/.test(msg)) errors.email = msg

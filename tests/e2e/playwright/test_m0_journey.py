@@ -477,7 +477,7 @@ def test_m0_r01_r04_browser_journey(playwright_instance: Playwright) -> None:
             # A second interaction notification lets the UI exercise both the
             # explicit "已读" action and the notification "查看" navigation.
             thread_actions_b = page_b.locator("section[aria-label='帖子互动']")
-            thread_actions_b.get_by_role("button", name="点赞", exact=False).click()
+            thread_actions_b.get_by_role("button", name="点赞", exact=True).click()
             like_state = _eventually(
                 "browser thread like",
                 lambda: _thread_like_state(client_b, thread_id, expected=True),
@@ -643,7 +643,9 @@ def test_m0_r01_r04_browser_journey(playwright_instance: Playwright) -> None:
 
             # Undo the notification-producing like through its browser context
             # and verify that transition through the API as well.
-            thread_actions_b.get_by_role("button", name="已点赞", exact=False).click()
+            unlike_button = thread_actions_b.get_by_role("button", name="取消点赞", exact=True)
+            expect(unlike_button).to_have_attribute("aria-pressed", "true")
+            unlike_button.click()
             unlike_state = _eventually(
                 "browser thread unlike",
                 lambda: _thread_like_state(client_b, thread_id, expected=False),

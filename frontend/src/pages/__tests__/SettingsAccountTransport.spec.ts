@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import SettingsAccount from '../SettingsAccount.vue'
 
 const originalAdapter = api.defaults.adapter
-const account = { username: 'blue_user', phone: '13800138000', email: 'blue@example.test' }
+const account = { id: 7, username: 'blue_user', phone: '13800138000', email: 'blue@example.test' }
 let wrapper: VueWrapper | undefined
 
 beforeEach(() => {
@@ -37,7 +37,152 @@ async function submitPassword(): Promise<void> {
   await flushPromises()
 }
 
-describe('account password form with the real API client and auth store', () => {
+describe('account form with the real API client and auth store', () => {
+  it('sends a PATCH payload without id and accepts the canonical UserDto response', async () => {
+    let patchPayload: unknown
+    api.defaults.adapter = async config => {
+      expect(config.headers.get('Authorization')).toBe('Bearer account-token')
+      if (config.method === 'get' && config.url === '/users/me/basic') {
+        return { config, data: account, headers: {}, status: 200, statusText: 'OK' }
+      }
+      expect(config.method).toBe('patch')
+      expect(config.url).toBe('/users/me/basic')
+      patchPayload = typeof config.data === 'string' ? JSON.parse(config.data) : config.data
+      return {
+        config,
+        data: { id: 7, username: 'saved_user', phone: account.phone, email: account.email },
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      }
+    }
+
+    wrapper = mount(SettingsAccount)
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('saved_user')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(patchPayload).toEqual({ username: 'saved_user', phone: account.phone, email: account.email })
+    expect(patchPayload).not.toHaveProperty('id')
+    expect(wrapper.text()).toContain('保存成功')
+  })
+
+  it('keeps a malformed GET unloaded and retries only after an explicit user action', async () => {
+    let getCalls = 0
+    api.defaults.adapter = async config => {
+      expect(config.headers.get('Authorization')).toBe('Bearer account-token')
+      expect(config.method).toBe('get')
+      expect(config.url).toBe('/users/me/basic')
+      getCalls += 1
+      return {
+        config,
+        data: getCalls === 1 ? { ...account, email: '' } : account,
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      }
+    }
+
+    wrapper = mount(SettingsAccount)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户信息响应无效')
+    expect(wrapper.findAll('button').filter(button => button.text() === '保存修改')[0].attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(getCalls).toBe(2)
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe(account.username)
+  })
+
+  it('clears a GET response that belongs to another known owner', async () => {
+    api.defaults.adapter = async config => {
+      expect(config.headers.get('Authorization')).toBe('Bearer account-token')
+      expect(config.method).toBe('get')
+      expect(config.url).toBe('/users/me/basic')
+      return {
+        config,
+        data: { id: 8, username: 'green_user', phone: '13900139000', email: 'green@example.test' },
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      }
+    }
+
+    wrapper = mount(SettingsAccount)
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户归属不一致')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.findAll('button').filter(button => button.text() === '保存修改')[0].attributes('disabled')).toBeDefined()
+  })
+
+  it('does not retry a PATCH after an unconfirmable response', async () => {
+    let patchCalls = 0
+    api.defaults.adapter = async config => {
+      expect(config.headers.get('Authorization')).toBe('Bearer account-token')
+      if (config.method === 'get' && config.url === '/users/me/basic') {
+        return { config, data: account, headers: {}, status: 200, statusText: 'OK' }
+      }
+      expect(config.method).toBe('patch')
+      patchCalls += 1
+      return {
+        config,
+        data: { id: 7, username: 'server_may_have_written', phone: account.phone },
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      }
+    }
+
+    wrapper = mount(SettingsAccount)
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('server_may_have_written')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(patchCalls).toBe(1)
+    expect(wrapper.text()).toContain('保存结果无法确认，请重新加载账户信息核实')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('server_may_have_written')
+    expect(useAuthStore().user).toEqual({ id: 7, username: account.username })
+  })
+
+  it('clears drafts for a parseable PATCH response from another owner', async () => {
+    let patchCalls = 0
+    api.defaults.adapter = async config => {
+      expect(config.headers.get('Authorization')).toBe('Bearer account-token')
+      if (config.method === 'get' && config.url === '/users/me/basic') {
+        return { config, data: account, headers: {}, status: 200, statusText: 'OK' }
+      }
+      expect(config.method).toBe('patch')
+      patchCalls += 1
+      return {
+        config,
+        data: { id: 8, username: 'green_user', phone: '13900139000', email: 'green@example.test' },
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      }
+    }
+
+    wrapper = mount(SettingsAccount)
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('draft_user')
+    await wrapper.get('#settings-account-current-password').setValue('CurrentA1')
+    await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
+    await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(patchCalls).toBe(1)
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户归属不一致')
+    expect(wrapper.text()).not.toContain('保存结果无法确认，请重新加载账户信息核实')
+    expect((wrapper.get('#settings-account-username').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#settings-account-current-password').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.findAll('button').filter(button => button.text() === '保存修改')[0].attributes('disabled')).toBeDefined()
+  })
+
   it('keeps the session on a password challenge error and allows a successful retry', async () => {
     let passwordCalls = 0
     api.defaults.adapter = async config => {

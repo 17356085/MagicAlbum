@@ -2,11 +2,13 @@ package com.example.demo.auth.service.otp;
 
 import com.example.demo.auth.dto.CognitoAuthFlowResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClient;
@@ -14,30 +16,62 @@ import org.springframework.web.client.RestClient;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 @Component
 public class RestCognitoOtpClient implements CognitoOtpClient {
-    private static final Logger log = LoggerFactory.getLogger(RestCognitoOtpClient.class);
     private static final String COGNITO_CONTENT_TYPE = "application/x-amz-json-1.1";
+    private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(5);
     private final RestClient restClient;
-    private final String baseUrl;
     private final String clientId;
     private final String clientSecret;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
     public RestCognitoOtpClient(
             @Value("${app.auth.cognito.region:ap-southeast-1}") String region,
             @Value("${app.auth.cognito.app-client-id:}") String clientId,
             @Value("${app.auth.cognito.app-client-secret:}") String clientSecret
     ) {
-        this.baseUrl = "https://cognito-idp." + trimToEmpty(region) + ".amazonaws.com/";
-        this.restClient = RestClient.builder()
-                .baseUrl(baseUrl)
-                .build();
+        this(RestClient.builder(), "https://cognito-idp." + trimToEmpty(region) + ".amazonaws.com/",
+                clientId, clientSecret, requestFactory(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT));
+    }
+
+    /** Test seam: the supplied builder may be bound to a local stub server. */
+    RestCognitoOtpClient(RestClient.Builder restClientBuilder, String baseUrl, String clientId, String clientSecret) {
+        this(restClientBuilder, baseUrl, clientId, clientSecret, null);
+    }
+
+    /** Test seam: use a local base URL with bounded timeouts. */
+    RestCognitoOtpClient(
+            String baseUrl,
+            String clientId,
+            String clientSecret,
+            Duration connectTimeout,
+            Duration readTimeout
+    ) {
+        this(RestClient.builder(), baseUrl, clientId, clientSecret,
+                requestFactory(connectTimeout, readTimeout));
+    }
+
+    private RestCognitoOtpClient(
+            RestClient.Builder restClientBuilder,
+            String baseUrl,
+            String clientId,
+            String clientSecret,
+            ClientHttpRequestFactory requestFactory
+    ) {
+        RestClient.Builder builder = restClientBuilder.baseUrl(baseUrl);
+        if (requestFactory != null) {
+            builder.requestFactory(requestFactory);
+        }
+        this.restClient = builder.build();
         this.clientId = trimToEmpty(clientId);
         this.clientSecret = trimToEmpty(clientSecret);
     }
@@ -96,20 +130,18 @@ public class RestCognitoOtpClient implements CognitoOtpClient {
                     .body(String.class);
 
             if (responseBody == null || responseBody.isBlank()) {
-                throw new IllegalStateException("Cognito 返回为空");
+                throw CognitoOtpProviderException.unavailable();
             }
             return readJson(responseBody);
         } catch (HttpStatusCodeException ex) {
-            log.error("Cognito OTP HTTP error. target={} status={} exception={}",
-                    target, ex.getStatusCode().value(), ex.getClass().getSimpleName());
-            throw new IllegalStateException(
-                    "Cognito OTP 调用失败: HTTP " + ex.getStatusCode().value(),
-                    ex
-            );
+            if (ex.getStatusCode().value() == 400 && hasInvalidCodeType(ex)) {
+                throw CognitoOtpProviderException.invalidCode();
+            }
+            throw CognitoOtpProviderException.unavailable();
+        } catch (CognitoOtpProviderException ex) {
+            throw ex;
         } catch (Exception ex) {
-            log.error("Cognito OTP invocation error. target={} exception={}",
-                    target, ex.getClass().getSimpleName());
-            throw new IllegalStateException("Cognito OTP 调用失败", ex);
+            throw CognitoOtpProviderException.unavailable();
         }
     }
 
@@ -133,8 +165,31 @@ public class RestCognitoOtpClient implements CognitoOtpClient {
         }
     }
 
-    private String trimToEmpty(String value) {
+    private static String trimToEmpty(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static SimpleClientHttpRequestFactory requestFactory(Duration connectTimeout, Duration readTimeout) {
+        long connectTimeoutMillis = requireTimeoutMillis(connectTimeout, "connect");
+        long readTimeoutMillis = requireTimeoutMillis(readTimeout, "read");
+
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Math.toIntExact(connectTimeoutMillis));
+        factory.setReadTimeout(Math.toIntExact(readTimeoutMillis));
+        return factory;
+    }
+
+    private static long requireTimeoutMillis(Duration timeout, String kind) {
+        final long timeoutMillis;
+        try {
+            timeoutMillis = timeout == null ? 0 : timeout.toMillis();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("Cognito " + kind + " timeout is out of range", exception);
+        }
+        if (timeoutMillis < 1 || timeoutMillis > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Cognito " + kind + " timeout must be between 1 and 2147483647 ms");
+        }
+        return timeoutMillis;
     }
 
     private String writeJson(Map<String, Object> payload) {
@@ -149,7 +204,41 @@ public class RestCognitoOtpClient implements CognitoOtpClient {
         try {
             return objectMapper.readValue(responseBody, CognitoAuthFlowResponse.class);
         } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Cognito 响应解析失败", ex);
+            throw CognitoOtpProviderException.unavailable();
         }
+    }
+
+    private boolean hasInvalidCodeType(HttpStatusCodeException exception) {
+        Optional<String> bodyType = readBodyType(exception.getResponseBodyAsString());
+        String headerType = exception.getResponseHeaders() == null
+                ? null : exception.getResponseHeaders().getFirst("x-amzn-errortype");
+        return bodyType.map(this::isInvalidCodeType).orElse(false) || isInvalidCodeType(headerType);
+    }
+
+    private Optional<String> readBodyType(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode type = root == null ? null : root.get("__type");
+            return type != null && type.isTextual() ? Optional.of(type.textValue()) : Optional.empty();
+        } catch (JsonProcessingException ex) {
+            return Optional.empty();
+        }
+    }
+
+    private boolean isInvalidCodeType(String rawType) {
+        String type = trimToEmpty(rawType);
+        if (type.isBlank()) {
+            return false;
+        }
+        int metadataDelimiter = type.indexOf(':');
+        if (metadataDelimiter >= 0) {
+            type = type.substring(0, metadataDelimiter);
+        }
+        int namespaceDelimiter = type.lastIndexOf('#');
+        String suffix = namespaceDelimiter >= 0 ? type.substring(namespaceDelimiter + 1) : type;
+        return "CodeMismatchException".equals(suffix) || "ExpiredCodeException".equals(suffix);
     }
 }

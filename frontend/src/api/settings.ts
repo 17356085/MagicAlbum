@@ -1,6 +1,7 @@
 import api from './client'
 import type {
   BasicInfoPayload,
+  BasicInfoResponse,
   PasswordUpdatePayload,
   User,
   UserProfile,
@@ -40,12 +41,12 @@ export async function updateMyPassword(payload: PasswordUpdatePayload): Promise<
 }
 
 // 获取与更新我的基础账户信息（用户名、邮箱、手机号）
-export async function getMyBasicInfo(): Promise<BasicInfoPayload> {
+export async function getMyBasicInfo(): Promise<BasicInfoResponse> {
   const { data } = await api.get('/users/me/basic')
   return data
 }
 
-export async function updateMyBasicInfo(payload: BasicInfoPayload): Promise<BasicInfoPayload> {
+export async function updateMyBasicInfo(payload: BasicInfoPayload): Promise<BasicInfoResponse> {
   const { data } = await api.patch('/users/me/basic', payload)
   return data
 }

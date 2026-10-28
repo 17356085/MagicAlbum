@@ -1321,3 +1321,75 @@ outputs/last-oauth-unlink-20261027/LastOAuthUnlinkProbeTest.java 使用隔离 Sp
 提交前新执行：完整前端 Vitest 127文件/1219项全部通过，lint、type-check、构建和首屏静态依赖检查通过；独立通知服务9份新报告/41项通过；核心 Maven verify exit 0，132份新报告/607项通过，525份 backend 源/配置/POM 前后哈希一致。通知服务 JAR 及核心 JAR 的修改时间和哈希在本次 verify 前后均未变化，不能称其为本次新生成；核心 Maven 日志确认 jar/repackage 阶段成功，另将核心 JAR 中457份 classes/resources 与本机编译输出逐项比较，无缺失或差异，且未包含私密配置；这不是部署验证。脚本测试首次在 Windows 默认 Bash 环境和并行执行下失败，改为指定现有 Git Bash 并串行执行后，10个文件/49项通过；两次运行与限制保留。Go worker 本次未重跑，之前的完整测试、race、vet/build 证据对应的21份源码/模块文件与当前哈希一致，仍是历史本地 Windows/Go1.26.2 证据。
 
 这些本地检查不证明真实浏览器、外部 OAuth/Cognito、跨服务通知 HTTP/数据库读回、生产 MySQL、部署后旧数据表现或真实用户恢复。尤其独立换绑、最后登录方式保护和既有身份恢复尚未完成；MySQL UTC 连接配置变更前应评估历史时间数据，通知调用方与服务端应成对验证协议和幂等。不能把源代码提交、测试通过或 CI 构建等同于安全部署。提交前实时工具显示长期优化目标为 paused，周期任务5-20仍 PAUSED；本次交付不会把完整目标标记完成或自行恢复。所有日志和构建证据保存在本地忽略目录，源仓库仅保留本记录和相关项目代码/测试。
+
+## 2026-10-27：提交后 CI 浏览器定位修正
+
+提交 2cbdaf8281e6099060628f32ec6b29c97e2bebb6 的 GitHub Actions run 40471216483 已结束：13 项中 10 项成功、3 项失败。三项失败日志均指向同一浏览器旅程第 646 行等待名称“已点赞”的按钮超时；完整 Python 回归为 142 通过、1 失败。独立恢复任务在该浏览器关卡失败后未继续完成恢复验证，不能把它的失败等同于已证实的数据库恢复缺陷。
+
+当前组件的点赞按钮在已点赞时提供 aria-label="取消点赞" 和 aria-pressed="true"；无障碍名称优先取 aria-label，测试按可见文案“已点赞”定位不匹配。已将测试改为精确按“取消点赞”定位并断言 pressed 状态，保留点击后的服务端取消点赞读回。主代理审阅了改动；Python 测试收集到该旅程 1 项，组件专项 21 项通过，git diff --check 通过。上述检查未运行完整浏览器旅程：本机 Docker daemon 未连接，不能据此宣称三个 CI 已修复或恢复验收通过。原始 run 和工件仍可在 GitHub 查询；未重跑原提交的 CI、未新提交或推送本次定位修正。
+
+## 2026-10-27：点赞无障碍状态专项补验
+
+上一轮 CI 定位修正后，本轮增加 ThreadDetailActions 组件行为测试：模拟服务端读到已点赞，检查实际按钮无障碍名称“取消点赞”、aria-pressed 为 true 及可见“已点赞”，触发操作后检查 unlike API 被调用和按钮状态回到未点赞。该专项 22 项通过，修改文件 ESLint 通过；仓库结构检查 506 Java、269 前端文件、839 导入和 252 文档链接，Java 声明依赖检查 356 文件/2703 依赖，均无错误。本机 Docker 仍无法连接，组件测试使用模拟 API，不能证明真实网络写入、浏览器旅程或独立数据库恢复通过；本次没有重跑 GitHub CI、提交或推送。
+
+### 补充：浏览器辅助定位与账号邮箱长度
+
+只读审查发现 SettingsPage 简介 placeholder 与组件不一致、UserProfilePage 的“关注”模糊匹配也会匹配“已关注”；已更新为当前 placeholder 及精确按钮名称。M0 旅程初始点赞同样改成精确名称，避免错误状态匹配取消点赞。主代理审阅差异并独立收集用户页面与 M0 测试共 6 项；这不是浏览器运行证据。
+
+BasicInfoUpdateRequest 为邮箱增加 255 字符上限，与 users.email 的列长度一致。新增 standalone MockMvc 3 项：256 字符请求返回 400 并不调用更新服务、255 字符请求与省略邮箱仍能到达服务。主代理独立执行离线 Maven 定向测试，3 项通过；服务为 mock，不证明真实数据库写入。注册请求也有类似长度边界，尚未在本轮修改或验证。结构与声明依赖检查不证明运行时行为。
+
+邮箱验证原始旧实现基线留在 backend/target/surefire-reports/UserBasicInfoValidationControllerTest-baseline.txt：3 项中超长邮箱用例返回 200 而非期望的 400；修复后独立运行 3 项通过，另有手机号冲突相关 2 项通过。该旧基线为 standalone MockMvc 和模拟服务，不作为真实数据库行为证据。本轮末次结构检查为 507 Java 文件、269 前端文件、839 导入及 252 文档链接无错；Java 声明边界 356 文件/2703 依赖无错。
+
+## 2026-10-27：注册邮箱边界与表单反馈
+
+RegisterRequest.email 增加与 users.email 列一致的 255 字符上限，保留非空和格式校验；超限在控制器方法之前返回 400，不调用注册限流或注册服务。旧实现 standalone MockMvc 基线 3 项中 1 项失败，256 字符返回 201 而非 400，原日志 backend/target/registration-email-validation-legacy-failure.txt；修复后覆盖 256 拒绝及消息、255 到达服务和缺失邮箱拒绝。账号资料和注册表单均在提交及人机验证前展示长度错误，不静默截断。两表单测试共 52 项通过，前端 type-check、构建及首屏依赖预算通过；测试使用 63/64 字符本地部分与合法长度的域名段构造 255/256 字符边界。
+
+两位审查者曾同时在同一 backend target 运行 Maven，相关并发结果不作为验收依据；等待进程结束后主代理串行重跑 UserRegistrationEmailValidationControllerTest、UserBasicInfoValidationControllerTest、UserPhoneConflictControllerTest、PasswordChangeSecurityIT，共 19 项通过、0 失败/错误/跳过，包含隔离 H2；不代表真实 MySQL、Redis 或外部人机验证。结构检查 508 Java、269 前端、839 导入、252 文档链接无错，Java 声明依赖检查 356 文件/2703 依赖无错。注册服务先检查密码字节数再调用票据验证；但缺少直接断言验证服务未调用的后端测试，重复注册和票据消耗/重试以及提供方超时语义仍需进一步审查，不能声称已完整解决。未提交、推送或部署本轮改动。
+
+## 2026-10-27：注册验证顺序与 Turnstile 场景边界
+
+Cloudflare 的 [widget 配置文档](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/widget-configurations/)说明传入的 action 会在验证响应返回，[服务端验证文档](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)规定票据最长 2048 字符、单次使用；当前 AuthVerifyBlock 在 render 时传入登录或注册场景。旧服务在响应 action 为空时仍接受成功结果，且不在发送前限制 token 长度。现要求 Turnstile 成功响应 action 精确匹配服务端预期场景，2049 字符在访问 provider 前返回 400；off/mock 分支不变。旧客户端若未配置 action，或持有旧无场景票据，将被拒绝，需要升级并重新获取票据；尚未验证真实 Cloudflare 账户或其测试密钥行为。
+
+新增回归在旧实现下 14 项中 3 项失败，分别为 null/空 action 与超长 token，原日志 backend/target/turnstile-contract-baseline.log；修复后串行执行 AuthVerifyServiceTest、UserRegistrationVerificationOrderTest 及两组邮箱入口测试共 22 项通过，日志 backend/target/turnstile-contract-fixed.log。新注册服务单元测试证明 75 字节密码在调用验证服务、编码器和存储前拒绝，72 字节边界继续执行；它采用 mock，不证明外部服务或实际 Redis 限流。仓库结构检查 509 Java、269 前端、839 导入及 252 文档链接、Java 声明依赖 356 文件/2703 依赖均无错。尚未解决 provider 调用超时、票据消耗后注册重试与幂等，未接触真实 provider、数据库或部署。
+
+## 2026-10-27：Turnstile 请求超时与一次性票据
+
+CloudflareTurnstileVerifyClient 改用显式的连接 3 秒及读取 5 秒超时，发生传输异常沿用服务端 503 映射，不新增应用层重试；读取超时是单次读取等待限制，并非保证整个请求或缓慢持续传输总时长不超过 5 秒。Spring 上下文测试验证注入构造器，超时测试 seam 拒绝会转换成 0 的子毫秒及越界参数。旧实现的本机观察仅证明服务器释放前的即时检查尚未完成，不证明无限等待或精确等待时长，日志 backend/target/cloudflare-turnstile-legacy-baseline.log。
+
+主代理审阅差异并串行运行 21 项通过（日志 backend/target/turnstile-timeout-reviewed.log）：本机隔离 HTTP 服务验证表单 POST 与响应解析、响应体停滞导致 503、服务端在响应头之前断开时该次仅收到一个请求、Spring 创建、参数边界及既有场景/注册顺序。断连结果仅覆盖该测试故障及当前运行时，不证明所有网络故障或不同运行环境均无底层重试；超时亦不能证明 provider 没有消费票据。本轮未连接真实 Cloudflare，不能证明部署网络延迟适配。结构检查 510 Java、269 前端、839 导入/252 链接及 Java 声明依赖 356 文件/2707 依赖均无错误。
+
+只读审查另发现 Cognito OTP 完成阶段可能把提供方故障统一映射为验证码无效/过期，且超时后的 provider 结果可能未知；调用顺序与错误分类应结合可复现测试继续处理，不能仅依据静态审查宣称已修复。注册/OTP 响应丢失后的幂等、真实浏览器和外部提供方验收仍未完成。未提交、推送或部署本轮改动。
+
+## 2026-10-28：验证码完成阶段的错误分类与会话隔离
+
+[AWS RespondToAuthChallenge 文档](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_RespondToAuthChallenge.html)区分验证码不匹配、过期和内部错误；NotAuthorizedException 不能单独证明验证码不正确。原实现将 provider 任意异常映射为 401；新增隔离基线中邮箱和手机的未知 provider 异常两项失败，日志 backend/target/otp-old-implementation-failing.log。现通过内部安全类型分类：仅 HTTP 400 且 __type 或 x-amzn-errortype 精确识别 CodeMismatchException/ExpiredCodeException 才返回 401；其他 4xx/429/5xx、网络或解析失败及不完整认证结果返回 503，不把 provider 响应正文、会话、票据或异常 cause 暴露到 finish 错误。头部带冒号附加信息与命名空间格式由受控 fixture 覆盖；已有本地账号未验证的 409 不变。实际 provider 的错误响应及部署配置未实测。
+
+前端 OTP finish 结果不明确时，只清除所属当前 operation 的验证码 session 并提示重新获取；迟到旧响应不能清掉新会话。401/429 保持原有重试行为，409 清除已消费 session 并保留明确账号提示。清理计时器时倒计时归零。组件与 transport 46 项通过；type-check、构建及首屏静态预算通过。主代理审阅并串行运行 CognitoOtpAuthServiceTest、RestCognitoOtpClientTest 和 PasswordChangeSecurityIT，共 42 项通过，含 Spring 测试上下文及隔离 H2，日志 backend/target/otp-classification-reviewed.log；结构检查 512 Java、269 前端、839 导入/252 文档链接，Java 声明依赖 357 文件/2706 依赖无错。对外 provider 和浏览器未验证；清除前端 session 不等于撤回已完成的 provider 验证或本地写入。Cognito HTTP 超时、登录响应丢失后的状态恢复与注册幂等仍待继续处理。本轮未提交、推送或部署。
+
+## 2026-10-28：Cognito 超时与验证码重发结果未知
+
+RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5 秒，保留既有错误分类及请求契约，未加入应用层重试。读取超时是单次读取等待限制而不是整个请求的总时限；OTP 开始可能先后执行多个 provider 调用，不能把前端 10 秒超时当作服务端总时限。本机 HTTP stub 验证请求头、JSON、响应解析、停滞响应映射 503、响应头前断连当次仅发一次请求；还检查 Spring bean 创建和非法超时参数。该断连结果不覆盖所有传输故障及不同运行环境，也不能证明 provider 未消费验证码。实际 AWS 网络与连接超时没有验收。
+
+验证码发送阶段 provider 异常不再要求终端用户检查 Cognito 配置，邮箱和手机号均返回固定 503 文案且不保留原异常 cause。旧实现 18 项中 2 项文案测试失败，日志 backend/target/otp-start-feedback-baseline.log；主代理审阅并串行运行 CognitoOtpAuthServiceTest、RestCognitoOtpClientTest、RestCognitoOtpClientTimeoutTest、AuthVerifyServiceTest，共 52 项通过，日志 backend/target/cognito-timeout-reviewed.log。
+
+已有验证码 session 的重发请求如超时、5xx、协议异常或渠道不匹配，前端只在原操作、身份与旧 session 快照仍匹配时清除旧 session 并提示发送结果未知；429 或未发出请求的本地失败保留旧 session。先前测试基线中邮箱503、手机超时和损坏响应三个场景失败，修复后相关前端组件/transport 共 53 项通过，type-check、构建及首屏预算通过。因某些 503 可在调用 provider 前由限流基础设施产生，保守清除也可能丢弃仍有效的旧 session；区分安全错误码仍待设计。重发失败后清除页面会话不代表新验证码未发送。结构检查 513 Java、269 前端、839 导入/252 链接、Java 声明依赖 357 文件/2709 依赖无错。未真实访问 Cognito、浏览器或生产数据库，也未提交、推送或部署。
+
+## 2026-10-28：限流故障与验证码结果未知的区分
+
+验证码 start/finish 控制器仅在其限流调用抛出 503、且尚未调用 OTP 服务时返回固定安全文案与 code=OTP_PROVIDER_NOT_CALLED；服务本身的 503 不带此标识，429 原样保留。限流失败即使发生在多个检查中的后一个，可能已有部分限流计数，但 provider 尚未调用；标识不表示限流计数未改变。前端只在同时收到 HTTP 503 和完全匹配 code 时保留旧验证码 session/提示；缺失或不匹配 code 的 503 继续视为结果未知并清除所属 session。旧服务器没有 code 时仍按保守逻辑处理。
+
+只读审查与主代理共同确定边界，两个实现由不同子代理完成并审阅差异。后端 standalone MockMvc 测试涵盖 start/finish 限流503、敏感限流 reason 不泄露、服务503不误标和429；主代理串行复跑相关 44 项通过，日志 backend/target/otp-not-called-reviewed.log。前端两个专项 66 项通过，type-check、构建与首屏预算通过；覆盖状态/错误码组合、账号切换与旧响应。组件及 controller 测试使用 mock，不证明真实 Redis、Cognito 或浏览器；限流器以外的未知失败依然可能保守清除有效 session，也未解决 provider 成功后响应丢失的恢复/幂等。仓库结构 514 Java、269 前端、839 导入/252 链接，Java 声明依赖 357 文件/2713 依赖无误。本轮无提交、推送或部署。
+
+## 2026-10-28：账户响应契约与本批提交前验收
+
+账户基本资料加载与保存只接受带合法用户 ID 和非空用户名、邮箱、手机号的响应，已知或刚完成身份补齐的账号必须匹配响应 ID；token-only 阶段不会用响应反向建立身份。ID 数字需在 JavaScript 安全整数范围，十进制字符串可精确表示 Java long 正范围。保存响应无效时不将提交值当成服务端确认，不更新 baseline、账号缓存或更新事件，保留草稿并提示重新加载核实；这不代表服务端写入一定失败。
+
+本批后端完整离线 Maven verify 日志记录 656 项通过、0 失败/错误/跳过并重新打包；日志 backend/target/optimization-full-20261028.log。前端完整 Vitest 日志记录 127 文件、1275 项通过，原进程句柄已失效、退出码无法再次读取；相关 frontend 源文件修改时间早于本次测试开始，日志 backend/target/frontend-full-20261028.log。随后对当前前端重新执行 lint、type-check、build 与首屏依赖预算均 exit 0；仓库结构 514 Java、269 前端、841 导入/252 文档链接及 Java 声明依赖 357 文件/2713 依赖无误。这些检查不能替代真实浏览器、Redis、MySQL 或外部 OAuth/Cognito/Turnstile 验收。
+
+用户要求今后每完成一次优化便提交并推送远程；本批准备按已审阅范围一次提交。无新增部署授权。账号联系方式验证、最后登录方式保护、历史身份恢复和第三方成功后本地失败/响应丢失的恢复仍未完成；Turnstile action 严格校验会影响未带场景的旧客户端，部署前须验证迁移和提供方兼容性。原 GitHub run 40471216483 的三项浏览器相关失败指向旧按钮定位，本地修正尚未通过完整浏览器回归，后续仍需检查新的 CI 和运行结果。
+
+### 提交前补充：身份补齐与最终前端复验
+
+只读复核发现已加载账户后收到其他合法 owner 的响应可能保留旧资料，以及 token-only 加载后补齐不同 owner 时可能继续显示先前资料。现记录已确认响应 owner，合法但不同 owner 优先于字段缺失判定；错配时清空账户与密码表单、禁用写入并提示重新核实，同 token 同 owner 补齐保留草稿，不同 owner 清空后按既有生命周期重载。一般字段缺失的保存响应仍保留草稿并提示保存结果无法确认。另有独立只读复核未发现该修复的明显阻塞；这些防御性场景不证明正常后端已发生跨账号返回。
+
+修复后的完整 Vitest 新执行 127 文件、1280 项通过、exit 0；272 个前端源文件和相关配置在测试前后、构建后哈希一致，记录 backend/target/frontend-owner-pre.json 与 frontend-owner-post.json，日志 frontend-owner-full.log。当前版本 lint、type-check、build 和首屏依赖预算再次通过，结构检查 514 Java、269 前端、841 导入/252 文档链接，Java 声明依赖 357 文件/2713 依赖无错。后端 656 项完整 verify 属本轮较早时的当前后端源码，未用其代替真实浏览器、真实云端认证、Redis/MySQL 或账号恢复验收。

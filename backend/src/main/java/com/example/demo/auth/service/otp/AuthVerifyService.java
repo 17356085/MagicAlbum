@@ -16,6 +16,7 @@ public class AuthVerifyService {
     private static final String MOCK_PROVIDER = "mock-manual";
     private static final String MOCK_TOKEN_PREFIX = "mock_verify_";
     private static final String TURNSTILE_PROVIDER = "turnstile";
+    private static final int MAX_TURNSTILE_TOKEN_LENGTH = 2048;
 
     private final String verifyMode;
     private final String expectedHostname;
@@ -88,6 +89,9 @@ public class AuthVerifyService {
         if (!TURNSTILE_PROVIDER.equals(verifyProvider)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "验证提供方不受支持");
         }
+        if (verifyToken.length() > MAX_TURNSTILE_TOKEN_LENGTH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "验证票据无效");
+        }
 
         final TurnstileSiteVerifyResponse response;
         try {
@@ -106,7 +110,7 @@ public class AuthVerifyService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "验证票据无效");
         }
 
-        if (!isBlank(response.getAction()) && !expectedScene.equals(response.getAction())) {
+        if (!expectedScene.equals(response.getAction())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "验证场景不匹配");
         }
     }

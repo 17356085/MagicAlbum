@@ -222,6 +222,7 @@ function phoneValidationError(phone: string): string {
 
 function emailValidationError(email: string): string {
   if (!email) return '请输入电子邮箱'
+  if (email.length > 255) return '邮箱长度不能超过 255 个字符'
   if (!isValidEmail(email)) return '邮箱格式不正确'
   return ''
 }

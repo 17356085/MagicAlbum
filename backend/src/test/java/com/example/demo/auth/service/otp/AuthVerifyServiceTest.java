@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -108,6 +109,75 @@ class AuthVerifyServiceTest {
         );
         assertEquals(400, ex.getStatusCode().value());
         assertEquals("验证场景不匹配", ex.getReason());
+    }
+
+    @Test
+    void shouldRejectTurnstileWhenActionIsNull() {
+        AuthVerifyService service = AuthVerifyService.forTest("turnstile", "localhost", token -> {
+            TurnstileSiteVerifyResponse response = new TurnstileSiteVerifyResponse();
+            response.setSuccess(true);
+            response.setHostname("localhost");
+            response.setAction(null);
+            return response;
+        });
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> service.verify("turnstile-token", "turnstile", "login", "login")
+        );
+        assertEquals(400, ex.getStatusCode().value());
+        assertEquals("验证场景不匹配", ex.getReason());
+    }
+
+    @Test
+    void shouldRejectTurnstileWhenActionIsEmpty() {
+        AuthVerifyService service = AuthVerifyService.forTest("turnstile", "localhost", token -> {
+            TurnstileSiteVerifyResponse response = new TurnstileSiteVerifyResponse();
+            response.setSuccess(true);
+            response.setHostname("localhost");
+            response.setAction("");
+            return response;
+        });
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> service.verify("turnstile-token", "turnstile", "login", "login")
+        );
+        assertEquals(400, ex.getStatusCode().value());
+        assertEquals("验证场景不匹配", ex.getReason());
+    }
+
+    @Test
+    void shouldAcceptTurnstileTokenAtMaximumLength() {
+        AtomicInteger clientCalls = new AtomicInteger();
+        AuthVerifyService service = AuthVerifyService.forTest("turnstile", "localhost", token -> {
+            clientCalls.incrementAndGet();
+            TurnstileSiteVerifyResponse response = new TurnstileSiteVerifyResponse();
+            response.setSuccess(true);
+            response.setHostname("localhost");
+            response.setAction("login");
+            return response;
+        });
+
+        assertDoesNotThrow(() -> service.verify("t".repeat(2048), "turnstile", "login", "login"));
+        assertEquals(1, clientCalls.get());
+    }
+
+    @Test
+    void shouldRejectTurnstileTokenOverMaximumLengthBeforeCallingClient() {
+        AtomicInteger clientCalls = new AtomicInteger();
+        AuthVerifyService service = AuthVerifyService.forTest("turnstile", "localhost", token -> {
+            clientCalls.incrementAndGet();
+            throw new AssertionError("oversized token should not call verify client");
+        });
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> service.verify("t".repeat(2049), "turnstile", "login", "login")
+        );
+        assertEquals(400, ex.getStatusCode().value());
+        assertEquals("验证票据无效", ex.getReason());
+        assertEquals(0, clientCalls.get());
     }
 
     @Test

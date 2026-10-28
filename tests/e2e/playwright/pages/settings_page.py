@@ -63,7 +63,7 @@ class SettingsPage(BasePage):
 
     @property
     def bio_textarea(self) -> Locator:
-        return self.page.get_by_placeholder("个人介绍")
+        return self.page.get_by_placeholder("介绍一下自己吧，支持 Markdown")
 
     @property
     def save_profile_btn(self) -> Locator:

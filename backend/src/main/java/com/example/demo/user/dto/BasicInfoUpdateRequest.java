@@ -10,6 +10,7 @@ public class BasicInfoUpdateRequest {
     private String username;
 
     @Email(message = "邮箱格式不正确")
+    @Size(max = 255, message = "邮箱长度不能超过 255 个字符")
     private String email;
 
     @Pattern(regexp = "^1\\d{10}$", message = "手机号格式不正确")

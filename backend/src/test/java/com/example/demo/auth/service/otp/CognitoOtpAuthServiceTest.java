@@ -31,6 +31,7 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class CognitoOtpAuthServiceTest {
@@ -64,6 +65,23 @@ class CognitoOtpAuthServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(client, users).finish(request))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
         org.mockito.Mockito.verifyNoInteractions(users);
+    }
+
+    @Test
+    void emailFinishMapsOnlyClassifiedInvalidCodeToExistingUnauthorizedResponse() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq("invalid@example.com"), any(), eq("session")))
+                .thenThrow(CognitoOtpProviderException.invalidCode());
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> service(client, users).finish(finishRequest(
+                        AuthCodeChannel.email, "invalid@example.com", "session")));
+
+        assertEquals(HttpStatus.UNAUTHORIZED, thrown.getStatusCode());
+        assertEquals("邮箱验证码无效或已过期", thrown.getReason());
+        assertEquals(null, thrown.getCause());
+        verifyNoInteractions(users);
     }
 
     @Test
@@ -102,6 +120,44 @@ class CognitoOtpAuthServiceTest {
         assertEquals(300, startResponse.getExpireSeconds());
         assertEquals(60, startResponse.getCooldownSeconds());
         assertTrue(startResponse.getMaskedAddress().contains("****"));
+    }
+
+    @Test
+    void emailStartMapsProviderFailureToServiceUnavailableWithoutCauseOrLocalUserWrites() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        RuntimeException providerFailure = new IllegalStateException(
+                "CognitoClientException access-key-secret endpoint-internal-details");
+        when(client.initiateUserAuth("unavailable@example.com", "EMAIL_OTP"))
+                .thenThrow(providerFailure);
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> service(client, users).start(startRequest(
+                        AuthCodeChannel.email, "unavailable@example.com")));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, thrown.getStatusCode());
+        assertEquals("邮箱验证码服务暂不可用，请稍后重试", thrown.getReason());
+        assertEquals(null, thrown.getCause());
+        verifyNoInteractions(users);
+    }
+
+    @Test
+    void phoneStartMapsProviderFailureToServiceUnavailableWithoutCauseOrLocalUserWrites() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        RuntimeException providerFailure = new IllegalStateException(
+                "CognitoSmsException phone-number-secret provider-response-body");
+        when(client.initiateUserAuth("13800138011", "SMS_OTP"))
+                .thenThrow(providerFailure);
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> service(client, users).start(startRequest(
+                        AuthCodeChannel.phone, "13800138011")));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, thrown.getStatusCode());
+        assertEquals("手机验证码服务暂不可用，请稍后重试", thrown.getReason());
+        assertEquals(null, thrown.getCause());
+        verifyNoInteractions(users);
     }
 
     @Test
@@ -335,7 +391,9 @@ class CognitoOtpAuthServiceTest {
                         mock(JwtTokenProvider.class), AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)),
                         300, 300, 60).finish(finishRequest(AuthCodeChannel.phone, "13800138000", "session")));
 
-        assertEquals(HttpStatus.UNAUTHORIZED, thrown.getStatusCode());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, thrown.getStatusCode());
+        assertEquals("手机验证码服务暂不可用，请稍后重试", thrown.getReason());
+        assertEquals(null, thrown.getCause());
         verify(users, never()).findByPhone(anyString());
     }
 
@@ -351,8 +409,65 @@ class CognitoOtpAuthServiceTest {
                         mock(JwtTokenProvider.class), AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)),
                         300, 300, 60).finish(finishRequest(AuthCodeChannel.email, "blank@example.com", "session")));
 
-        assertEquals(HttpStatus.UNAUTHORIZED, thrown.getStatusCode());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, thrown.getStatusCode());
+        assertEquals("邮箱验证码服务暂不可用，请稍后重试", thrown.getReason());
+        assertEquals(null, thrown.getCause());
         verify(users, never()).findByEmail(anyString());
+    }
+
+    @Test
+    void emailFinishMapsUnknownProviderFailureToServiceUnavailableWithoutCauseOrProvisioning() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        RuntimeException providerFailure = new IllegalStateException(
+                "CodeMismatchException provider-body-secret session-secret");
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq("unavailable@example.com"), any(), eq("session")))
+                .thenThrow(providerFailure);
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> service(client, users).finish(
+                        finishRequest(AuthCodeChannel.email, "unavailable@example.com", "session")));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, thrown.getStatusCode());
+        assertEquals("邮箱验证码服务暂不可用，请稍后重试", thrown.getReason());
+        assertEquals(null, thrown.getCause());
+        verifyNoInteractions(users);
+    }
+
+    @Test
+    void phoneFinishMapsUnknownProviderFailureToServiceUnavailableWithoutCauseOrProvisioning() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        RuntimeException providerFailure = new IllegalStateException(
+                "ExpiredCodeException provider-body-secret session-secret");
+        when(client.respondToChallenge(eq("SMS_OTP"), eq("13800138009"), any(), eq("session")))
+                .thenThrow(providerFailure);
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> service(client, users).finish(
+                        finishRequest(AuthCodeChannel.phone, "13800138009", "session")));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, thrown.getStatusCode());
+        assertEquals("手机验证码服务暂不可用，请稍后重试", thrown.getReason());
+        assertEquals(null, thrown.getCause());
+        verifyNoInteractions(users);
+    }
+
+    @Test
+    void phoneFinishMapsOnlyClassifiedInvalidCodeToExistingUnauthorizedResponse() {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        when(client.respondToChallenge(eq("SMS_OTP"), eq("13800138010"), any(), eq("session")))
+                .thenThrow(CognitoOtpProviderException.invalidCode());
+
+        ResponseStatusException thrown = assertThrows(ResponseStatusException.class,
+                () -> service(client, users).finish(finishRequest(
+                        AuthCodeChannel.phone, "13800138010", "session")));
+
+        assertEquals(HttpStatus.UNAUTHORIZED, thrown.getStatusCode());
+        assertEquals("手机验证码无效、已过期或 Cognito 校验失败", thrown.getReason());
+        assertEquals(null, thrown.getCause());
+        verifyNoInteractions(users);
     }
 
     @Test
@@ -389,6 +504,13 @@ class CognitoOtpAuthServiceTest {
         request.setAddress(address);
         request.setCode("123456");
         request.setSession(session);
+        return request;
+    }
+
+    private static AuthCodeStartRequest startRequest(AuthCodeChannel channel, String address) {
+        AuthCodeStartRequest request = new AuthCodeStartRequest();
+        request.setChannel(channel);
+        request.setAddress(address);
         return request;
     }
 

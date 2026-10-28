@@ -123,6 +123,11 @@ async function useEmailCodeMode(wrapper: ReturnType<typeof mountLogin>): Promise
   await emailCodeButton!.trigger('click')
 }
 
+async function usePhoneCodeMode(wrapper: ReturnType<typeof mountLogin>): Promise<void> {
+  const phoneCodeButton = wrapper.findAll('button').find((button) => button.text() === '验证码登录')
+  await phoneCodeButton!.trigger('click')
+}
+
 describe('AuthLoginForm async lifecycle', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -338,6 +343,78 @@ describe('AuthLoginForm async lifecycle', () => {
     expect(wrapper.emitted('notify')).toBeUndefined()
   })
 
+  it('clears the old email OTP session when a resend response has the wrong channel', async () => {
+    vi.useFakeTimers()
+    apiMocks.startEmailCodeLogin
+      .mockResolvedValueOnce({
+        channel: 'email',
+        maskedAddress: 'old***@example.com',
+        session: 'old-email-session',
+        expireSeconds: 300,
+        cooldownSeconds: 60,
+      })
+      .mockResolvedValueOnce({
+        channel: 'phone',
+        maskedAddress: '138****0000',
+        session: 'wrong-channel-session',
+        expireSeconds: 300,
+        cooldownSeconds: 60,
+      })
+    const wrapper = mountLogin()
+    await useEmailCodeMode(wrapper)
+    await wrapper.get('#auth-login-email').setValue('wrong-channel@example.com')
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    vi.advanceTimersByTime(60_000)
+    await settle()
+    await wrapper.get('#auth-login-code').setValue('123456')
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+
+    expect(wrapper.text()).not.toContain('old***@example.com')
+    expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.emitted('notify')).toContainEqual(['验证码发送结果未知，请重新获取验证码'])
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it.each([
+    { channel: 'email' as const, address: 'provider-not-called@example.com', maskedAddress: 'p***@example.com', session: 'provider-email-session' },
+    { channel: 'phone' as const, address: '13800000000', maskedAddress: '138****0000', session: 'provider-phone-session' },
+  ])('keeps the $channel OTP session when resend fails before the provider is called', async ({ channel, address, maskedAddress, session }) => {
+    vi.useFakeTimers()
+    const start = channel === 'email' ? apiMocks.startEmailCodeLogin : apiMocks.startPhoneCodeLogin
+    start.mockResolvedValueOnce({ channel, maskedAddress, session, expireSeconds: 300, cooldownSeconds: 1 })
+    const wrapper = mountLogin()
+    if (channel === 'email') {
+      await useEmailCodeMode(wrapper)
+      await wrapper.get('#auth-login-email').setValue(address)
+    } else {
+      await usePhoneCodeMode(wrapper)
+      await wrapper.get('#auth-login-phone-code').setValue(address)
+    }
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    vi.advanceTimersByTime(1000)
+    await settle()
+    await wrapper.get('#auth-login-code').setValue('2468')
+
+    start.mockRejectedValueOnce({
+      response: {
+        status: 503,
+        data: { code: 'OTP_PROVIDER_NOT_CALLED', message: '验证码 provider 尚未调用' },
+      },
+    })
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+
+    expect(wrapper.text()).toContain(maskedAddress)
+    expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('2468')
+    expect(wrapper.emitted('notify')).toContainEqual(['验证码 provider 尚未调用'])
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
   it('binds a code session to the normalized address and finishes without another captcha', async () => {
     const wrapper = mountLogin()
     await useEmailCodeMode(wrapper)
@@ -380,7 +457,7 @@ describe('AuthLoginForm async lifecycle', () => {
   })
 
   it('keeps a bound code session for a wrong-code retry after its own generation advance', async () => {
-    const firstFailure = new Error('验证码错误')
+    const firstFailure = { response: { status: 401, data: { message: '验证码错误' } } }
     const retry = deferred<void>()
     authMocks.store.loginWithEmailCode
       .mockImplementationOnce(() => {
@@ -406,6 +483,196 @@ describe('AuthLoginForm async lifecycle', () => {
     expect(authMocks.store.loginWithEmailCode).toHaveBeenCalledTimes(2)
     retry.resolve()
     await second
+    await settle()
+    wrapper.unmount()
+  })
+
+  it.each([
+    { channel: 'email' as const, failure: '503' as const },
+    { channel: 'phone' as const, failure: '503' as const },
+    { channel: 'email' as const, failure: 'timeout' as const },
+    { channel: 'phone' as const, failure: 'timeout' as const },
+  ])('clears a $channel OTP session when the finish result is unknown ($failure)', async ({ channel, failure }) => {
+    const finishError = failure === 'timeout'
+      ? Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })
+      : { response: { status: 503, data: { message: '上游暂不可用' } } }
+    const finish = channel === 'email'
+      ? authMocks.store.loginWithEmailCode
+      : authMocks.store.loginWithPhoneCode
+    finish.mockImplementationOnce(() => {
+      authMocks.advanceGeneration()
+      return Promise.reject(finishError)
+    })
+
+    const wrapper = mountLogin()
+    if (channel === 'email') {
+      await useEmailCodeMode(wrapper)
+      await wrapper.get('#auth-login-email').setValue('unknown-result@example.com')
+    } else {
+      await usePhoneCodeMode(wrapper)
+      await wrapper.get('#auth-login-phone-code').setValue('13800000000')
+    }
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+
+    const maskedAddress = channel === 'email' ? 'u***@example.com' : '138****0000'
+    expect(wrapper.text()).toContain(maskedAddress)
+    await wrapper.get('#auth-login-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.text()).not.toContain(maskedAddress)
+    expect(wrapper.emitted('notify')).toContainEqual(['验证码验证结果未知，请重新获取验证码'])
+    wrapper.unmount()
+  })
+
+  it.each([
+    { status: 401, message: '验证码错误', keepsSession: true },
+    { status: 429, message: '请求过于频繁', keepsSession: true },
+    { status: 409, message: '账号尚未完成本地验证', keepsSession: false },
+  ])('handles a known OTP finish status $status without losing its explicit message', async ({ status, message, keepsSession }) => {
+    authMocks.store.loginWithEmailCode.mockImplementationOnce(() => {
+      authMocks.advanceGeneration()
+      return Promise.reject({ response: { status, data: { message } } })
+    })
+    const wrapper = mountLogin()
+    await useEmailCodeMode(wrapper)
+    await wrapper.get('#auth-login-email').setValue('known-status@example.com')
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    await wrapper.get('#auth-login-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    if (keepsSession) {
+      expect(wrapper.text()).toContain('u***@example.com')
+      expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('123456')
+    } else {
+      expect(wrapper.text()).not.toContain('u***@example.com')
+      expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('')
+    }
+    expect(wrapper.emitted('notify')).toContainEqual([message])
+    wrapper.unmount()
+  })
+
+  it.each([
+    { channel: 'email' as const, address: 'provider-not-called@example.com', maskedAddress: 'u***@example.com' },
+    { channel: 'phone' as const, address: '13800000000', maskedAddress: '138****0000' },
+  ])('keeps the $channel OTP session when finish fails before the provider is called', async ({ channel, address, maskedAddress }) => {
+    const finish = channel === 'email'
+      ? authMocks.store.loginWithEmailCode
+      : authMocks.store.loginWithPhoneCode
+    finish.mockImplementationOnce(() => {
+      authMocks.advanceGeneration()
+      return Promise.reject({
+        response: {
+          status: 503,
+          data: { code: 'OTP_PROVIDER_NOT_CALLED', message: '验证码校验 provider 尚未调用' },
+        },
+      })
+    })
+    const wrapper = mountLogin()
+    if (channel === 'email') {
+      await useEmailCodeMode(wrapper)
+      await wrapper.get('#auth-login-email').setValue(address)
+    } else {
+      await usePhoneCodeMode(wrapper)
+      await wrapper.get('#auth-login-phone-code').setValue(address)
+    }
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    await wrapper.get('#auth-login-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(wrapper.text()).toContain(maskedAddress)
+    expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('123456')
+    expect(wrapper.emitted('notify')).toContainEqual(['验证码校验 provider 尚未调用'])
+    wrapper.unmount()
+  })
+
+  it.each([
+    { status: 502, code: 'OTP_PROVIDER_NOT_CALLED' as const },
+    { status: 503, code: 'OTP_PROVIDER_NOT_CALLED ' as const },
+    { status: 503, code: undefined },
+  ])('clears the OTP session for a non-exact provider-not-called result ($status/$code)', async ({ status, code }) => {
+    authMocks.store.loginWithEmailCode.mockImplementationOnce(() => {
+      authMocks.advanceGeneration()
+      return Promise.reject({
+        response: { status, data: { code, message: '伪组合错误' } },
+      })
+    })
+    const wrapper = mountLogin()
+    await useEmailCodeMode(wrapper)
+    await wrapper.get('#auth-login-email').setValue('pseudo-combination@example.com')
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    await wrapper.get('#auth-login-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(wrapper.text()).not.toContain('u***@example.com')
+    expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.emitted('notify')).toContainEqual(['验证码验证结果未知，请重新获取验证码'])
+    wrapper.unmount()
+  })
+
+  it('does not let a late unknown finish failure clear a newer OTP session', async () => {
+    const oldFinish = deferred<void>()
+    const newFinish = deferred<void>()
+    authMocks.store.loginWithEmailCode
+      .mockImplementationOnce(() => {
+        authMocks.advanceGeneration()
+        return oldFinish.promise
+      })
+      .mockImplementationOnce(() => {
+        authMocks.advanceGeneration()
+        return newFinish.promise
+      })
+    apiMocks.startEmailCodeLogin
+      .mockResolvedValueOnce({
+        channel: 'email',
+        maskedAddress: 'old***@example.com',
+        session: 'old-session',
+        expireSeconds: 300,
+        cooldownSeconds: 60,
+      })
+      .mockResolvedValueOnce({
+        channel: 'email',
+        maskedAddress: 'new***@example.com',
+        session: 'new-session',
+        expireSeconds: 300,
+        cooldownSeconds: 60,
+      })
+
+    const wrapper = mountLogin()
+    await useEmailCodeMode(wrapper)
+    await wrapper.get('#auth-login-email').setValue('old@example.com')
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    await wrapper.get('#auth-login-code').setValue('123456')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    await wrapper.get('#auth-login-email').setValue('new@example.com')
+    await wrapper.findAll('button').find((button) => button.text() === '获取验证码')!.trigger('click')
+    await settle()
+    expect(wrapper.text()).toContain('new***@example.com')
+
+    await wrapper.get('#auth-login-code').setValue('654321')
+    const newSubmit = wrapper.get('form').trigger('submit')
+    await settle()
+    expect(authMocks.store.loginWithEmailCode).toHaveBeenCalledTimes(2)
+
+    oldFinish.reject({ response: { status: 503, data: { message: '旧请求失败' } } })
+    await settle()
+    expect(wrapper.text()).toContain('new***@example.com')
+    expect(wrapper.text()).not.toContain('验证码验证结果未知，请重新获取验证码')
+    expect((wrapper.get('#auth-login-code').element as HTMLInputElement).value).toBe('654321')
+
+    newFinish.resolve()
+    await newSubmit
     await settle()
     wrapper.unmount()
   })

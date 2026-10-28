@@ -17,6 +17,7 @@ public class RegisterRequest {
 
     @NotBlank
     @Email
+    @Size(max = 255, message = "邮箱长度不能超过 255 个字符")
     private String email;
 
     @NotBlank

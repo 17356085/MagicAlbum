@@ -198,6 +198,42 @@ describe('AuthRegisterForm async lifecycle', () => {
     wrapper.unmount()
   })
 
+  it('allows a 255-character email to continue registration', async () => {
+    const email = `${'a'.repeat(63)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}`
+    expect(email).toHaveLength(255)
+    const wrapper = mountRegister()
+    await fillValidForm(wrapper, { email })
+
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(wrapper.get('#auth-register-email').attributes('maxlength')).toBeUndefined()
+    expect((wrapper.get('#auth-register-email').element as HTMLInputElement).value).toBe(email)
+    expect(apiMocks.checkUsernameAvailable).toHaveBeenCalledWith('register_user')
+    expect(verifyMocks.ensureVerified).toHaveBeenCalledTimes(1)
+    expect(apiMocks.registerUser).toHaveBeenCalledWith(expect.objectContaining({ email }))
+    wrapper.unmount()
+  })
+
+  it('rejects a 256-character email before availability, verification, or registration', async () => {
+    const email = `${'a'.repeat(64)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}`
+    expect(email).toHaveLength(256)
+    const wrapper = mountRegister()
+    try {
+      await fillValidForm(wrapper, { email })
+
+      await wrapper.get('form').trigger('submit')
+      await settle()
+
+      expect(wrapper.get('#auth-register-email').attributes('maxlength')).toBeUndefined()
+      expect((wrapper.get('#auth-register-email').element as HTMLInputElement).value).toBe(email)
+      expect(wrapper.get('#auth-register-email-error').text()).toBe('邮箱长度不能超过 255 个字符')
+      expect(apiMocks.checkUsernameAvailable).not.toHaveBeenCalled()
+      expect(verifyMocks.ensureVerified).not.toHaveBeenCalled()
+      expect(apiMocks.registerUser).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+
   it.each(invalidLocalFields)('validates local fields before sending an availability request: %j', async overrides => {
     const wrapper = mountRegister()
     try {
