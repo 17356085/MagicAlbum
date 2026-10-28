@@ -98,6 +98,25 @@ describe('media status actions', () => {
     expect(wrapper.text()).toContain('已停止处理')
   })
 
+  it.each([
+    ['timeout', { code: 'ECONNABORTED' }],
+    ['server error', { response: { status: 503 } }],
+    ['invalid response', new Error('图片状态暂不可用')],
+  ])('does not claim the operation failed when %s leaves its result unknown', async (_scenario, cause) => {
+    change.mockRejectedValueOnce(cause)
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '停止处理')!.trigger('click')
+    await flushPromises()
+
+    const message = wrapper.get('[role="alert"]').text()
+    expect(message).toContain('操作结果未能确认')
+    expect(message).toContain('刷新页面核对状态')
+    expect(message).not.toContain('操作未完成')
+    expect(mediaAssets.value[0]?.processingStatus).toBe('PENDING')
+    expect(wrapper.findAll('button').some(button => button.text() === '停止处理' && button.attributes('disabled') === undefined)).toBe(true)
+  })
+
   it('releases a same-token action after invalidation without applying stale success', async () => {
     const response = deferred<MediaAssetState>()
     change.mockReturnValue(response.promise)

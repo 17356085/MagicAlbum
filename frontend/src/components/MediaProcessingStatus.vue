@@ -52,7 +52,7 @@ async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<
     if (auth.token === token && auth.isAuthGenerationCurrent(generation)) {
       error.value = errorStatus(cause) === 403
         ? '当前账号没有管理此图片处理任务的权限，请刷新后重试。原图不受影响。'
-        : '操作未完成，请稍后重试。原图不受影响。'
+        : '操作结果未能确认，请刷新页面核对状态后再重试。原图不受影响。'
     }
   }
   finally {
