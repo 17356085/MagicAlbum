@@ -12,11 +12,11 @@ let wrapper: VueWrapper | undefined
 
 describe('media status actions', () => {
   beforeEach(() => {
-    localStorage.clear(); setActivePinia(createPinia()); change.mockReset()
+    localStorage.clear(); setActivePinia(createPinia()); change.mockReset(); vi.stubEnv('VITE_API_BASE_URL', '/api/v1')
     useAuthStore().applyAuthState({ accessToken: 'owner', user: { id: 1, username: 'owner' } })
     hydrateMediaAssets('owner'); mediaAssets.value = [{ ...original }]
   })
-  afterEach(() => { wrapper?.unmount(); wrapper = undefined; mediaAssets.value = [] })
+  afterEach(() => { wrapper?.unmount(); wrapper = undefined; mediaAssets.value = []; vi.unstubAllEnvs() })
 
   it('keeps the original available while processing and shows previews only after acceptance', async () => {
     wrapper = mount(MediaProcessingStatus)
@@ -26,6 +26,28 @@ describe('media status actions', () => {
     mediaAssets.value = [{ ...original, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/preview.png' }]
     await flushPromises()
     expect(wrapper.findAll('a').map(link => link.attributes('href'))).toEqual([original.url, '/uploads/preview.png'])
+  })
+
+  it('normalizes upload paths for an absolute API base and preserves other href forms', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.test/api/v1')
+    mediaAssets.value = [
+      { ...original, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/preview.png' },
+      { ...original, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', url: 'https://cdn.example.test/original.png', previewUrl: 'https://cdn.example.test/preview.png', processingStatus: 'SUCCEEDED' },
+      { ...original, assetId: 'f2a1665b-60b1-40f9-85a5-3632148fda39', url: '//cdn.example.test/original.png', previewUrl: '//cdn.example.test/preview.png', processingStatus: 'SUCCEEDED' },
+      { ...original, assetId: 'a2a1665b-60b1-40f9-85a5-3632148fda39', url: 'media/original.png', previewUrl: 'media/preview.png', processingStatus: 'SUCCEEDED' },
+    ]
+    wrapper = mount(MediaProcessingStatus)
+    await wrapper.get('.media-status-toggle').trigger('click')
+
+    expect(wrapper.findAll('a').map(link => link.attributes('href'))).toEqual([
+      'https://api.example.test/uploads/original.png', 'https://api.example.test/uploads/preview.png',
+      'https://cdn.example.test/original.png', 'https://cdn.example.test/preview.png',
+      '//cdn.example.test/original.png', '//cdn.example.test/preview.png',
+      'media/original.png', 'media/preview.png',
+    ])
+    for (const link of wrapper.findAll('a')) {
+      expect(link.attributes()).toMatchObject({ target: '_blank', rel: 'noopener noreferrer' })
+    }
   })
 
   it('uses full owner state after cancel and retry, retaining the original URL', async () => {

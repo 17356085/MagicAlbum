@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { changeMediaJob } from '@/api/uploads'
 import { dismissMediaAsset, mediaAssets, updateMediaAsset, type MediaAssetState } from '@/composables/mediaProcessingState'
+import { normalizeImageUrl } from '@/utils/image'
 
 const auth = useAuthStore()
 defineProps<{ raised?: boolean }>()
@@ -27,6 +28,9 @@ function errorStatus(cause: unknown): number {
   const raw = (cause as { response?: { status?: unknown } } | null)?.response?.status
   const status = Number(raw)
   return Number.isFinite(status) ? status : 0
+}
+function mediaHref(url?: string | null): string {
+  return url?.startsWith('/uploads/') ? normalizeImageUrl(url) : url || ''
 }
 async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<void> {
   if (pendingAction.value) return
@@ -61,8 +65,8 @@ async function action(item: MediaAssetState, kind: 'retry' | 'cancel'): Promise<
           <div class="media-status-label"><span>图片 {{ index + 1 }}</span><button type="button" :aria-label="`移除图片 ${index + 1} 的状态记录`" @click="dismissMediaAsset(item.assetId)">移除</button></div>
           <p role="status">{{ label(item) }}</p>
           <div class="media-status-actions">
-            <a v-if="!['UPLOADING', 'UPLOAD_FAILED'].includes(item.status || '')" :href="item.url" target="_blank" rel="noopener noreferrer">查看原图</a>
-            <a v-if="item.previewUrl && item.processingStatus === 'SUCCEEDED'" :href="item.previewUrl" target="_blank" rel="noopener noreferrer">查看预览</a>
+            <a v-if="!['UPLOADING', 'UPLOAD_FAILED'].includes(item.status || '')" :href="mediaHref(item.url)" target="_blank" rel="noopener noreferrer">查看原图</a>
+            <a v-if="item.previewUrl && item.processingStatus === 'SUCCEEDED'" :href="mediaHref(item.previewUrl)" target="_blank" rel="noopener noreferrer">查看预览</a>
             <button v-if="['FAILED', 'CANCELLED'].includes(item.processingStatus)" type="button" :disabled="!!pendingAction" @click="action(item, 'retry')">{{ pendingAction === item.assetId ? '处理中…' : '重试预览' }}</button>
             <button v-if="['PENDING', 'PROCESSING'].includes(item.processingStatus)" type="button" :disabled="!!pendingAction" @click="action(item, 'cancel')">停止处理</button>
           </div>
