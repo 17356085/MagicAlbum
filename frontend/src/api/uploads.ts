@@ -2,12 +2,9 @@ import api, { assertAutomaticRequestOwnsCurrentSession } from './client'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { AxiosProgressEvent } from 'axios'
 import { decodeMediaAsset, trackMediaUpload, type MediaAssetState } from '@/composables/mediaProcessingState'
-
-export interface UploadImageResponse {
-  url?: string
-  path?: string
-  [key: string]: unknown
-}
+import { decodeUploadResponse } from './uploadResponse'
+import type { UploadImageResponse } from './uploadResponse'
+export type { UploadImageResponse } from './uploadResponse'
 
 export async function uploadImage(
   file: File,
@@ -29,8 +26,9 @@ export async function uploadImage(
       if (onProgress) onProgress(percent)
     }
   })
-  if (hasRealToken(authToken)) trackMediaUpload(data, authToken)
-  return data
+  const response = decodeUploadResponse(data)
+  if (hasRealToken(authToken)) trackMediaUpload(response, authToken)
+  return response
 }
 
 export async function getMediaAsset(assetId: string, token: string, signal?: AbortSignal): Promise<MediaAssetState> {

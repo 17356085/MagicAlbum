@@ -6,6 +6,7 @@ import CommentsList from '../comments/CommentsList.vue'
 import CommentsComposer from '../comments/CommentsComposer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { InteractionResponseError } from '@/api/interactionState'
+import { UploadResponseUnconfirmedError } from '@/api/uploadResponse'
 
 const mocks = vi.hoisted(() => ({ listPosts: vi.fn(), createPost: vi.fn(), likePost: vi.fn(), unlikePost: vi.fn(), uploadImage: vi.fn() }))
 vi.mock('@/api/posts', () => mocks)
@@ -60,6 +61,25 @@ describe('Comments independent load and operation feedback', () => {
     expect(dialog.text()).toContain('图片上传失败')
     expect(dialog.text()).toContain(row.content)
     expect(dialog.findComponent(CommentsComposer).props('modelValue')).toBe('保留我的输入')
+  })
+
+  it('shows an unconfirmed upload result without retrying or submitting the preserved draft', async () => {
+    mocks.uploadImage.mockRejectedValueOnce(new UploadResponseUnconfirmedError())
+    const dialog = await open()
+    const composer = dialog.findComponent(CommentsComposer)
+    composer.vm.$emit('update:modelValue', '保留我的输入')
+    const input = composer.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['image'], 'photo.png', { type: 'image/png' })] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(dialog.get('[role="alert"]').text()).toBe('图片上传结果未确认，重复上传可能产生多份图片')
+    expect(dialog.text()).not.toContain('图片上传失败')
+    expect(dialog.text()).not.toContain('请稍后重试')
+    expect(dialog.text()).toContain(row.content)
+    expect(composer.props('modelValue')).toBe('保留我的输入')
+    expect(composer.props('isUploading')).toBe(false)
+    expect(mocks.uploadImage).toHaveBeenCalledTimes(1)
+    expect(mocks.createPost).not.toHaveBeenCalled()
   })
 
   it('offers a read-only state refresh after an invalid interaction response', async () => {

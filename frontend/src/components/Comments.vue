@@ -12,6 +12,7 @@ import { normalizeImageUrl } from '@/utils/image'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { InteractionResponseError } from '@/api/interactionState'
 import { isPostCreationUnconfirmedError } from '@/api/postCreationResponse'
+import { isUploadResponseUnconfirmedError } from '@/api/uploadResponse'
 import type { Id, ProfileUpdatedDetail } from '@/types'
 import type { UploadImageResponse } from '@/api/uploads'
 import type { CommentItem, CommentsProps } from '@/components/comments/types'
@@ -472,6 +473,7 @@ function getUploadErrorMessage(reason: unknown): string {
       data?: { message?: unknown }
     }
   } | null
+  if (isUploadResponseUnconfirmedError(reason)) return reason.message
   const status = Number(failure?.response?.status || 0)
   const responseMessage = failure?.response?.data?.message
   const message = typeof responseMessage === 'string' ? responseMessage.trim() : ''
