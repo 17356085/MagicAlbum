@@ -3,14 +3,19 @@ package com.example.demo.storage.controller;
 import com.example.demo.auth.JwtTokenProvider;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.aot.DisabledInAotMode;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,7 +27,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -35,21 +39,37 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DisabledInAotMode
 @MockitoBean(types = StringRedisTemplate.class)
 @TestPropertySource(properties = {
-        "app.storage.local.baseDir=/tmp/bluealbum-upload-it",
-        "app.storage.local.pathPrefix=threads"
+        "spring.datasource.url=jdbc:h2:mem:legacy-upload-http;DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_UPPER=false",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "app.storage.local.pathPrefix=threads",
+        "app.media.registration-enabled=false",
+        "app.media.processing-enabled=false"
 })
 class UploadControllerIT {
 
+    @TempDir static Path uploadRoot;
     @Autowired MockMvc mockMvc;
     @Autowired UserRepository userRepository;
     @Autowired JwtTokenProvider jwtTokenProvider;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private String token;
 
+    @DynamicPropertySource
+    static void storage(DynamicPropertyRegistry properties) {
+        properties.add("app.storage.local.baseDir", () -> uploadRoot.toString());
+    }
+
+    @BeforeAll
+    static void verifyTemporaryTarget() throws Exception {
+        Path temporaryRoot = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
+        Path actual = uploadRoot.toRealPath();
+        assertThat(actual).startsWith(temporaryRoot).isNotEqualTo(temporaryRoot);
+    }
+
     @BeforeEach
-    void setUp() throws Exception {
+    void setUp() {
         userRepository.deleteAll();
-        cleanUploadDir();
 
         User user = new User();
         user.setUsername("uploader");
@@ -62,11 +82,12 @@ class UploadControllerIT {
 
     @Test
     void uploadImage_should_accept_authenticated_valid_png() throws Exception {
+        byte[] image = buildValidPngBytes();
         MockMultipartFile file = new MockMultipartFile(
                 "file",
                 "avatar.png",
                 MediaType.IMAGE_PNG_VALUE,
-                buildValidPngBytes()
+                image
         );
 
         String body = mockMvc.perform(multipart("/api/v1/uploads/images")
@@ -79,6 +100,13 @@ class UploadControllerIT {
                 .getContentAsString();
 
         assertThat(body).contains("/uploads/threads/");
+        var response = objectMapper.readTree(body);
+        assertThat(response.size()).isEqualTo(1);
+        assertThat(response.has("url")).isTrue();
+        assertThat(response.has("processingEnabled")).isFalse();
+        Path saved = uploadRoot.resolve(response.get("url").asText().substring("/uploads/".length())).normalize();
+        assertThat(saved).startsWith(uploadRoot);
+        assertThat(Files.readAllBytes(saved)).isEqualTo(image);
     }
 
     @Test
@@ -95,21 +123,6 @@ class UploadControllerIT {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("上传文件不是有效图片"));
-    }
-
-    private void cleanUploadDir() throws Exception {
-        Path root = Path.of("/tmp/bluealbum-upload-it");
-        if (!Files.exists(root)) {
-            return;
-        }
-        try (var stream = Files.walk(root)) {
-            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (Exception ignored) {
-                }
-            });
-        }
     }
 
     private byte[] buildValidPngBytes() throws Exception {

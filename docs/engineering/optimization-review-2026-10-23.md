@@ -1477,3 +1477,9 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 旧实现的 Axios 适配器测试共 42 项中 5 项失败，覆盖无响应、408 和 5xx 的同一类结果未知问题，日志 `backend/target/upload-transport-uncertain-baseline.log`。主代理另用头像页面及评论组件连接真实上传 API 封装、模拟 Axios 超时，原始行为分别显示 `timeout` 和建议稍后重试，日志 `backend/target/upload-timeout-avatar-baseline.log`、`backend/target/upload-timeout-comments-baseline.log`。修复后八个相关测试文件共 117 项通过，覆盖原始错误、单次请求、草稿保留、无资料更新和明确 4xx，日志 `backend/target/upload-transport-uncertain-reviewed.log`；完整前端 Vitest 为 131 文件、1409 项通过、exit 0，日志 `backend/target/upload-transport-full.log`，测试前后源码清单哈希一致；全量 lint、type-check、构建、仓库结构及 Java 声明依赖检查通过。测试模拟传输错误，没有复现真实代理断连、服务端写入后丢响应或对象存储重复文件。
 
 后续配置审查发现，登记开启、处理关闭时，源码仍会为 PNG/JPEG 登记待处理任务，而处理发布器、操作端点和维护任务受处理开关控制；客户端可能持续轮询并显示无法使用的操作。现有 `MediaUploadControllerIT` 显式开启登记、未显式指定处理开关，在默认关闭条件下覆盖 H2 的资产与任务持久化；该测试没有单独断言全部开关组合或处理禁用时的客户端行为。四种配置和运行中重新启用处理的界面语义仍需单独设计与验证，不能将此次提示改动视为解决该问题。
+
+## 2026-10-29：上传测试目录隔离
+
+原有 `UploadControllerIT` 在每个测试前递归清空固定路径 `/tmp/bluealbum-upload-it`；在本机 Windows 上 Java 将其解析为 `D:\tmp\bluealbum-upload-it`，位于仓库之外。本轮子代理在发现问题前有两次运行到该测试方法，另一次因测试初始化失败未运行方法；运行前目录内容未留存，因此无法确认是否存在其他文件，也不能声称此前目录未受影响。发现后停止使用固定目录，没有对它进行清理或恢复操作。
+
+测试改为使用 JUnit 新建的独立临时目录，并在运行前验证其真实路径位于系统临时目录之内且不是临时目录根本身；显式指定独立 H2 内存数据库，删除原固定路径清理代码，并从临时目录读回上传的原始字节。修改后与两组媒体控制器测试串行运行，共 8 项通过、0 失败/错误/跳过，日志 `backend/target/media-capability-backend-reviewed.log`。原固定目录在发现问题后建立的内容清单哈希，在这次隔离测试前后相同；该快照不能证明发现问题之前的数据状态。
