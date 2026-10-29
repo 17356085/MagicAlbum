@@ -938,7 +938,7 @@ describe('media status actions', () => {
     expect(rows[0]?.find('a[href="/uploads/stale-preview.png"]').exists()).toBe(false)
     expect(rows[0]?.findAll('button').some(button => ['重试预览', '停止处理'].includes(button.text()))).toBe(false)
     expect(rows[1]?.text()).toContain('原图上传尚未确认')
-    expect(rows[1]?.text()).toContain('自动核对未启用')
+    expect(rows[1]?.text()).toContain('请刷新状态查看')
     expect(rows[1]?.find('a').exists()).toBe(false)
     expect(rows[2]?.text()).toContain('原图上传结果未确认')
     expect(rows[2]?.text()).toContain('重复上传可能产生多份图片')

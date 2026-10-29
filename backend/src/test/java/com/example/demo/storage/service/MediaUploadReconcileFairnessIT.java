@@ -45,10 +45,9 @@ import static org.mockito.Mockito.verify;
 /**
  * Evidence-first regression coverage for the bounded stale-upload reconciler.
  *
- * <p>The test deliberately instantiates the same maintenance service with a
- * real JDBC template, registration service and local object store. The Spring
- * component is disabled through processing=false, so no scheduled maintenance
- * can change the rows while this test observes the two explicit passes.</p>
+ * <p>The test deliberately instantiates the reconciler with a real JDBC
+ * template, registration service and local object store. Its scheduled bean
+ * is replaced with a mock so the test controls each reconciliation pass.</p>
  */
 @SpringBootTest(
         classes = Demo1Application.class,
@@ -67,7 +66,7 @@ import static org.mockito.Mockito.verify;
 @ActiveProfiles("test")
 @DisabledInAotMode
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@MockitoBean(types = StringRedisTemplate.class)
+@MockitoBean(types = {StringRedisTemplate.class, MediaUploadReconciler.class})
 class MediaUploadReconcileFairnessIT {
 
     private static final String DATABASE_NAME = "media_reconcile_fairness_"
@@ -84,7 +83,7 @@ class MediaUploadReconcileFairnessIT {
     @Autowired
     private MediaUploadRegistrationService registry;
 
-    private MediaMaintenance maintenance;
+    private MediaUploadReconciler reconciler;
     private MediaObjectStore objects;
 
     @DynamicPropertySource
@@ -100,26 +99,19 @@ class MediaUploadReconcileFairnessIT {
     }
 
     @BeforeEach
-    void resetDatabaseAndMaintenance() throws IOException {
+    void resetDatabaseAndReconciler() throws IOException {
         verifiedUploadRoot();
         jdbc.update("DELETE FROM media_request_outbox");
         jdbc.update("DELETE FROM media_processing_job");
         jdbc.update("DELETE FROM media_asset");
         objects = spy(new MediaObjectStore(mock(S3StorageService.class), verifiedUploadRoot().toString()));
-        maintenance = new MediaMaintenance(
-                jdbc,
-                mock(MediaDeliveryTransactions.class),
-                registry,
-                objects,
-                mock(MediaMaintenanceTransactions.class),
-                Duration.ofHours(24),
-                true);
+        reconciler = new MediaUploadReconciler(jdbc, registry, objects);
     }
 
     @Test
     void unreadableFirstTwentyDoNotStarveTheTwentyFirstValidOriginal() throws Exception {
         byte[] validBytes = tinyJpeg();
-        String validDigest = MediaMaintenance.digest(validBytes);
+        String validDigest = MediaUploadReconciler.digest(validBytes);
         List<RegisteredUpload> uploads = registerUploads("fairness", 21, validBytes.length, validDigest);
         Instant oldUpdatedAt = Instant.now().minus(Duration.ofMinutes(10));
         setUpdatedAt(uploads.subList(0, 20), oldUpdatedAt);
@@ -138,14 +130,14 @@ class MediaUploadReconcileFairnessIT {
         RegisteredUpload valid = uploads.getLast();
         writeOriginal(valid.intent().objectKey(), validBytes);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
 
         assertThat(statusOf(valid.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         assertThat(countJobs()).isZero();
         assertThat(countOutbox()).isZero();
         assertThat(statusesOf(sortedAssetIds)).containsOnly(MediaAsset.STATUS_UPLOADING);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
 
         assertThat(statusOf(valid.assetId())).isEqualTo(MediaAsset.STATUS_READY);
         assertThat(countJobsFor(valid.assetId())).isEqualTo(1L);
@@ -159,7 +151,7 @@ class MediaUploadReconcileFairnessIT {
     @Test
     void equalUpdatedAtTiesDrainAllValidOriginalsAcrossTwoBoundedPasses() throws Exception {
         byte[] validBytes = tinyJpeg();
-        String validDigest = MediaMaintenance.digest(validBytes);
+        String validDigest = MediaUploadReconciler.digest(validBytes);
         List<RegisteredUpload> uploads = registerUploads("equal-timestamps", 21, validBytes.length, validDigest);
         Instant sameOldUpdatedAt = Instant.now().minus(Duration.ofMinutes(10));
         setUpdatedAt(uploads, sameOldUpdatedAt);
@@ -180,11 +172,11 @@ class MediaUploadReconcileFairnessIT {
         assertThat(firstBatch).hasSize(20).doesNotHaveDuplicates();
         assertThat(assetIds).containsAll(firstBatch);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         assertThat(countJobs()).isEqualTo(20L);
         assertThat(countOutbox()).isEqualTo(20L);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
 
         assertThat(statusesOf(assetIds)).containsOnly(MediaAsset.STATUS_READY);
         assertThat(countJobs()).isEqualTo(21L);
@@ -199,16 +191,16 @@ class MediaUploadReconcileFairnessIT {
     void equalUpdatedAtMissingObjectsDoNotHideTheLastAssetId() throws Exception {
         byte[] validBytes = tinyJpeg();
         List<RegisteredUpload> uploads = registerUploads("equal-missing", 21,
-                validBytes.length, MediaMaintenance.digest(validBytes));
+                validBytes.length, MediaUploadReconciler.digest(validBytes));
         setUpdatedAt(uploads, Instant.now().minus(Duration.ofMinutes(10)));
         RegisteredUpload valid = uploads.getLast();
         writeOriginal(valid.intent().objectKey(), validBytes);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         assertThat(statusOf(valid.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         verify(objects, times(20)).readOriginal(eq("local"), anyString());
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         assertThat(statusOf(valid.assetId())).isEqualTo(MediaAsset.STATUS_READY);
         assertThat(countJobsFor(valid.assetId())).isEqualTo(1L);
         assertThat(countOutboxFor(valid.assetId())).isEqualTo(1L);
@@ -219,23 +211,23 @@ class MediaUploadReconcileFairnessIT {
     void aFullFailedPageWrapsAndRetriesWhenAnOriginalBecomesAvailable() throws Exception {
         byte[] validBytes = tinyJpeg();
         List<RegisteredUpload> uploads = registerUploads("full-page-wrap", 20,
-                validBytes.length, MediaMaintenance.digest(validBytes));
+                validBytes.length, MediaUploadReconciler.digest(validBytes));
         setUpdatedAt(uploads, Instant.now().minus(Duration.ofMinutes(10)));
         RegisteredUpload availableLater = uploads.getFirst();
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         verify(objects, times(20)).readOriginal(eq("local"), anyString());
         assertThat(statusesOf(uploads.stream().map(RegisteredUpload::assetId).toList()))
                 .containsOnly(MediaAsset.STATUS_UPLOADING);
         writeOriginal(availableLater.intent().objectKey(), validBytes);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         verify(objects, times(40)).readOriginal(eq("local"), anyString());
         assertThat(statusOf(availableLater.assetId())).isEqualTo(MediaAsset.STATUS_READY);
         assertThat(countJobsFor(availableLater.assetId())).isEqualTo(1L);
         assertThat(countOutboxFor(availableLater.assetId())).isEqualTo(1L);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         assertThat(countJobsFor(availableLater.assetId())).isEqualTo(1L);
         assertThat(countOutboxFor(availableLater.assetId())).isEqualTo(1L);
     }
@@ -244,31 +236,31 @@ class MediaUploadReconcileFairnessIT {
     void anUploadThatAgesDuringAScanWaitsUntilTheNextRound() throws Exception {
         byte[] validBytes = tinyJpeg();
         List<RegisteredUpload> uploads = registerUploads("fixed-cutoff", 21,
-                validBytes.length, MediaMaintenance.digest(validBytes));
+                validBytes.length, MediaUploadReconciler.digest(validBytes));
         Instant old = Instant.now().minus(Duration.ofMinutes(10));
         setUpdatedAt(uploads.subList(0, 20), old);
         setUpdatedAt(List.of(uploads.getLast()), old.plusSeconds(1));
         RegisteredUpload olderValid = uploads.getLast();
         writeOriginal(olderValid.intent().objectKey(), validBytes);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         verify(objects, times(20)).readOriginal(eq("local"), anyString());
 
         RegisteredUpload newlyEligible = registerUpload("fixed-cutoff-new", "00000000000000000000000000000001",
-                validBytes.length, MediaMaintenance.digest(validBytes));
+                validBytes.length, MediaUploadReconciler.digest(validBytes));
         Instant newlyEligibleAt = Instant.now().minusSeconds(300).plusMillis(300);
         setUpdatedAt(List.of(newlyEligible), newlyEligibleAt);
         writeOriginal(newlyEligible.intent().objectKey(), validBytes);
         Thread.sleep(700L);
         assertThat(newlyEligibleAt).isBefore(Instant.now().minusSeconds(300));
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
         assertThat(statusOf(olderValid.assetId())).isEqualTo(MediaAsset.STATUS_READY);
         assertThat(statusOf(newlyEligible.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         verify(objects, times(21)).readOriginal(eq("local"), anyString());
 
-        maintenance.reconcileUploads();
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
+        reconciler.reconcileUploads();
         assertThat(statusOf(newlyEligible.assetId())).isEqualTo(MediaAsset.STATUS_READY);
         assertThat(countJobsFor(newlyEligible.assetId())).isEqualTo(1L);
         assertThat(countOutboxFor(newlyEligible.assetId())).isEqualTo(1L);
@@ -277,7 +269,7 @@ class MediaUploadReconcileFairnessIT {
     @Test
     void wrongOriginalDigestOrSizeStaysUploadingWithoutJobAndPreservesSourceBytes() throws Exception {
         byte[] sourceBytes = tinyJpeg();
-        String actualDigest = MediaMaintenance.digest(sourceBytes);
+        String actualDigest = MediaUploadReconciler.digest(sourceBytes);
         String wrongDigest = actualDigest.equals("a".repeat(64))
                 ? "b".repeat(64)
                 : "a".repeat(64);
@@ -290,7 +282,7 @@ class MediaUploadReconcileFairnessIT {
         writeOriginal(wrongDigestUpload.intent().objectKey(), sourceBytes);
         writeOriginal(wrongSizeUpload.intent().objectKey(), sourceBytes);
 
-        maintenance.reconcileUploads();
+        reconciler.reconcileUploads();
 
         assertThat(statusOf(wrongDigestUpload.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         assertThat(statusOf(wrongSizeUpload.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);

@@ -112,7 +112,7 @@ const summary = computed(() => pending.value ? `图片预览处理中 · ${pendi
 function label(item: MediaAssetState): string {
   if (item.status === 'UPLOADING') {
     if (item.unavailable) return '暂时无法更新原图上传状态'
-    if (isProcessingDisabled(item)) return '原图上传尚未确认，自动核对未启用'
+    if (isProcessingDisabled(item)) return '原图上传尚未确认，请刷新状态查看'
     return '正在确认原图上传'
   }
   if (item.status === 'UPLOAD_FAILED') return '原图上传结果未确认，重复上传可能产生多份图片'

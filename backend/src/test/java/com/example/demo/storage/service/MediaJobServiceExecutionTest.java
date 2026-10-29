@@ -272,7 +272,7 @@ class MediaJobServiceExecutionTest {
     }
 
     private MediaMaintenance maintenance() {
-        return new MediaMaintenance(jdbc, deliveries, registry,
+        return new MediaMaintenance(jdbc, deliveries,
                 org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
                 java.time.Duration.ofHours(24), true);
     }

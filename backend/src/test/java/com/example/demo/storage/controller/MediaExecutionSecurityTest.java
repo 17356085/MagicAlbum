@@ -7,6 +7,7 @@ import com.example.demo.storage.dto.MediaClaimResponse;
 import com.example.demo.storage.service.MediaJobService;
 import com.example.demo.storage.service.MediaMaintenance;
 import com.example.demo.storage.service.MediaRequestPublisher;
+import com.example.demo.storage.service.MediaUploadReconciler;
 import com.example.demo.storage.service.MediaUploadRegistrationService;
 import com.example.demo.storage.service.MediaUploadService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,6 +66,7 @@ class MediaExecutionSecurityTest {
     @MockitoBean MediaUploadService uploads;
     @MockitoBean MediaRequestPublisher publisher;
     @MockitoBean MediaMaintenance maintenance;
+    @MockitoBean MediaUploadReconciler uploadReconciler;
 
     @Test
     void anonymousAndUserTokensCannotClaimInternalJobs() throws Exception {

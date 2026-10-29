@@ -9,32 +9,10 @@ import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 @Configuration
-@EnableScheduling
 @ConditionalOnProperty(name = "app.media.processing-enabled", havingValue = "true")
 public class MediaMessagingConfiguration {
-    // Object-store reconciliation must not occupy notification/search delivery threads.
-    @Bean(name = "taskScheduler")
-    public ThreadPoolTaskScheduler taskScheduler() { return scheduler("scheduled-core-"); }
-
-    @Bean(name = "mediaPublishScheduler")
-    public ThreadPoolTaskScheduler mediaPublishScheduler() { return scheduler("scheduled-media-publish-"); }
-
-    @Bean(name = "mediaMaintenanceScheduler")
-    public ThreadPoolTaskScheduler mediaMaintenanceScheduler() { return scheduler("scheduled-media-storage-"); }
-
-    private ThreadPoolTaskScheduler scheduler(String prefix) {
-        var scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setPoolSize(1);
-        scheduler.setThreadNamePrefix(prefix);
-        scheduler.setAwaitTerminationSeconds(5);
-        scheduler.setWaitForTasksToCompleteOnShutdown(false);
-        return scheduler;
-    }
-
     @Bean
     public Declarables mediaTopology() {
         DirectExchange main = new DirectExchange("media.jobs.v1", true, false);
