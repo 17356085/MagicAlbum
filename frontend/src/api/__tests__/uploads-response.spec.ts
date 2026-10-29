@@ -96,6 +96,26 @@ describe('upload image response confirmation', () => {
     expect(mediaAssets.value).toEqual([expect.objectContaining({ ...mediaFields, url: expected })])
   })
 
+  it('tracks an explicitly disabled processing capability from the real upload response', async () => {
+    installAdapter({
+      ...mediaFields,
+      url: '/uploads/original-disabled.png',
+      processingEnabled: false,
+    })
+
+    const result = await uploadImage(imageFile(), token)
+
+    expect(result.processingEnabled).toBe(false)
+    expect(mediaAssets.value).toEqual([expect.objectContaining({
+      ...mediaFields,
+      url: '/uploads/original-disabled.png',
+      processingEnabled: false,
+    })])
+
+    hydrateMediaAssets(token)
+    expect(mediaAssets.value[0]?.processingEnabled).toBe(false)
+  })
+
   it.each([
     '/uploads/relative.png',
     'images/relative.png',

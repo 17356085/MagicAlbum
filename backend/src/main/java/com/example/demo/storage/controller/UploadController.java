@@ -6,6 +6,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import com.example.demo.storage.service.MediaUploadService;
 import com.example.demo.storage.service.MediaUploadRegistrationService;
 import com.example.demo.storage.dto.MediaAssetStatus;
+import com.example.demo.storage.dto.MediaAssetStatusHttpResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -27,28 +30,39 @@ public class UploadController {
     private final MediaUploadService mediaUploadService;
     private final MediaUploadRegistrationService registry;
     private final DistributedRateLimiter rateLimiter;
+    private final boolean processingEnabled;
 
     public UploadController(MediaUploadService mediaUploadService, DistributedRateLimiter rateLimiter,
-                            MediaUploadRegistrationService registry) {
+                            MediaUploadRegistrationService registry,
+                            @Value("${app.media.processing-enabled:false}") boolean processingEnabled) {
         this.mediaUploadService = mediaUploadService;
         this.rateLimiter = rateLimiter;
         this.registry = registry;
+        this.processingEnabled = processingEnabled;
     }
 
     @PostMapping("/images")
-    public ResponseEntity<Map<String, String>> uploadImage(
+    public ResponseEntity<Map<String, ?>> uploadImage(
             @RequestPart("file") MultipartFile file,
             HttpServletRequest request
     ) {
         Long userId = getUserId();
         rateLimiter.enforce("upload-user-minute", String.valueOf(userId), 60, 15);
         rateLimiter.enforce("upload-ip-minute", RequestIdentity.clientIp(request), 60, 60);
-        return ResponseEntity.ok(mediaUploadService.upload(userId, file));
+        Map<String, String> upload = mediaUploadService.upload(userId, file);
+        if (upload == null || !upload.containsKey("assetId")) {
+            return ResponseEntity.ok(upload);
+        }
+
+        Map<String, Object> response = new LinkedHashMap<>(upload);
+        response.put("processingEnabled", processingEnabled);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/assets/{assetId}")
-    public MediaAssetStatus assetStatus(@PathVariable String assetId) {
-        return registry.findOwned(getUserId(), assetId);
+    public MediaAssetStatusHttpResponse assetStatus(@PathVariable String assetId) {
+        MediaAssetStatus status = registry.findOwned(getUserId(), assetId);
+        return new MediaAssetStatusHttpResponse(status, processingEnabled);
     }
 
     private Long getUserId() {

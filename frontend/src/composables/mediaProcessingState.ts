@@ -11,6 +11,7 @@ export interface MediaAssetState {
   previewUrl?: string | null
   errorCode?: string | null
   unavailable?: boolean
+  processingEnabled?: boolean
 }
 
 export const mediaAssets = ref<MediaAssetState[]>([])
@@ -29,6 +30,8 @@ export function safeMediaUrl(value: unknown): value is string {
 export function decodeMediaAsset(value: unknown): MediaAssetState | null {
   if (!value || typeof value !== 'object') return null
   const item = value as Partial<MediaAssetState>
+  const hasProcessingCapability = Object.prototype.hasOwnProperty.call(item, 'processingEnabled')
+  if (hasProcessingCapability && typeof item.processingEnabled !== 'boolean') return null
   if (typeof item.assetId !== 'string' || !uuid.test(item.assetId) || !safeMediaUrl(item.url)
     || !statuses.includes(item.processingStatus as ProcessingStatus)) return null
   return {
@@ -37,6 +40,7 @@ export function decodeMediaAsset(value: unknown): MediaAssetState | null {
     jobId: typeof item.jobId === 'string' && uuid.test(item.jobId) ? item.jobId : null,
     previewUrl: safeMediaUrl(item.previewUrl) ? item.previewUrl : null,
     errorCode: typeof item.errorCode === 'string' && item.errorCode.length <= 64 ? item.errorCode : null,
+    ...(hasProcessingCapability ? { processingEnabled: item.processingEnabled as boolean } : {}),
   }
 }
 

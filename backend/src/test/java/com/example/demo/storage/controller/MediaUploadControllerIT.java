@@ -4,6 +4,7 @@ import com.example.demo.auth.JwtTokenProvider;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,7 +39,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:media-upload-http;DB_CLOSE_DELAY=-1;MODE=MySQL;DATABASE_TO_UPPER=false",
-        "app.media.registration-enabled=true"
+        "app.media.registration-enabled=true",
+        "app.media.processing-enabled=false"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -59,6 +61,13 @@ class MediaUploadControllerIT {
         properties.add("app.storage.local.baseDir", () -> uploadRoot.toString());
     }
 
+    @BeforeAll
+    static void verifyTemporaryTarget() throws Exception {
+        Path temporaryRoot = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
+        Path actual = uploadRoot.toRealPath();
+        assertThat(actual).startsWith(temporaryRoot).isNotEqualTo(temporaryRoot);
+    }
+
     @BeforeEach void prepare() {
         jdbc.update("delete from media_request_outbox");
         jdbc.update("delete from media_processing_job");
@@ -77,6 +86,7 @@ class MediaUploadControllerIT {
                         .file(new MockMultipartFile("file", "photo.png", "image/png", bytes))
                         .header("Authorization", "Bearer " + ownerToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.processingStatus").value("PENDING"))
+                .andExpect(jsonPath("$.processingEnabled").value(false))
                 .andReturn().getResponse().getContentAsString();
         var response = new ObjectMapper().readTree(body);
         String assetId = response.get("assetId").asText();
@@ -95,7 +105,9 @@ class MediaUploadControllerIT {
         mvc.perform(get("/api/v1/uploads/assets/" + assetId).header("Authorization", "Bearer " + ownerToken))
                 .andExpect(status().isOk()).andExpect(header().string("Cache-Control", containsString("no-store")))
                 .andExpect(jsonPath("$.assetId").value(assetId))
-                .andExpect(jsonPath("$.jobId").value(jobId)).andExpect(jsonPath("$.objectKey").doesNotExist())
+                .andExpect(jsonPath("$.jobId").value(jobId))
+                .andExpect(jsonPath("$.processingEnabled").value(false))
+                .andExpect(jsonPath("$.objectKey").doesNotExist())
                 .andExpect(jsonPath("$.ownerId").doesNotExist()).andExpect(jsonPath("$.sha256").doesNotExist());
         mvc.perform(get("/api/v1/uploads/assets/" + assetId).header("Authorization", "Bearer " + otherToken))
                 .andExpect(status().isNotFound());

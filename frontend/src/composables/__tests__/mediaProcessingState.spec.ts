@@ -168,4 +168,43 @@ describe('owner-scoped media status', () => {
     expect(decodeMediaAsset({ ...asset, previewUrl: 'data:text/html,unsafe' })?.previewUrl).toBeNull()
     expect(decodeMediaAsset({ ...asset, processingStatus: 'invented' })).toBeNull()
   })
+
+  it.each([
+    { name: 'enabled', processingEnabled: true },
+    { name: 'disabled', processingEnabled: false },
+  ])('preserves an explicit $name processing capability in decoded media state', ({ processingEnabled }) => {
+    expect(decodeMediaAsset({ ...asset, processingEnabled })).toMatchObject({
+      assetId: asset.assetId,
+      processingEnabled,
+    })
+  })
+
+  it('keeps a missing processing capability compatible with legacy responses', () => {
+    const decoded = decodeMediaAsset(asset)
+
+    expect(decoded).not.toBeNull()
+    expect(decoded).not.toHaveProperty('processingEnabled')
+  })
+
+  it.each([
+    { name: 'string', processingEnabled: 'false' },
+    { name: 'number', processingEnabled: 0 },
+    { name: 'null', processingEnabled: null },
+  ])('rejects a present non-boolean processing capability ($name)', ({ processingEnabled }) => {
+    expect(decodeMediaAsset({ ...asset, processingEnabled })).toBeNull()
+  })
+
+  it('round-trips explicit processing capability values through the owner-scoped cache', () => {
+    owner(1, 'capability-cache-token')
+    const disabled = { ...asset, processingEnabled: false }
+    const enabled = { ...asset, assetId: 'e2a1665b-60b1-40f9-85a5-3632148fda39', processingEnabled: true }
+
+    trackMediaUpload(disabled, 'capability-cache-token')
+    trackMediaUpload(enabled, 'capability-cache-token')
+    expect(mediaAssets.value.map(item => item.processingEnabled)).toEqual([true, false])
+
+    hydrateMediaAssets('capability-cache-token')
+
+    expect(mediaAssets.value.map(item => item.processingEnabled)).toEqual([true, false])
+  })
 })

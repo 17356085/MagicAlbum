@@ -30,6 +30,13 @@ const retryAsset = {
   status: 'READY',
   processingStatus: 'FAILED' as const,
 }
+const disabledAsset = {
+  assetId: 'f3a1665b-60b1-40f9-85a5-3632148fda39',
+  url: '/uploads/original-disabled.png',
+  status: 'READY',
+  processingStatus: 'PENDING' as const,
+  processingEnabled: false as const,
+}
 const fairnessAssets = ['a2a1665b-60b1-40f9-85a5-3632148fda39', 'a3a1665b-60b1-40f9-85a5-3632148fda39', 'a4a1665b-60b1-40f9-85a5-3632148fda39', 'a5a1665b-60b1-40f9-85a5-3632148fda39', 'a6a1665b-60b1-40f9-85a5-3632148fda39'].map(assetId => ({
   assetId,
   url: `/uploads/${assetId}.png`,
@@ -148,6 +155,117 @@ describe('useMediaProcessing idle-stop and event-wakeup contract', () => {
     expect(mocks.getMediaAsset).not.toHaveBeenCalled()
     expect(observedControllers).toHaveLength(0)
     expect(scheduledPolls()).toBe(0)
+  })
+
+  it('does not poll a newly tracked asset explicitly configured off', async () => {
+    mocks.getMediaAsset.mockResolvedValue({ ...disabledAsset })
+    activate(1, 'token-disabled-fresh')
+    mountProcessing()
+    await settle()
+
+    trackMediaUpload(disabledAsset, 'token-disabled-fresh')
+    await settle()
+    expect(mediaAssets.value[0]?.processingEnabled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    await settle()
+
+    expect(mocks.getMediaAsset).not.toHaveBeenCalled()
+    expect(scheduledPolls()).toBe(0)
+  })
+
+  it('revalidates a cached configured-off asset once, then stops polling', async () => {
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([disabledAsset]))
+    mocks.getMediaAsset.mockResolvedValue({ ...disabledAsset })
+    activate(1, 'token-disabled-cache')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(mediaAssets.value[0]?.processingEnabled).toBe(false)
+    expect(scheduledPolls()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(scheduledPolls()).toBe(0)
+  })
+
+  it('does not repeatedly retry a failed cached configured-off revalidation', async () => {
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([disabledAsset]))
+    mocks.getMediaAsset.mockRejectedValue(new Error('configured-off revalidation failed'))
+    activate(1, 'token-disabled-cache-failure')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(mediaAssets.value[0]?.unavailable).toBe(true)
+    expect(scheduledPolls()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(mediaAssets.value[0]?.unavailable).toBe(true)
+    expect(scheduledPolls()).toBe(0)
+  })
+
+  it('wakes polling when a user-triggered state update changes capability to enabled', async () => {
+    mocks.getMediaAsset.mockResolvedValue({ ...disabledAsset, processingEnabled: true, processingStatus: 'SUCCEEDED', previewUrl: '/uploads/enabled-preview.png' })
+    activate(1, 'token-disabled-wakeup')
+    mountProcessing()
+    await settle()
+
+    trackMediaUpload(disabledAsset, 'token-disabled-wakeup')
+    await settle()
+    expect(mocks.getMediaAsset).not.toHaveBeenCalled()
+
+    updateMediaAsset({ ...disabledAsset, processingEnabled: true }, 'token-disabled-wakeup')
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    expect(mediaAssets.value[0]?.processingEnabled).toBe(true)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('SUCCEEDED')
+  })
+
+  it('does not let an older disabled recheck undo a newer enabled state', async () => {
+    const staleRead = deferred<MediaAssetState>()
+    mocks.getMediaAsset.mockReturnValueOnce(staleRead.promise).mockResolvedValueOnce({
+      ...disabledAsset, processingEnabled: true, processingStatus: 'SUCCEEDED',
+    })
+    localStorage.setItem('bluealbum:media:1', JSON.stringify([disabledAsset]))
+    activate(1, 'token-capability-stale')
+    mountProcessing()
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+    updateMediaAsset({ ...disabledAsset, processingEnabled: true }, 'token-capability-stale')
+    staleRead.resolve({ ...disabledAsset })
+    await settle()
+    expect(mediaAssets.value[0]?.processingEnabled).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(POLL_DELAY)
+    await settle()
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(2)
+    expect(mediaAssets.value[0]?.processingStatus).toBe('SUCCEEDED')
+    expect(mediaAssets.value[0]?.processingEnabled).toBe(true)
+  })
+
+  it('keeps polling an active legacy record when processing capability is absent', async () => {
+    mocks.getMediaAsset.mockResolvedValue({ ...uploadAsset, processingStatus: 'PENDING' })
+    activate(1, 'token-legacy-capability')
+    mountProcessing()
+    await settle()
+
+    trackMediaUpload(uploadAsset, 'token-legacy-capability')
+    await settle()
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(POLL_DELAY)
+    await settle()
+
+    expect(mocks.getMediaAsset).toHaveBeenCalledTimes(2)
   })
 
   it('confirms a terminal initial cache once, then stops the loop', async () => {

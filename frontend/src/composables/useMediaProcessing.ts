@@ -56,7 +56,8 @@ export function useMediaProcessing(): void {
     }
     const currentSession = (): boolean => !disposed && !session.disposed && session.current === generation
     const isCandidate = (item: typeof mediaAssets.value[number]): boolean => (
-      session.initial.get(item.assetId) === item || ACTIVE_STATUSES.includes(item.processingStatus as typeof ACTIVE_STATUSES[number])
+      session.initial.get(item.assetId) === item
+      || (item.processingEnabled !== false && ACTIVE_STATUSES.includes(item.processingStatus as typeof ACTIVE_STATUSES[number]))
     )
     const isCurrentItem = (item: typeof mediaAssets.value[number]): boolean => {
       const current = mediaAssets.value.find(value => value.assetId === item.assetId)
@@ -97,6 +98,9 @@ export function useMediaProcessing(): void {
           } catch {
             if (currentSession() && !controller.signal.aborted && isCurrentItem(item)) {
               item.unavailable = true
+              if (item.processingEnabled === false && session.initial.get(item.assetId) === item) {
+                session.initial.delete(item.assetId)
+              }
             }
           }
         }
