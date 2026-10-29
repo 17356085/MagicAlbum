@@ -1519,3 +1519,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 第一次合并回归 `backend/target/media-registration-recovery-reviewed.log` 为 33 项中 1 项失败，原因是新增的小型测试上下文缺少 Spring Boot 的时间转换器，未到达所测守卫；补齐测试上下文后，守卫与线程路由的 4 项独立复测通过，随后一版合并回归为 33 项通过。独立审查发现该版可能覆盖登记模式原有调度设置：后补基线 `backend/target/media-scheduler-compat-baseline.log` 的 6 项中 2 项失败，分别复现配置的线程池大小和已有调度器被覆盖；随后的 `media-scheduler-executor-baseline.log` 又复现已有定时执行器被误路由。条件适配的失败记录仍保留，最终改用不暴露全局调度器的独立生命周期线程。最终 `backend/target/media-registration-recovery-lifecycle-final.log` 共 39 项通过并完成后端打包；其后新增异常继续调度场景，独立复跑同一调度测试文件共 11 项通过，日志 `backend/target/media-scheduler-error-recovery-final.log`。前端原提示与新提示的定向基线 `backend/target/media-registration-status-label-baseline.log` 为 1 项失败，修正后 5 个相关文件共 150 项通过；全量 lint、类型检查、前端构建和首屏资源预算通过。Java 声明依赖、仓库结构和 7 项架构检查器测试通过。
 
 本轮没有验证真实 MySQL、S3、多实例、部署配置热变更或本地真实浏览器；核心与媒体线程的隔离在测试上下文内验证，不等于测得生产吞吐或延迟，关闭线程也不能撤回已完成的外部写入。游标重启重扫、多实例重复读取、外部对象读超时及未知上传结果的限制仍然存在。前述 `cfdbd71` 和 `61aa8cc` 的 GitHub Actions run `40844200199`、`40847057747` 已各有 13 项作业通过，不能代表本节改动的远程结果。
+
+## 2026-10-29：媒体处理任务恢复的批内故障隔离
+
+媒体处理任务恢复原先直接遍历查询出的最多 20 条任务；其中一条恢复调用抛出运行时异常时，后面的任务在本轮不会执行。现在逐条隔离这类异常，继续尝试同批其他任务，并汇总记录失败数量、首个任务 ID 和异常类型；查询本身的异常仍向调度器传播。线程已中断时保留原异常和中断状态，不继续处理余下任务。没有额外更改任务或 outbox 状态，失败记录仍由后续原有恢复流程判断是否重试。
+
+旧实现基线 `backend/target/media-job-recovery-failure-baseline-final.log` 使用隔离 H2，前后源码哈希一致：两条符合条件的任务中，第一条在进入真实事务服务前被注入异常，原方法立即抛出，第二条未得到恢复；1 项测试报错。更早的 `media-job-recovery-failure-baseline.log` 在测试文件仍被修改时运行，保留为不可靠记录。修复后，测试核对第二条 outbox 被真实事务恢复并可领取，第一条在移除故障后由下一轮恢复；另一项模拟线程中断并验证后续任务未处理。该注入没有制造真实数据库事务中途失败，不能证明真实数据库故障的回滚或 RabbitMQ 实际投递。
+
+定向后端回归 `backend/target/media-job-recovery-isolation-final.log` 共 28 项通过并完成打包；测试名称调整后，`backend/target/media-job-recovery-isolation-reviewed.log` 单独复跑相关文件 14 项通过。Java 声明依赖、仓库结构和 7 项架构检查器测试通过。此改动只隔离同一批内的失败：如果最前面 20 条持续失败，后面的任务仍可能等待，尚未验证真实 MySQL 查询计划、多实例行为或真实网络故障。

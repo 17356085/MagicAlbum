@@ -258,6 +258,76 @@ class MediaJobServiceExecutionTest {
         assertThat(awaitRecoveredDelivery().eventId()).isEqualTo(delivery.eventId());
     }
 
+    @Test
+    void recoveryContinuesWithOtherJobsWhenOneJobFails() {
+        Fixture failed = fixture();
+        Fixture healthy = fixture();
+        Instant old = Instant.now().minusSeconds(180);
+        jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id in (?, ?)",
+                failed.envelope().eventId(), healthy.envelope().eventId());
+        jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                java.sql.Timestamp.from(old), failed.jobId());
+        jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                java.sql.Timestamp.from(old.plusSeconds(1)), healthy.jobId());
+
+        java.util.concurrent.atomic.AtomicBoolean failFirst = new java.util.concurrent.atomic.AtomicBoolean(true);
+        MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                if (jobId.equals(failed.jobId()) && failFirst.get()) throw new IllegalStateException("simulated per-job failure");
+                deliveries.recover(jobId);
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+
+        maintenance.recoverJobs();
+
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                failed.envelope().eventId())).isEqualTo("PUBLISHED");
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                healthy.envelope().eventId())).isEqualTo("PENDING");
+        assertThat(awaitRecoveredDelivery().eventId()).isEqualTo(healthy.envelope().eventId());
+
+        failFirst.set(false);
+        maintenance.recoverJobs();
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                failed.envelope().eventId())).isEqualTo("PENDING");
+    }
+
+    @Test
+    void recoveryDoesNotContinueTheBatchWhenItsThreadIsInterrupted() {
+        Fixture interrupted = fixture();
+        Fixture later = fixture();
+        Instant old = Instant.now().minusSeconds(180);
+        jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id in (?, ?)",
+                interrupted.envelope().eventId(), later.envelope().eventId());
+        jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                java.sql.Timestamp.from(old), interrupted.jobId());
+        jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                java.sql.Timestamp.from(old.plusSeconds(1)), later.jobId());
+
+        MediaDeliveryTransactions interruptedDelivery = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("simulated interruption during recovery");
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, interruptedDelivery,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+        try {
+            assertThatThrownBy(maintenance::recoverJobs).isInstanceOf(IllegalStateException.class);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                later.envelope().eventId())).isEqualTo("PUBLISHED");
+    }
+
     private MediaDeliveryTransactions.Delivery awaitRecoveredDelivery() {
         // Recovery schedules available_at="now". Assert scheduler-visible readiness
         // without requiring the next wall-clock read to exceed DB timestamp rounding.
@@ -317,14 +387,16 @@ class MediaJobServiceExecutionTest {
         String assetId = UUID.randomUUID().toString();
         String jobId = UUID.randomUUID().toString();
         String eventId = UUID.randomUUID().toString();
+        String objectKey = "threads/2026/10/29/" + assetId.replace("-", "") + ".jpg";
         tx(() -> {
             Instant now = Instant.now();
             jdbc.update("""
                     insert into media_asset(asset_id, owner_id, provider, object_key, url, content_type,
                         byte_size, sha256, status, processing_status, created_at, updated_at)
-                    values (?, ?, 'local', 'source.jpg', '/uploads/source.jpg', 'image/jpeg',
+                    values (?, ?, 'local', ?, ?, 'image/jpeg',
                         4, ?, 'READY', 'PENDING', ?, ?)
-                    """, assetId, 7L, SHA, java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
+                    """, assetId, 7L, objectKey, "/uploads/" + objectKey, SHA,
+                    java.sql.Timestamp.from(now), java.sql.Timestamp.from(now));
             jdbc.update("""
                     insert into media_processing_job(job_id, asset_id, job_version, preset,
                         processor_version, status, attempts, created_at, updated_at)

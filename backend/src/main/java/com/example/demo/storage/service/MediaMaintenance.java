@@ -40,12 +40,31 @@ public class MediaMaintenance {
     @Scheduled(fixedDelayString = "${app.media.recovery-delay-ms:15000}", scheduler = "mediaPublishScheduler")
     public void recoverJobs() {
         Instant now = Instant.now();
-        jdbc.queryForList("""
+        var jobIds = jdbc.queryForList("""
                 SELECT job_id FROM media_processing_job
                 WHERE (status='PENDING' AND updated_at<?)
                     OR (status='PROCESSING' AND lease_until<?)
                 ORDER BY updated_at LIMIT 20
-                """, String.class, Timestamp.from(now.minusSeconds(120)), Timestamp.from(now)).forEach(deliveries::recover);
+                """, String.class, Timestamp.from(now.minusSeconds(120)), Timestamp.from(now));
+        int failures = 0;
+        String firstFailedJob = null;
+        String firstFailureType = null;
+        for (String jobId : jobIds) {
+            try {
+                deliveries.recover(jobId);
+            } catch (RuntimeException failure) {
+                if (Thread.currentThread().isInterrupted()) throw failure;
+                failures++;
+                if (firstFailedJob == null) {
+                    firstFailedJob = jobId;
+                    firstFailureType = failure.getClass().getSimpleName();
+                }
+            }
+        }
+        if (failures > 0) {
+            log.warn("media_job_recovery_deferred count={} firstJobId={} errorType={} reason=RECOVERY_UNCONFIRMED",
+                    failures, firstFailedJob, firstFailureType);
+        }
     }
 
     @Scheduled(fixedDelayString = "${app.media.cleanup-delay-ms:60000}", scheduler = "mediaMaintenanceScheduler")
