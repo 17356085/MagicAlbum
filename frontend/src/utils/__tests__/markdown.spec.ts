@@ -36,6 +36,16 @@ describe('Markdown rendering boundaries', () => {
     expect(image.getAttribute('alt')).toBe('测试图片')
   })
 
+  it('preserves escaped alt text through image normalization and sanitization', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/api/v1')
+    const renderer = createMarkdownRenderer({ normalizeImages: true })
+    const markdown = String.raw`![图\]文 &amp;copy; \\](/uploads/test.png)`
+    const image = parsed(renderMarkdown(renderer, markdown)).querySelector('img')!
+    expect(image.getAttribute('src')).toBe('/uploads/test.png')
+    expect(image.getAttribute('alt')).toBe('图]文 &copy; \\')
+    expect(image.getAttribute('loading')).toBe('lazy')
+  })
+
   it('preserves KaTeX and highlighted code through the safe rendering path', () => {
     const renderer = createMarkdownRenderer({ katex: true })
     const fragment = parsed(renderMarkdown(renderer, '$x^2$\n\n```js\nconst value = 1\n```'))

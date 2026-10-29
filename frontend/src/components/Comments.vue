@@ -9,6 +9,7 @@ import { useCommentUiState } from '@/components/comments/useCommentUiState'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { normalizeImageUrl } from '@/utils/image'
+import { createMarkdownImage } from '@/utils/markdownEditor'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { InteractionResponseError } from '@/api/interactionState'
 import { isPostCreationUnconfirmedError } from '@/api/postCreationResponse'
@@ -519,7 +520,7 @@ async function handleUploadImage(file: File, onProgress?: (percent: number) => v
       error.value = '图片上传失败：服务器未返回有效图片地址'
       return
     }
-    content.value = (content.value || '') + `\n\n![](${normalized})\n\n`
+    content.value = (content.value || '') + `\n\n${createMarkdownImage(normalized, '')}\n\n`
     error.value = ''
   } catch (reason: unknown) {
     if (isCurrentUpload(uploadId, threadId, session)) error.value = getUploadErrorMessage(reason)

@@ -7,6 +7,7 @@ import CommentsComposer from '../comments/CommentsComposer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { InteractionResponseError } from '@/api/interactionState'
 import { UploadResponseUnconfirmedError } from '@/api/uploadResponse'
+import { createBaseMarkdownRenderer, renderMarkdown } from '@/utils/markdownBase'
 
 const mocks = vi.hoisted(() => ({ listPosts: vi.fn(), createPost: vi.fn(), likePost: vi.fn(), unlikePost: vi.fn(), uploadImage: vi.fn() }))
 vi.mock('@/api/posts', () => mocks)
@@ -14,6 +15,12 @@ vi.mock('@/api/uploads', () => ({ uploadImage: mocks.uploadImage }))
 let wrapper: VueWrapper | undefined
 const row = { id: 7, threadId: 1, authorId: 1, authorUsername: 'alice', content: '已有评论仍应可读', liked: false, likeCount: 0, createdAt: '2026-10-24T00:00:00Z' }
 const result = { items: [row], page: 1, size: 15, total: 1 }
+
+function parse(markup: string): DocumentFragment {
+  const template = document.createElement('template')
+  template.innerHTML = markup
+  return template.content
+}
 
 async function open() {
   wrapper = mount(Comments, { props: { threadId: 1 }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
@@ -61,6 +68,28 @@ describe('Comments independent load and operation feedback', () => {
     expect(dialog.text()).toContain('图片上传失败')
     expect(dialog.text()).toContain(row.content)
     expect(dialog.findComponent(CommentsComposer).props('modelValue')).toBe('保留我的输入')
+  })
+
+  it('renders an uploaded delimiter-containing URL as one complete comment image', async () => {
+    const url = 'https://cdn.example/image)![](https://evil.example/x.png'
+    mocks.uploadImage.mockResolvedValueOnce({ url })
+    const dialog = await open()
+    const composer = dialog.findComponent(CommentsComposer)
+    const input = composer.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['image'], 'photo.png', { type: 'image/png' })] })
+
+    await input.trigger('change')
+    await flushPromises()
+
+    const markdown = String(composer.props('modelValue') || '')
+    const fragment = parse(renderMarkdown(createBaseMarkdownRenderer(), markdown))
+    const images = fragment.querySelectorAll('img')
+
+    expect(mocks.uploadImage).toHaveBeenCalledTimes(1)
+    expect(images).toHaveLength(1)
+    expect(fragment.querySelectorAll('a')).toHaveLength(0)
+    expect(images[0]?.getAttribute('src')).toBe('https://cdn.example/image)!%5B%5D(https://evil.example/x.png')
+    expect(images[0]?.getAttribute('alt')).toBe('')
   })
 
   it('shows an unconfirmed upload result without retrying or submitting the preserved draft', async () => {

@@ -1459,3 +1459,13 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 主代理在原始实现上运行头像页面与真实上传 API 封装、模拟 Axios 响应的回归：收到 `{url:{invalid:true}}` 时，模拟资料更新函数被调用且头像参数为 `[object Object]`，1 项失败，日志 `backend/target/upload-avatar-transport-baseline.log`。修复后该入口验证不提交资料更新、保留原资料并显示未知结果，也验证 URL-only 响应仍会调用资料更新；评论组件验证保留草稿、无自动重传。主代理复跑五个相关文件共 61 项通过，日志 `backend/target/upload-response-reviewed.log`；完整前端 Vitest 为 130 文件、1381 项通过、exit 0，日志 `backend/target/upload-response-full.log`，测试前后源码清单哈希一致；全量 lint、type-check、构建、仓库结构及 Java 声明依赖检查通过。测试使用模拟 HTTP 响应和资料更新，不证明真实网络、对象存储、浏览器或代理行为；已知当前后端正常响应返回字符串 URL，异常 2xx 属于边界防御场景。
 
 `027d874aa1ff153f4abc36364cc24cacd5cf20d1` 的 GitHub Actions run `40712330661` 已通过。`5afd5ad1e5b72648768f74ff631f6853874ddc69` 的 run `40714060121` 首次在构建 gateway 镜像时因 Maven Central 返回 502 无法下载依赖，目标 API/浏览器回归尚未启动；已重跑失败作业，第二次运行结果需独立核对。
+
+## 2026-10-29：图片 Markdown 地址与替代文字
+
+图片编辑器和评论上传现在共用图片 Markdown 构造函数：对地址中的括号、反斜杠和 `&` 做 Markdown 转义，对原始空白做百分号编码，对替代文字中的方括号、反斜杠和 `&` 做转义。常规地址的写法保持不变；已有百分号编码不再被重复编码。这样合法地址中的右括号或实体不会截断目标，也不会被解析成额外图片；渲染器仍可能按其 URL 规则将方括号规范化为百分号编码。上传 API 上一节的地址校验仍适用，本节不扩张允许的协议。
+
+当前 markdown-it 的 `text_join` 不会处理图片替代文字内部的 `text_special`，默认图片渲染因而丢失转义字符；基础渲染器增加针对图片内部文字的归一化，嵌套图片标签也递归处理，继续使用原有渲染和 DOMPurify 清理。该处理依赖当前 markdown-it 的 token 语义，升级时需复查；它不声称修复所有 Markdown 或替代文字格式问题。
+
+旧构造方式的三个测试文件共 38 项中 8 项失败，涉及地址截断、额外图片、实体和替代文字等相关场景，日志 `backend/target/markdown-image-escape-baseline.log`；另在旧基础渲染器上复现 4 项中 1 项失败，日志 `backend/target/image-alt-token-baseline.log`。主代理审阅子代理差异，补充恶意形状替代文字、嵌套图片标签和完整渲染器的回归；五个相关文件共 52 项通过，日志 `backend/target/markdown-image-escape-reviewed.log`。完整前端 Vitest 为 130 文件、1397 项通过、exit 0，日志 `backend/target/markdown-image-full.log`，测试前后源码清单哈希一致；全量 lint、type-check、构建、仓库结构及 Java 声明依赖检查通过。回归使用真实 markdown-it 与 DOMPurify 的 jsdom 渲染、模拟上传响应，未验证真实浏览器、服务器或 CDN 配置。默认本地及私有 S3 路径通常不含这些分隔符，自定义公开 CDN 基址是否触发取决于实际配置。
+
+前述 `5afd5ad` 的 GitHub Actions run `40714060121` 重跑失败作业后已完成，13 项作业通过；`2f3b7073eb32bb1f3114a0e3df10b6260d5e4248` 的 run `40805834951` 仍在运行，尚不能以它代表本节变更的远程结果。

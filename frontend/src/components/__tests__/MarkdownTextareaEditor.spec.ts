@@ -1,11 +1,18 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import MarkdownTextareaEditor from '../MarkdownTextareaEditor.vue'
+import { createBaseMarkdownRenderer, renderMarkdown } from '@/utils/markdownBase'
 
 vi.mock('@/utils/markdown', () => ({
   createMarkdownRenderer: () => ({}),
   renderMarkdown: (_renderer: unknown, value: string) => value || '',
 }))
+
+function parse(markup: string): DocumentFragment {
+  const template = document.createElement('template')
+  template.innerHTML = markup
+  return template.content
+}
 
 describe('MarkdownTextareaEditor preview defaults', () => {
   function deferred() {
@@ -47,6 +54,26 @@ describe('MarkdownTextareaEditor preview defaults', () => {
     await wrapper.findAll('button').find((button) => button.text() === '插入图片')!.trigger('click')
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toContain('保留新输入')
     expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toContain('/uploads/image.png')
+    wrapper.unmount()
+  })
+
+  it('renders an uploaded delimiter-containing URL as one complete image', async () => {
+    const url = 'https://cdn.example/image)![](https://evil.example/x.png'
+    const upload = vi.fn().mockResolvedValue(url)
+    const wrapper = mount(MarkdownTextareaEditor, { props: { modelValue: '正文', uploadImage: upload } })
+
+    await beginUpload(wrapper)
+    await flushPromises()
+
+    const markdown = String(wrapper.emitted('update:modelValue')?.[0]?.[0] || '')
+    const fragment = parse(renderMarkdown(createBaseMarkdownRenderer(), markdown))
+    const images = fragment.querySelectorAll('img')
+
+    expect(upload).toHaveBeenCalledTimes(1)
+    expect(images).toHaveLength(1)
+    expect(fragment.querySelectorAll('a')).toHaveLength(0)
+    expect(images[0]?.getAttribute('src')).toBe('https://cdn.example/image)!%5B%5D(https://evil.example/x.png')
+    expect(images[0]?.getAttribute('alt')).toBe('image')
     wrapper.unmount()
   })
 

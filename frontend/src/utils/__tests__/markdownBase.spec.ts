@@ -29,6 +29,20 @@ describe('lightweight Markdown rendering', () => {
     }
   })
 
+  it('preserves escaped punctuation and literal entities in image alt text', () => {
+    const renderer = createBaseMarkdownRenderer()
+    const fragment = parse(renderMarkdown(renderer, String.raw`![封面 \] &amp;copy; \\ 示例](https://example.com/image.png)`))
+    expect(fragment.querySelector('img')?.getAttribute('alt')).toBe('封面 ] &copy; \\ 示例')
+  })
+
+  it('preserves escaped text inside nested image labels', () => {
+    const renderer = createBaseMarkdownRenderer()
+    const markdown = String.raw`![外 ![内\]文](/uploads/inner.png)](/uploads/outer.png)`
+    const fragment = parse(renderMarkdown(renderer, markdown))
+    expect(fragment.querySelectorAll('img')).toHaveLength(1)
+    expect(fragment.querySelector('img')?.getAttribute('alt')).toBe('外 内]文')
+  })
+
   it('keeps math and fenced code readable without enabling heavy plugins', () => {
     const renderer = createBaseMarkdownRenderer()
     const fragment = parse(renderMarkdown(renderer, '$x^2$\n\n```js\nconst value = 1\n```'))

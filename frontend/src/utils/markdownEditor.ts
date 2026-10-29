@@ -78,8 +78,23 @@ export function appendLine(
   }
 }
 
+function escapeMarkdownLabel(value: string): string {
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/&/g, '&amp;')
+    .replace(/[[\]]/g, '\\$&')
+}
+
+function escapeMarkdownDestination(value: string): string {
+  return String(value)
+    .replace(/\s/g, (character) => encodeURIComponent(character))
+    .replace(/\\/g, '\\\\')
+    .replace(/[()]/g, '\\$&')
+    .replace(/&/g, '&amp;')
+}
+
 export function createMarkdownImage(url: string, alt = 'image'): string {
-  return `![${alt}](${url})`
+  return `![${escapeMarkdownLabel(alt)}](${escapeMarkdownDestination(url)})`
 }
 
 export function createMarkdownLink(url: string, label = 'link'): string {
