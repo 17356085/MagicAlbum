@@ -1,3 +1,5 @@
+import { isAxiosError } from 'axios'
+
 export const UPLOAD_RESPONSE_UNCONFIRMED_MESSAGE = '图片上传结果未确认，重复上传可能产生多份图片'
 
 export interface UploadImageResponse {
@@ -8,10 +10,12 @@ export interface UploadImageResponse {
 
 export class UploadResponseUnconfirmedError extends Error {
   readonly code = 'UPLOAD_RESPONSE_UNCONFIRMED'
+  readonly cause?: unknown
 
-  constructor() {
+  constructor(cause?: unknown) {
     super(UPLOAD_RESPONSE_UNCONFIRMED_MESSAGE)
     this.name = 'UploadResponseUnconfirmedError'
+    if (cause !== undefined) this.cause = cause
     Object.setPrototypeOf(this, new.target.prototype)
   }
 }
@@ -22,6 +26,22 @@ export function isUploadResponseUnconfirmedError(value: unknown): value is Uploa
   const candidate = value as { code?: unknown; message?: unknown }
   return candidate.code === 'UPLOAD_RESPONSE_UNCONFIRMED'
     && candidate.message === UPLOAD_RESPONSE_UNCONFIRMED_MESSAGE
+}
+
+/**
+ * Convert only transport outcomes whose upload result cannot be confirmed.
+ * Other failures must retain their original identity for caller-specific
+ * handling (for example authorization or validation errors).
+ */
+export function rethrowUploadTransportError(error: unknown): never {
+  if (isAxiosError(error)) {
+    const status = error.response?.status
+    if (!error.response || status === 408 || (typeof status === 'number' && status >= 500)) {
+      throw new UploadResponseUnconfirmedError(error)
+    }
+  }
+
+  throw error
 }
 
 const MAX_UPLOAD_URL_LENGTH = 2048

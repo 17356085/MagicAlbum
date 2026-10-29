@@ -1469,3 +1469,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 旧构造方式的三个测试文件共 38 项中 8 项失败，涉及地址截断、额外图片、实体和替代文字等相关场景，日志 `backend/target/markdown-image-escape-baseline.log`；另在旧基础渲染器上复现 4 项中 1 项失败，日志 `backend/target/image-alt-token-baseline.log`。主代理审阅子代理差异，补充恶意形状替代文字、嵌套图片标签和完整渲染器的回归；五个相关文件共 52 项通过，日志 `backend/target/markdown-image-escape-reviewed.log`。完整前端 Vitest 为 130 文件、1397 项通过、exit 0，日志 `backend/target/markdown-image-full.log`，测试前后源码清单哈希一致；全量 lint、type-check、构建、仓库结构及 Java 声明依赖检查通过。回归使用真实 markdown-it 与 DOMPurify 的 jsdom 渲染、模拟上传响应，未验证真实浏览器、服务器或 CDN 配置。默认本地及私有 S3 路径通常不含这些分隔符，自定义公开 CDN 基址是否触发取决于实际配置。
 
 前述 `5afd5ad` 的 GitHub Actions run `40714060121` 重跑失败作业后已完成，13 项作业通过；`2f3b7073eb32bb1f3114a0e3df10b6260d5e4248` 的 run `40805834951` 仍在运行，尚不能以它代表本节变更的远程结果。
+
+## 2026-10-29：上传传输结果未知的反馈
+
+上传 POST 的 Axios 错误没有响应、收到 HTTP 408 或 5xx 时，前端统一提示上传结果未确认和重复上传可能产生多份图片；原始错误保留在异常的 `cause` 中以便诊断。明确的其他 4xx、非 Axios 异常和发送前的账号会话错误保持原有行为；不会自动重传或尝试以不存在的 assetId 查询结果。后端先写对象再返回响应，因此这些错误本身不能证明对象是否已保存；警告并不提供幂等或恢复能力。
+
+旧实现的 Axios 适配器测试共 42 项中 5 项失败，覆盖无响应、408 和 5xx 的同一类结果未知问题，日志 `backend/target/upload-transport-uncertain-baseline.log`。主代理另用头像页面及评论组件连接真实上传 API 封装、模拟 Axios 超时，原始行为分别显示 `timeout` 和建议稍后重试，日志 `backend/target/upload-timeout-avatar-baseline.log`、`backend/target/upload-timeout-comments-baseline.log`。修复后八个相关测试文件共 117 项通过，覆盖原始错误、单次请求、草稿保留、无资料更新和明确 4xx，日志 `backend/target/upload-transport-uncertain-reviewed.log`；完整前端 Vitest 为 131 文件、1409 项通过、exit 0，日志 `backend/target/upload-transport-full.log`，测试前后源码清单哈希一致；全量 lint、type-check、构建、仓库结构及 Java 声明依赖检查通过。测试模拟传输错误，没有复现真实代理断连、服务端写入后丢响应或对象存储重复文件。
+
+后续配置审查发现，登记开启、处理关闭时，源码仍会为 PNG/JPEG 登记待处理任务，而处理发布器、操作端点和维护任务受处理开关控制；客户端可能持续轮询并显示无法使用的操作。现有 `MediaUploadControllerIT` 显式开启登记、未显式指定处理开关，在默认关闭条件下覆盖 H2 的资产与任务持久化；该测试没有单独断言全部开关组合或处理禁用时的客户端行为。四种配置和运行中重新启用处理的界面语义仍需单独设计与验证，不能将此次提示改动视为解决该问题。

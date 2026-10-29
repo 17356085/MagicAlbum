@@ -33,6 +33,18 @@ function installAdapter(data: unknown, status = 200): void {
   api.defaults.adapter = async (config) => response(data, config, status)
 }
 
+function createAxiosFailure(status?: number): AxiosError {
+  const config = {} as InternalAxiosRequestConfig
+  const responseData = status === undefined ? undefined : response({}, config, status)
+  return new AxiosError(
+    status === undefined ? 'upload transport failed' : `upload failed with ${status}`,
+    status === undefined ? 'ERR_NETWORK' : 'ERR_BAD_RESPONSE',
+    config,
+    undefined,
+    responseData,
+  )
+}
+
 describe('upload image response confirmation', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -130,12 +142,78 @@ describe('upload image response confirmation', () => {
     expect(isUploadResponseUnconfirmedError(new Error(unconfirmedMessage))).toBe(false)
   })
 
-  it('passes transport failures through without applying the 2xx response guard', async () => {
-    const failure = new AxiosError('upload timed out', 'ECONNABORTED')
+  it.each([
+    { name: 'timeout without a response', failure: () => new AxiosError('upload timed out', 'ECONNABORTED') },
+    { name: 'network failure without a response', failure: () => createAxiosFailure() },
+    { name: 'HTTP 408', failure: () => createAxiosFailure(408) },
+    { name: 'HTTP 500', failure: () => createAxiosFailure(500) },
+    { name: 'HTTP 502', failure: () => createAxiosFailure(502) },
+  ])('turns $name into an unconfirmed response while retaining the cause', async ({ failure: createFailure }) => {
+    const failure = createFailure()
     const track = vi.spyOn(mediaState, 'trackMediaUpload')
-    api.defaults.adapter = async () => { throw failure }
+    let requests = 0
+    api.defaults.adapter = async () => {
+      requests += 1
+      throw failure
+    }
+
+    let thrown: unknown
+    try {
+      await uploadImage(imageFile(), token)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(UploadResponseUnconfirmedError)
+    expect((thrown as UploadResponseUnconfirmedError).message).toBe(unconfirmedMessage)
+    expect((thrown as UploadResponseUnconfirmedError).cause).toBe(failure)
+    expect(requests).toBe(1)
+    expect(track).not.toHaveBeenCalled()
+    expect(mediaAssets.value).toEqual([])
+  })
+
+  it.each([400, 401, 403, 413])('preserves the original Axios %s error identity', async (status) => {
+    const failure = createAxiosFailure(status)
+    const track = vi.spyOn(mediaState, 'trackMediaUpload')
+    let requests = 0
+    api.defaults.adapter = async () => {
+      requests += 1
+      throw failure
+    }
 
     await expect(uploadImage(imageFile(), token)).rejects.toBe(failure)
+    expect(requests).toBe(1)
+    expect(track).not.toHaveBeenCalled()
+  })
+
+  it('preserves a non-Axios adapter failure identity', async () => {
+    const failure = new Error('upload failed before an HTTP response')
+    const track = vi.spyOn(mediaState, 'trackMediaUpload')
+    let requests = 0
+    api.defaults.adapter = async () => {
+      requests += 1
+      throw failure
+    }
+
+    await expect(uploadImage(imageFile(), token)).rejects.toBe(failure)
+    expect(requests).toBe(1)
+    expect(track).not.toHaveBeenCalled()
+  })
+
+  it('does not wrap a synchronous session preflight error or issue a request', async () => {
+    const track = vi.spyOn(mediaState, 'trackMediaUpload')
+    let requests = 0
+    api.defaults.adapter = async () => {
+      requests += 1
+      throw new Error('adapter must not run')
+    }
+    localStorage.setItem('accessToken', 'different-session-token')
+
+    await expect(uploadImage(imageFile())).rejects.toMatchObject({
+      name: 'AuthSessionChangedError',
+      code: 'AUTH_SESSION_CHANGED',
+    })
+    expect(requests).toBe(0)
     expect(track).not.toHaveBeenCalled()
   })
 
