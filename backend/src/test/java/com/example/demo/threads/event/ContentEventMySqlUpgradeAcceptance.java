@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261020.4";
+    private static final String LATEST_MIGRATION_VERSION = "20261020.5";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
     private static final String UPGRADE_USERNAME = "CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME";
     private static final String UPGRADE_PASSWORD = "CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD";

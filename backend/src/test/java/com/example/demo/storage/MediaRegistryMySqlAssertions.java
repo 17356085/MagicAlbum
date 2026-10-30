@@ -93,6 +93,7 @@ public final class MediaRegistryMySqlAssertions {
         assertIndex(connection, "media_processing_job", "idx_media_processing_job_status_created", false,
                 "status,created_at,job_id");
         assertIndex(connection, "media_processing_job", "idx_media_job_expired", false, "status,lease_until,job_id");
+        assertIndex(connection, "media_processing_job", "idx_media_job_pending_updated", false, "status,updated_at,job_id");
         assertIndex(connection, "media_request_outbox", "idx_media_outbox_due", false, "status,available_at,event_id");
         assertIndex(connection, "media_request_outbox", "PRIMARY", true, "event_id");
         assertIndex(connection, "media_request_outbox", "uk_media_request_outbox_job_version", true,

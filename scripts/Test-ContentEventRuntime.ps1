@@ -258,7 +258,7 @@ function Assert-FinalReadback {
     foreach ($databaseName in @($runtimeDatabase, $upgradeDatabase)) {
         $version = Invoke-SqlScalar $databaseName 'SELECT version FROM flyway_schema_history WHERE success=1 ORDER BY installed_rank DESC LIMIT 1;'
         $readback.FlywayVersions[$databaseName] = $version.Replace('_', '.')
-    Check ($version.Replace('_', '.') -eq '20261020.4') "$databaseName has the latest Flyway migration"
+        Check ($version.Replace('_', '.') -eq '20261020.5') "$databaseName has the latest Flyway migration"
         $mysqlVersion = Invoke-SqlScalar $databaseName 'SELECT VERSION();'
         $readback.MysqlVersions[$databaseName] = $mysqlVersion
         Check ($mysqlVersion -match '^8\.') "$databaseName is MySQL 8"
