@@ -34,7 +34,7 @@ class ContentEventOutboxServiceBehaviorTest {
         when(repository.findTop20ByStatusAndLeaseUntilLessThanOrderByLeaseUntilAscIdAsc(
                 eq(ContentEventStatus.IN_FLIGHT), eq(clock.instant()))).thenReturn(List.of());
         when(repository.claim(eq(7L), eq(ContentEventStatus.PENDING), eq(ContentEventStatus.IN_FLIGHT),
-                eq(clock.instant()), eq("worker-a"), eq(clock.instant().plusSeconds(30)))).thenReturn(1);
+                eq(clock.instant()), eq("worker-a"), eq(clock.instant().plusSeconds(30)), eq(0))).thenReturn(1);
 
         ContentEventProperties properties = properties();
         ContentEventOutboxService service = new ContentEventOutboxService(repository, properties, clock);

@@ -185,8 +185,10 @@ public class ContentEventOutboxService {
             if (candidate.getId() == null) {
                 continue;
             }
+            // A late commit may turn this old snapshot into an already-expired newer lease.
+            int expectedAttempts = candidate.getAttempts();
             if (candidate.getStatus() == ContentEventStatus.IN_FLIGHT
-                    && candidate.getAttempts() >= maxAttempts) {
+                    && expectedAttempts >= maxAttempts) {
                 repository.failExhaustedLease(
                         candidate.getId(),
                         ContentEventStatus.IN_FLIGHT,
@@ -202,13 +204,14 @@ public class ContentEventOutboxService {
                     ContentEventStatus.IN_FLIGHT,
                     now,
                     normalizedOwner,
-                    leaseUntil
+                    leaseUntil,
+                    expectedAttempts
             );
             if (updated == 1) {
                 claimed.put(candidate.getId(), new Delivery(
                         candidate.getId(),
                         toMessage(candidate),
-                        candidate.getAttempts() + 1,
+                        expectedAttempts + 1,
                         normalizedOwner,
                         leaseUntil
                 ));

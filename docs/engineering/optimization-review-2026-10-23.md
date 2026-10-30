@@ -1547,3 +1547,15 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 提交 `43c34dd` 的 GitHub Actions run `41025151445` 中，内容事件 MySQL 升级作业失败。下载的作业证据显示 41 个迁移在空库和旧库升级中均已执行到 `20261020.5`；失败原因是升级验收类仍要求最后版本为 `20261020.4`。同一运行脚本的最终数据库读回也写死了旧版本，首次失败时尚未执行到那里。
 
 现将两处验收期望更新为 `20261020.5`，并在真实 MySQL 升级断言中核对新索引的名称及列顺序 `status,updated_at,job_id`。本机独立 MySQL 8.0.37 的空白隔离数据库执行完整旧版本升级、Flyway 校验、历史数据和索引断言，1 项通过，日志 `backend/target/content-migration-index-upgrade-reviewed.log`；数据库服务在测试后正常关闭。Docker 运行时脚本及本次修正提交的远程作业仍需各自验证，不能把单项本地测试当作整个 CI 已通过。
+
+## 2026-10-30：内容事件领取次数快照
+
+内容事件配送读取候选后，再以条件更新领取租约；旧条件只检查当前状态和到期时间，没有核对候选的尝试次数。如果第一位工作者的领取事务延迟提交，第二位工作者可能先读到 `PENDING/attempts=0` 的旧快照；第一位提交时租约已经过期，第二位仍能领取，但返回的配送对象记为第 1 次，而数据库实际已是第 2 次。在最大尝试次数为 2 的情况下，第二次投递失败会被误判成可以再次重试。
+
+领取更新现在同时要求数据库尝试次数等于候选快照，返回的次数也由同一快照计算。条件不匹配时不取得该记录，后续调度重新读取；原有租约所有者、过期检查、网络投递和手动重试语义不变，也没有新增数据库往返或迁移。不同配送器可能仍重复发送，接收端仍需按原合同处理幂等。
+
+修改前用固定时钟及事务屏障进行两种真实数据库复现：H2 的 `backend/target/content-claim-snapshot-baseline.log` 和独立 MySQL 8.0.37、`REPEATABLE_READ` 的 `backend/target/content-claim-mysql-baseline.log` 均为 2 项中 1 项失败；租约仍有效时旧快照不能领取，超过 30 秒时旧实现记录 `bAttempts=1 dbAttempts=2`，并把失败结果写为 `PENDING`。两项是同一并发问题的边界场景。最初 MySQL 运行因测试方言配置错误未能启动，保留为 `backend/target/content-claim-mysql-initialization-failure.log`，不计为有效基线；修正测试方言后才得到上述复现。
+
+修复后相关 H2 回归共 20 项通过并完成打包，日志 `backend/target/content-claim-snapshot-reviewed.log`；独立 MySQL 的两种延迟提交场景均通过，旧候选返回空，新领取读取到第 2 次并在失败后写为 `FAILED`，日志 `backend/target/content-claim-mysql-reviewed.log`。MySQL 测试仅接受专用环回端口、随机隔离库、专用账号和匹配的库内标记，使用真实 JPA 与数据库事务，事务时序由测试屏障控制；两次验证后独立数据库实例均正常关闭。测试不证明真实 broker 确认、跨实例网络故障或生产数据库负载。
+
+受本机内存不足影响，第一次最终 H2 回归在编译过程中中止，记录为 `backend/target/content-claim-snapshot-memory-failure.log`；第一次修复后 MySQL 复测也在 Maven 启动阶段中止，记录为 `backend/target/content-claim-mysql-reviewed-memory-failure.log`。内存恢复后限制测试 JVM 内存及线程数并分别重跑，才取得上述通过结果，未修改系统内存设置或关闭其他应用。

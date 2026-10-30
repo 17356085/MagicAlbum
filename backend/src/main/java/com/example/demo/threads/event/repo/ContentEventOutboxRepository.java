@@ -38,6 +38,7 @@ public interface ContentEventOutboxRepository extends JpaRepository<ContentEvent
                    outbox.leaseUntil = :leaseUntil,
                    outbox.attempts = outbox.attempts + 1
              where outbox.id = :id
+               and outbox.attempts = :expectedAttempts
                and ((outbox.status = :pending and outbox.availableAt <= :now)
                  or (outbox.status = :inFlight and outbox.leaseUntil < :now))
             """)
@@ -47,7 +48,8 @@ public interface ContentEventOutboxRepository extends JpaRepository<ContentEvent
             @Param("inFlight") ContentEventStatus inFlight,
             @Param("now") Instant now,
             @Param("owner") String owner,
-            @Param("leaseUntil") Instant leaseUntil
+            @Param("leaseUntil") Instant leaseUntil,
+            @Param("expectedAttempts") int expectedAttempts
     );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
