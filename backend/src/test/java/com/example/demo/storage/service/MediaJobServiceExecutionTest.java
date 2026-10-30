@@ -297,6 +297,249 @@ class MediaJobServiceExecutionTest {
     }
 
     @Test
+    void recoveryReachesLaterJobsWhenAnEntireBatchKeepsFailing() {
+        var failed = new java.util.ArrayList<Fixture>();
+        Instant old = Instant.now().minusSeconds(240);
+        for (int index = 0; index < 20; index++) {
+            Fixture item = fixture();
+            failed.add(item);
+            jdbc.update("update media_processing_job set created_at=?, updated_at=? where job_id=?",
+                    java.sql.Timestamp.from(old.plusSeconds(index)), java.sql.Timestamp.from(old.plusSeconds(index)), item.jobId());
+            jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", item.envelope().eventId());
+        }
+        Fixture later = fixture();
+        jdbc.update("update media_processing_job set created_at=?, updated_at=? where job_id=?",
+                java.sql.Timestamp.from(old.plusSeconds(30)), java.sql.Timestamp.from(old.plusSeconds(30)), later.jobId());
+        jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", later.envelope().eventId());
+
+        var attempts = new java.util.ArrayList<String>();
+        MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                attempts.add(jobId);
+                if (failed.stream().anyMatch(item -> item.jobId().equals(jobId))) {
+                    throw new IllegalStateException("simulated persistent failure");
+                }
+                deliveries.recover(jobId);
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+
+        maintenance.recoverJobs();
+        assertThat(attempts).hasSize(20).doesNotContain(later.jobId());
+        maintenance.recoverJobs();
+        assertThat(attempts).hasSize(21).endsWith(later.jobId());
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                later.envelope().eventId())).isEqualTo("PENDING");
+        maintenance.recoverJobs();
+        assertThat(attempts).hasSize(41);
+        assertThat(attempts.subList(21, 41)).containsExactlyElementsOf(failed.stream().map(Fixture::jobId).toList());
+    }
+
+    @Test
+    void recoveryKeepsTiesAcrossPendingAndExpiredJobsInOneOrder() {
+        Instant eligibleAt = Instant.now().minusSeconds(30).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        var fixtures = new java.util.ArrayList<Fixture>();
+        for (int index = 0; index < 21; index++) {
+            Fixture item = fixture();
+            fixtures.add(item);
+            if (index % 2 == 0) {
+                jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                        java.sql.Timestamp.from(eligibleAt.minusSeconds(120)), item.jobId());
+            } else {
+                jdbc.update("update media_processing_job set status='PROCESSING', lease_until=? where job_id=?",
+                        java.sql.Timestamp.from(eligibleAt), item.jobId());
+            }
+            jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", item.envelope().eventId());
+        }
+        var ordered = fixtures.stream().map(Fixture::jobId).sorted().toList();
+        var failed = new java.util.HashSet<>(ordered.subList(0, 20));
+        var attempts = new java.util.ArrayList<String>();
+        MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                attempts.add(jobId);
+                if (failed.contains(jobId)) throw new IllegalStateException("simulated persistent failure");
+                deliveries.recover(jobId);
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+
+        maintenance.recoverJobs();
+        maintenance.recoverJobs();
+
+        assertThat(attempts).containsExactlyElementsOf(ordered);
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where job_id=?", String.class,
+                ordered.getLast())).isEqualTo("PENDING");
+    }
+
+    @Test
+    void recoveryDoesNotRepeatExpiredJobsInsideTheSameRound() {
+        Instant old = Instant.now().minusSeconds(180);
+        var jobs = new java.util.ArrayList<String>();
+        for (int index = 0; index < 21; index++) {
+            Fixture item = fixture();
+            jobs.add(item.jobId());
+            jdbc.update("update media_processing_job set status='PROCESSING', lease_until=?, updated_at=? where job_id=?",
+                    java.sql.Timestamp.from(old.plusSeconds(index)), java.sql.Timestamp.from(old.plusSeconds(index)), item.jobId());
+            jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", item.envelope().eventId());
+        }
+        var attempts = new java.util.ArrayList<String>();
+        MediaDeliveryTransactions recording = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                attempts.add(jobId);
+                deliveries.recover(jobId);
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, recording,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+
+        maintenance.recoverJobs();
+        assertThat(attempts).hasSize(20);
+        maintenance.recoverJobs();
+
+        assertThat(attempts).containsExactlyElementsOf(jobs);
+        assertThat(jdbc.queryForObject("select count(*) from media_request_outbox where status='PENDING'", Integer.class))
+                .isEqualTo(21);
+    }
+
+    @Test
+    void recoveryWrapsAndRetriesWhenExactlyOneBatchKeepsFailing() {
+        Instant old = Instant.now().minusSeconds(240);
+        var jobs = new java.util.ArrayList<String>();
+        for (int index = 0; index < 20; index++) {
+            Fixture item = fixture();
+            jobs.add(item.jobId());
+            jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                    java.sql.Timestamp.from(old.plusSeconds(index)), item.jobId());
+        }
+        var attempts = new java.util.ArrayList<String>();
+        MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                attempts.add(jobId);
+                throw new IllegalStateException("simulated persistent failure");
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+
+        maintenance.recoverJobs();
+        maintenance.recoverJobs();
+
+        assertThat(attempts).hasSize(40);
+        assertThat(attempts.subList(0, 20)).containsExactlyElementsOf(jobs);
+        assertThat(attempts.subList(20, 40)).containsExactlyElementsOf(jobs);
+    }
+
+    @Test
+    void recoveryDefersNewlyExpiredLeaseUntilTheNextRound() throws Exception {
+        Instant old = Instant.now().minusSeconds(240);
+        var failed = new java.util.HashSet<String>();
+        for (int index = 0; index < 21; index++) {
+            Fixture item = fixture();
+            failed.add(item.jobId());
+            jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                    java.sql.Timestamp.from(old.plusSeconds(index)), item.jobId());
+        }
+        Fixture later = fixture();
+        jdbc.update("update media_processing_job set status='PROCESSING',lease_until=? where job_id=?",
+                java.sql.Timestamp.from(Instant.now().plusSeconds(60)), later.jobId());
+        jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", later.envelope().eventId());
+        var attempts = new java.util.ArrayList<String>();
+        MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                attempts.add(jobId);
+                if (failed.contains(jobId)) throw new IllegalStateException("simulated persistent failure");
+                deliveries.recover(jobId);
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+
+        maintenance.recoverJobs();
+        Instant newlyExpired = Instant.now();
+        jdbc.update("update media_processing_job set lease_until=? where job_id=?",
+                java.sql.Timestamp.from(newlyExpired), later.jobId());
+        Thread.sleep(40);
+        maintenance.recoverJobs();
+        assertThat(attempts).hasSize(21).doesNotContain(later.jobId());
+
+        maintenance.recoverJobs();
+        maintenance.recoverJobs();
+        assertThat(attempts).hasSize(43).endsWith(later.jobId());
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                later.envelope().eventId())).isEqualTo("PENDING");
+    }
+
+    @Test
+    void concurrentRecoveryCallsShareOneCursor() throws Exception {
+        Instant old = Instant.now().minusSeconds(240);
+        var jobs = new java.util.ArrayList<String>();
+        for (int index = 0; index < 21; index++) {
+            Fixture item = fixture();
+            jobs.add(item.jobId());
+            jdbc.update("update media_processing_job set updated_at=? where job_id=?",
+                    java.sql.Timestamp.from(old.plusSeconds(index)), item.jobId());
+            jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", item.envelope().eventId());
+        }
+        var attempts = java.util.Collections.synchronizedList(new java.util.ArrayList<String>());
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var secondStarted = new java.util.concurrent.CountDownLatch(1);
+        MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
+            @Override
+            public void recover(String jobId) {
+                attempts.add(jobId);
+                if (jobId.equals(jobs.getFirst())) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("test release timed out");
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(interrupted);
+                    }
+                }
+                if (!jobId.equals(jobs.getLast())) throw new IllegalStateException("simulated persistent failure");
+                deliveries.recover(jobId);
+            }
+        };
+        MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
+                org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
+                java.time.Duration.ofHours(24), true);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(maintenance::recoverJobs);
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                var second = executor.submit(() -> {
+                    secondStarted.countDown();
+                    maintenance.recoverJobs();
+                });
+                assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                Thread.sleep(100);
+                assertThat(attempts).containsExactly(jobs.getFirst());
+                release.countDown();
+                first.get(10, TimeUnit.SECONDS);
+                second.get(10, TimeUnit.SECONDS);
+            } finally {
+                release.countDown();
+            }
+        }
+        assertThat(attempts).containsExactlyElementsOf(jobs);
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where job_id=?", String.class,
+                jobs.getLast())).isEqualTo("PENDING");
+    }
+
+    @Test
     void recoveryDoesNotContinueTheBatchWhenItsThreadIsInterrupted() {
         Fixture interrupted = fixture();
         Fixture later = fixture();

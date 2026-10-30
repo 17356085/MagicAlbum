@@ -13,6 +13,7 @@ import java.util.UUID;
 /** Short database claims; broker network calls happen after these transactions commit. */
 @Service
 public class MediaDeliveryTransactions {
+    static final int PENDING_RECOVERY_GRACE_SECONDS = 120;
     private final JdbcTemplate jdbc;
 
     public MediaDeliveryTransactions(JdbcTemplate jdbc) { this.jdbc = jdbc; }
@@ -65,7 +66,8 @@ public class MediaDeliveryTransactions {
         String status = (String) row.get("status");
         Instant lease = instant(row.get("lease_until"));
         Instant updated = instant(row.get("updated_at"));
-        boolean stalePending = "PENDING".equals(status) && !updated.isAfter(now.minusSeconds(120));
+        boolean stalePending = "PENDING".equals(status)
+                && !updated.isAfter(now.minusSeconds(PENDING_RECOVERY_GRACE_SECONDS));
         boolean expiredProcessing = "PROCESSING".equals(status) && lease != null && lease.isBefore(now);
         if (!stalePending && !expiredProcessing) return;
         jdbc.update("""
