@@ -25,6 +25,8 @@ import java.util.UUID;
 
 @Service
 public class NotificationOutboxService {
+    private static final String MAX_ATTEMPTS_UNCONFIRMED = "MAX_ATTEMPTS_UNCONFIRMED";
+
     private final NotificationOutboxRepository repository;
     private final UserSettingsService userSettingsService;
     private final Clock clock;
@@ -161,6 +163,27 @@ public class NotificationOutboxService {
                 }
                 // A late committed lease may already be expired; match the attempt snapshot too.
                 int expectedAttempts = candidate.getAttempts();
+                if (expectedAttempts >= maxAttempts) {
+                    repository.failExhausted(
+                            candidate.getId(),
+                            NotificationOutboxStatus.PENDING,
+                            NotificationOutboxStatus.IN_FLIGHT,
+                            NotificationOutboxStatus.FAILED,
+                            now,
+                            expectedAttempts,
+                            maxAttempts,
+                            MAX_ATTEMPTS_UNCONFIRMED
+                    );
+                    if (pageSize < 100) {
+                        // The exhausted head is terminal, but rows behind the short
+                        // window still need a chance in this same claim cycle.
+                        widen = true;
+                        break;
+                    }
+                    // A zero-row update means the candidate changed after the read;
+                    // either way, do not return it as a delivery.
+                    continue;
+                }
                 Delivery delivery = Delivery.from(candidate, expectedAttempts + 1);
                 int updated = repository.claim(
                         candidate.getId(),
@@ -169,7 +192,8 @@ public class NotificationOutboxService {
                         now,
                         owner,
                         now.plus(leaseDuration),
-                        expectedAttempts
+                        expectedAttempts,
+                        maxAttempts
                 );
                 if (updated == 1) {
                     claimed.put(candidate.getId(), delivery);

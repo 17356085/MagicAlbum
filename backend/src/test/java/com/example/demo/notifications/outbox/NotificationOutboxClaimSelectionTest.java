@@ -50,9 +50,70 @@ class NotificationOutboxClaimSelectionTest {
         assertThat(delivery.id()).isEqualTo(1L);
         assertThat(delivery.attempts()).isEqualTo(5);
         verify(repository).claim(eq(1L), eq(NotificationOutboxStatus.PENDING),
-                eq(NotificationOutboxStatus.IN_FLIGHT), eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), eq(4));
+                eq(NotificationOutboxStatus.IN_FLIGHT), eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), eq(4), eq(10));
         verifyReadPage(1, 1);
         verifyReadPage(100, 0);
+    }
+
+    @Test
+    void exhausted_candidate_is_failed_with_attempt_snapshot_and_never_claimed() {
+        NotificationOutbox exhausted = row(1L, NotificationOutboxStatus.PENDING, NOW.minusSeconds(2), 5);
+        stubInitial(List.of(exhausted), List.of(), 1);
+        when(repository.failExhausted(
+                eq(1L),
+                eq(NotificationOutboxStatus.PENDING),
+                eq(NotificationOutboxStatus.IN_FLIGHT),
+                eq(NotificationOutboxStatus.FAILED),
+                eq(NOW),
+                eq(5),
+                eq(5),
+                eq("MAX_ATTEMPTS_UNCONFIRMED")
+        )).thenReturn(1);
+
+        assertThat(service(1, 5).claimOne("owner")).isEmpty();
+
+        verify(repository).failExhausted(
+                eq(1L),
+                eq(NotificationOutboxStatus.PENDING),
+                eq(NotificationOutboxStatus.IN_FLIGHT),
+                eq(NotificationOutboxStatus.FAILED),
+                eq(NOW),
+                eq(5),
+                eq(5),
+                eq("MAX_ATTEMPTS_UNCONFIRMED")
+        );
+        verify(repository, never()).claim(
+                anyLong(), eq(NotificationOutboxStatus.PENDING), eq(NotificationOutboxStatus.IN_FLIGHT),
+                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt(), anyInt());
+        verifyReadPage(1, 1);
+        verifyReadPage(100, 1);
+    }
+
+    @Test
+    void exhausted_short_page_widens_once_for_a_healthy_candidate() {
+        NotificationOutbox exhausted = row(1L, NotificationOutboxStatus.PENDING, NOW.minusSeconds(2), 5);
+        NotificationOutbox healthy = row(2L, NotificationOutboxStatus.PENDING, NOW.minusSeconds(1), 0);
+        stubInitial(List.of(exhausted), List.of(), 1);
+        stubFallback(List.of(exhausted, healthy), List.of());
+        when(repository.failExhausted(
+                eq(1L),
+                eq(NotificationOutboxStatus.PENDING),
+                eq(NotificationOutboxStatus.IN_FLIGHT),
+                eq(NotificationOutboxStatus.FAILED),
+                eq(NOW),
+                eq(5),
+                eq(5),
+                eq("MAX_ATTEMPTS_UNCONFIRMED")
+        )).thenReturn(1);
+        stubClaims(Map.of(2L, 1), "owner");
+
+        NotificationOutboxService.Delivery delivery = service(1, 5).claimOne("owner").orElseThrow();
+
+        assertThat(delivery.id()).isEqualTo(2L);
+        verifyClaimIds("owner", 2L);
+        verify(repository, never()).claim(
+                eq(1L), eq(NotificationOutboxStatus.PENDING), eq(NotificationOutboxStatus.IN_FLIGHT),
+                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt(), anyInt());
     }
 
     @Test
@@ -72,7 +133,7 @@ class NotificationOutboxClaimSelectionTest {
         verifyClaimIds("owner", 1L, 3L);
         verify(repository, never()).claim(
                 eq(2L), eq(NotificationOutboxStatus.PENDING), eq(NotificationOutboxStatus.IN_FLIGHT),
-                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt());
+                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt(), anyInt());
     }
 
     @Test
@@ -95,7 +156,7 @@ class NotificationOutboxClaimSelectionTest {
         verifyClaimIds("owner", 1L, 3L, 2L, 4L);
         verify(repository, never()).claim(
                 eq(5L), eq(NotificationOutboxStatus.PENDING), eq(NotificationOutboxStatus.IN_FLIGHT),
-                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt());
+                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt(), anyInt());
     }
 
     @Test
@@ -186,17 +247,21 @@ class NotificationOutboxClaimSelectionTest {
         verifyReadPage(100, 0);
         verify(repository, never()).claim(
                 eq(4L), eq(NotificationOutboxStatus.PENDING), eq(NotificationOutboxStatus.IN_FLIGHT),
-                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt());
+                eq(NOW), eq("owner"), eq(NOW.plus(LEASE)), anyInt(), anyInt());
     }
 
     private NotificationOutboxService service(int batchSize) {
+        return service(batchSize, 10);
+    }
+
+    private NotificationOutboxService service(int batchSize, int maxAttempts) {
         return new NotificationOutboxService(
                 repository,
                 settings,
                 CLOCK,
                 LEASE,
                 batchSize,
-                5,
+                maxAttempts,
                 Duration.ofSeconds(1),
                 Duration.ofDays(1)
         );
@@ -233,7 +298,7 @@ class NotificationOutboxClaimSelectionTest {
                 eq(NotificationOutboxStatus.IN_FLIGHT),
                 eq(NOW),
                 eq(owner),
-                eq(NOW.plus(LEASE)), anyInt()
+                eq(NOW.plus(LEASE)), anyInt(), anyInt()
         )).thenReturn(1);
     }
 
@@ -244,7 +309,7 @@ class NotificationOutboxClaimSelectionTest {
                 eq(NotificationOutboxStatus.IN_FLIGHT),
                 eq(NOW),
                 eq(owner),
-                eq(NOW.plus(LEASE)), anyInt()
+                eq(NOW.plus(LEASE)), anyInt(), anyInt()
         )).thenAnswer(invocation -> outcomes.getOrDefault(invocation.getArgument(0), 0));
     }
 
@@ -264,7 +329,7 @@ class NotificationOutboxClaimSelectionTest {
                 eq(NotificationOutboxStatus.IN_FLIGHT),
                 eq(NOW),
                 eq(owner),
-                eq(NOW.plus(LEASE)), anyInt()
+                eq(NOW.plus(LEASE)), anyInt(), anyInt()
         );
         assertThat(captor.getAllValues()).containsExactly(ids);
     }

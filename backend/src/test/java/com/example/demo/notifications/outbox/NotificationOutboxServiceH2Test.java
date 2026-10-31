@@ -230,7 +230,167 @@ class NotificationOutboxServiceH2Test {
         assertThat(outboxService.markDelivered(recovered.id(), "replacement-worker")).isTrue();
     }
 
-    private void savePending() {
+    @Test
+    void pending_row_at_attempt_limit_is_failed_without_returning_a_delivery() {
+        NotificationOutbox exhausted = savePending();
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET attempts = ?, available_at = ? WHERE id = ?",
+                3,
+                Timestamp.from(Instant.EPOCH),
+                exhausted.getId()
+        );
+
+        assertThat(outboxService.claimOne("worker")).isEmpty();
+
+        NotificationOutbox row = repository.findById(exhausted.getId()).orElseThrow();
+        assertThat(row.getStatus()).isEqualTo(NotificationOutboxStatus.FAILED);
+        assertThat(row.getAttempts()).isEqualTo(3);
+        assertThat(row.getLeaseOwner()).isNull();
+        assertThat(row.getLeaseUntil()).isNull();
+        assertThat(row.getLastError()).isEqualTo("MAX_ATTEMPTS_UNCONFIRMED");
+    }
+
+    @Test
+    void exhausted_head_does_not_block_a_later_healthy_pending_row() {
+        NotificationOutbox exhausted = savePending();
+        NotificationOutbox healthy = savePending();
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET attempts = ?, available_at = ? WHERE id = ?",
+                3,
+                Timestamp.from(Instant.EPOCH),
+                exhausted.getId()
+        );
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET available_at = ? WHERE id = ?",
+                Timestamp.from(Instant.EPOCH),
+                healthy.getId()
+        );
+
+        NotificationOutboxService.Delivery delivery = outboxService.claimOne("worker").orElseThrow();
+
+        assertThat(delivery.id()).isEqualTo(healthy.getId());
+        assertThat(repository.findById(exhausted.getId()).orElseThrow().getStatus())
+                .isEqualTo(NotificationOutboxStatus.FAILED);
+        assertThat(repository.findById(healthy.getId()).orElseThrow().getAttempts()).isEqualTo(1);
+    }
+
+    @Test
+    void exhausted_row_can_be_manually_retried_and_claimed_again() {
+        NotificationOutbox exhausted = savePending();
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET attempts = ?, available_at = ? WHERE id = ?",
+                3,
+                Timestamp.from(Instant.EPOCH),
+                exhausted.getId()
+        );
+
+        assertThat(outboxService.claimOne("worker")).isEmpty();
+        assertThat(outboxService.manualRetry(exhausted.getId())).isTrue();
+
+        NotificationOutboxService.Delivery delivery = outboxService.claimOne("worker").orElseThrow();
+        assertThat(delivery.id()).isEqualTo(exhausted.getId());
+        assertThat(delivery.attempts()).isEqualTo(1);
+    }
+
+    @Test
+    void expired_holder_at_attempt_limit_is_failed_as_unconfirmed_without_reclaiming() {
+        NotificationOutbox pending = savePending();
+        NotificationOutboxService.Delivery first = outboxService.claimOne("owner-a").orElseThrow();
+        expire(first.id());
+        NotificationOutboxService.Delivery second = outboxService.claimOne("owner-b").orElseThrow();
+        expire(second.id());
+        NotificationOutboxService.Delivery third = outboxService.claimOne("owner-c").orElseThrow();
+        expire(third.id());
+
+        assertThat(outboxService.claimOne("replacement-owner")).isEmpty();
+        assertThat(outboxService.markDelivered(third.id(), "owner-c")).isFalse();
+
+        NotificationOutbox row = repository.findById(pending.getId()).orElseThrow();
+        assertThat(row.getStatus()).isEqualTo(NotificationOutboxStatus.FAILED);
+        assertThat(row.getAttempts()).isEqualTo(3);
+        assertThat(row.getLastError()).isEqualTo("MAX_ATTEMPTS_UNCONFIRMED");
+        assertThat(row.getLeaseOwner()).isNull();
+        assertThat(row.getLeaseUntil()).isNull();
+    }
+
+    @Test
+    void fail_exhausted_condition_update_does_not_overwrite_changed_or_noneligible_rows() {
+        Instant now = Instant.now();
+        NotificationOutbox changedAttempts = savePending();
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET attempts = ?, available_at = ? WHERE id = ?",
+                3,
+                Timestamp.from(Instant.EPOCH),
+                changedAttempts.getId()
+        );
+
+        NotificationOutbox newOwner = savePending();
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET status = ?, attempts = ?, lease_owner = ?, lease_until = ? WHERE id = ?",
+                NotificationOutboxStatus.IN_FLIGHT.name(),
+                3,
+                "new-owner",
+                Timestamp.from(now.plusSeconds(60)),
+                newOwner.getId()
+        );
+
+        NotificationOutbox delivered = savePending();
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET status = ?, attempts = ?, delivered_at = ? WHERE id = ?",
+                NotificationOutboxStatus.DELIVERED.name(),
+                3,
+                Timestamp.from(now.minusSeconds(1)),
+                delivered.getId()
+        );
+
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        Integer changedAttemptsResult = transaction.execute(status -> repository.failExhausted(
+                changedAttempts.getId(),
+                NotificationOutboxStatus.PENDING,
+                NotificationOutboxStatus.IN_FLIGHT,
+                NotificationOutboxStatus.FAILED,
+                now,
+                2,
+                3,
+                "MAX_ATTEMPTS_UNCONFIRMED"
+        ));
+        Integer newOwnerResult = transaction.execute(status -> repository.failExhausted(
+                newOwner.getId(),
+                NotificationOutboxStatus.PENDING,
+                NotificationOutboxStatus.IN_FLIGHT,
+                NotificationOutboxStatus.FAILED,
+                now,
+                3,
+                3,
+                "MAX_ATTEMPTS_UNCONFIRMED"
+        ));
+        Integer deliveredResult = transaction.execute(status -> repository.failExhausted(
+                delivered.getId(),
+                NotificationOutboxStatus.PENDING,
+                NotificationOutboxStatus.IN_FLIGHT,
+                NotificationOutboxStatus.FAILED,
+                now,
+                3,
+                3,
+                "MAX_ATTEMPTS_UNCONFIRMED"
+        ));
+        assertThat(changedAttemptsResult).isZero();
+        assertThat(newOwnerResult).isZero();
+        assertThat(deliveredResult).isZero();
+
+        NotificationOutbox changedAttemptsAfter = repository.findById(changedAttempts.getId()).orElseThrow();
+        assertThat(changedAttemptsAfter.getStatus()).isEqualTo(NotificationOutboxStatus.PENDING);
+        assertThat(changedAttemptsAfter.getAttempts()).isEqualTo(3);
+        NotificationOutbox newOwnerAfter = repository.findById(newOwner.getId()).orElseThrow();
+        assertThat(newOwnerAfter.getStatus()).isEqualTo(NotificationOutboxStatus.IN_FLIGHT);
+        assertThat(newOwnerAfter.getAttempts()).isEqualTo(3);
+        assertThat(newOwnerAfter.getLeaseOwner()).isEqualTo("new-owner");
+        NotificationOutbox deliveredAfter = repository.findById(delivered.getId()).orElseThrow();
+        assertThat(deliveredAfter.getStatus()).isEqualTo(NotificationOutboxStatus.DELIVERED);
+        assertThat(deliveredAfter.getAttempts()).isEqualTo(3);
+    }
+
+    private NotificationOutbox savePending() {
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         NotificationOutbox pending = transaction.execute(status -> outboxService.enqueue(
                 UUID.randomUUID(), 101L, "reply", "Title", "Content", null, null, "post").orElseThrow());
@@ -239,6 +399,15 @@ class NotificationOutboxServiceH2Test {
                 "UPDATE notification_outbox SET available_at = ? WHERE id = ?",
                 Timestamp.from(Instant.EPOCH),
                 pending.getId()
+        );
+        return pending;
+    }
+
+    private void expire(Long id) {
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET lease_until = ? WHERE id = ?",
+                Timestamp.from(Instant.now().minusSeconds(1)),
+                id
         );
     }
 }

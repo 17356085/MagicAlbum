@@ -284,7 +284,8 @@ class NotificationOutboxClaimSnapshotTest {
                     invocation.getArgument(3, Instant.class),
                     invocation.getArgument(4, String.class),
                     invocation.getArgument(5, Instant.class),
-                    invocation.getArgument(6, Integer.class)
+                    invocation.getArgument(6, Integer.class),
+                    invocation.getArgument(7, Integer.class)
             );
             bCasResult.set(result);
             return result;
@@ -295,6 +296,7 @@ class NotificationOutboxClaimSnapshotTest {
                 any(Instant.class),
                 anyString(),
                 any(Instant.class),
+                anyInt(),
                 anyInt()
         );
         return forwarding;

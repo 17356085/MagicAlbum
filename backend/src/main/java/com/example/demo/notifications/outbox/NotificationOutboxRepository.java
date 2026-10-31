@@ -39,6 +39,7 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
                    o.updatedAt = :now
              where o.id = :id
                and o.attempts = :expectedAttempts
+               and o.attempts < :maxAttempts
                and ((o.status = :pending and o.availableAt <= :now)
                  or (o.status = :inFlight and o.leaseUntil < :now))
             """)
@@ -49,7 +50,33 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
             @Param("now") Instant now,
             @Param("owner") String owner,
             @Param("leaseUntil") Instant leaseUntil,
-            @Param("expectedAttempts") int expectedAttempts
+            @Param("expectedAttempts") int expectedAttempts,
+            @Param("maxAttempts") int maxAttempts
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update NotificationOutbox o
+               set o.status = :failed,
+                   o.leaseOwner = null,
+                   o.leaseUntil = null,
+                   o.lastError = :lastError,
+                   o.updatedAt = :now
+             where o.id = :id
+               and o.attempts = :expectedAttempts
+               and o.attempts >= :maxAttempts
+               and ((o.status = :pending and o.availableAt <= :now)
+                 or (o.status = :inFlight and o.leaseUntil < :now))
+            """)
+    int failExhausted(
+            @Param("id") Long id,
+            @Param("pending") NotificationOutboxStatus pending,
+            @Param("inFlight") NotificationOutboxStatus inFlight,
+            @Param("failed") NotificationOutboxStatus failed,
+            @Param("now") Instant now,
+            @Param("expectedAttempts") int expectedAttempts,
+            @Param("maxAttempts") int maxAttempts,
+            @Param("lastError") String lastError
     );
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)

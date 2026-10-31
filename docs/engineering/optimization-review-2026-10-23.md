@@ -1591,3 +1591,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 旧实现的隔离 H2 运行 `backend/target/media-job-recovery-baseline-valid-20261031.log` 中两个场景均因预期 FAILED、实际 PENDING 失败；这是一个共同原因的两种表现，不按两项独立漏洞计算。首次 `media-job-recovery-baseline-20261031.log` 因并行通知测试的编译错误未进入媒体测试，不作为复现证据。修复后完整 `MediaJobServiceExecutionTest` 22 项通过，覆盖两种任务状态、未到期不可领取、到期后保留 event ID 重试，以及原有 PUBLISHED 恢复规则。
 
 这里没有验证真实 RabbitMQ、多个应用实例或生产吞吐；`PUBLISHED` 在工作进程长期不可用时可能重复被恢复并发布的频率问题仍需单独设计和验证，本次不声称解决该问题。
+
+## 2026-10-31：通知投递达到尝试上限后的租约恢复
+
+通知投递在领取时递增 attempts，但旧实现只在明确收到失败后检查最大次数；如果最后一次尝试期间进程退出，过期租约可被继续领取，产生超出配置上限的新尝试。旧实现的 H2 基线 `backend/target/notification-attempt-limit-baseline-20261031.log` 为 13 项中 4 项失败，是同一上限缺口在不同场景的表现，不按四个独立问题计算。
+
+当前领取及耗尽状态更新均使用条件判断保护 attempts 快照、状态和到期时间；预算耗尽的待处理或过期记录进入 FAILED 并记录 `MAX_ATTEMPTS_UNCONFIRMED`，旧候选不能覆盖已变化的状态。未耗尽时仍可接管过期租约；人工重试沿用原事件 ID 并重置尝试次数。达到上限不证明接收端没有收到此前请求，也不能撤回已经发出的请求。有限候选窗口中处理耗尽记录时保留后续可投递记录的机会。
+
+最终通知领取选择测试 11 项、租约快照测试 2 项、H2 状态测试 14 项通过；另外投递与确认、查询成本、调度器和服务行为共 24 项通过并完成后端打包，日志为 `backend/target/notification-attempt-acceptance-20261031.log`。仓库结构与 Java 导入边界检查通过。这些证据不包含本次改动在真实 MySQL、跨服务网络中断或生产环境中的验收。
