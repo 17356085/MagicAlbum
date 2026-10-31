@@ -2,17 +2,143 @@ package com.example.demo.storage.service.provider.s3;
 
 import com.example.demo.storage.controller.StoredImageController;
 import com.example.demo.storage.service.ImageUploadValidator;
+import com.example.demo.storage.service.MediaObjectStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.function.Consumer;
+
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class S3StorageServiceTest {
+    private static final String MANAGED_KEY = "threads/2026/01/01/" + "a".repeat(32) + ".png";
+
+    @Test void oversizedReadAbortsInsteadOfDrainingTheRemainingResponse() {
+        var service = storage();
+        var body = new SimulatedApacheBody(MediaObjectStore.MAX_BYTES + 1024 * 1024);
+        stubRead(service, body);
+
+        assertThatThrownBy(() -> service.readManagedObject(MANAGED_KEY))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("图片存储暂不可用");
+        org.assertj.core.api.SoftAssertions.assertSoftly(soft -> {
+            soft.assertThat(body.aborted).isTrue();
+            soft.assertThat(body.closed).isTrue();
+            soft.assertThat(body.bytesRead).isEqualTo(MediaObjectStore.MAX_BYTES + 1);
+        });
+    }
+
+    @Test void failedReadAbortsAndKeepsFailureDetailsPrivate() {
+        var service = storage();
+        var body = new SimulatedApacheBody(100);
+        body.failRead = true;
+        stubRead(service, body);
+
+        assertThatThrownBy(() -> service.readManagedObject(MANAGED_KEY))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("图片存储暂不可用")
+                .hasMessageNotContaining("private storage details");
+        assertThat(body.aborted).isTrue();
+        assertThat(body.closed).isTrue();
+    }
+
+    @Test void successfulReadClosesWithoutAborting() {
+        var service = storage();
+        var body = new SimulatedApacheBody(3);
+        stubRead(service, body);
+
+        assertThat(service.readManagedObject(MANAGED_KEY)).containsExactly((byte) 42, (byte) 42, (byte) 42);
+        assertThat(body.aborted).isFalse();
+        assertThat(body.closed).isTrue();
+    }
+
+    @Test void runtimeReadFailureAlsoAborts() {
+        var service = storage();
+        var body = new SimulatedApacheBody(100);
+        body.failRuntime = true;
+        stubRead(service, body);
+
+        assertThatThrownBy(() -> service.readManagedObject(MANAGED_KEY))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageNotContaining("private storage details");
+        assertThat(body.aborted).isTrue();
+        assertThat(body.closed).isTrue();
+    }
+
+    @Test void emptyObjectIsRejectedAndClosed() {
+        var service = storage();
+        var body = new SimulatedApacheBody(0);
+        stubRead(service, body);
+
+        assertThatThrownBy(() -> service.readManagedObject(MANAGED_KEY))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("图片存储暂不可用");
+        assertThat(body.aborted).isTrue();
+        assertThat(body.closed).isTrue();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void stubRead(S3StorageService service, SimulatedApacheBody body) {
+        var client = (S3Client) ReflectionTestUtils.getField(service, "client");
+        var response = new ResponseInputStream<>(GetObjectResponse.builder().build(),
+                AbortableInputStream.create(body, body::abort));
+        when(client.getObject(any(Consumer.class))).thenReturn(response);
+    }
+
+    /** Models the documented Apache close behavior; this is not a real network server. */
+    private static final class SimulatedApacheBody extends InputStream {
+        private long remaining;
+        private long bytesRead;
+        private boolean aborted;
+        private boolean closed;
+        private boolean failRead;
+        private boolean failRuntime;
+
+        private SimulatedApacheBody(long length) { this.remaining = length; }
+
+        @Override public int read() throws IOException {
+            if (failRuntime) throw new IllegalStateException("private storage details");
+            if (failRead) throw new IOException("private storage details");
+            if (remaining == 0) return -1;
+            remaining--;
+            bytesRead++;
+            return 42;
+        }
+
+        @Override public int read(byte[] target, int offset, int length) throws IOException {
+            if (failRuntime) throw new IllegalStateException("private storage details");
+            if (failRead) throw new IOException("private storage details");
+            if (remaining == 0) return -1;
+            int count = (int) Math.min(remaining, length);
+            Arrays.fill(target, offset, offset + count, (byte) 42);
+            remaining -= count;
+            bytesRead += count;
+            return count;
+        }
+
+        private void abort() { aborted = true; }
+
+        @Override public void close() {
+            closed = true;
+            if (!aborted) {
+                bytesRead += remaining;
+                remaining = 0;
+            }
+        }
+    }
+
     @Test void preparationHasNoExternalEffectAndWriteUsesExactPlannedKeyAndBytes() {
         var service = storage();
         var client = (S3Client) ReflectionTestUtils.getField(service, "client");

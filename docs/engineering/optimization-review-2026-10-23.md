@@ -1607,3 +1607,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 检查脚本继续使用原有 stop/start，之后在有限时间内重新发现本次端口，直到目标服务可见；如果始终不存在，则明确报告对应服务失败，不使用旧端口继续验证。后续的 HTTP 健康与持久化读回仍然必须通过，其他端口发现错误直接传播。修改前的离线基线 `backend/target/ci-restart-port-baseline.log` 中 3 项有 2 项失败；修改后的媒体与社区检查脚本 guard 分别为 11 项和 9 项通过，Python 语法检查通过。
 
 本次使用模拟 Compose 端口清单与时钟，没有启动 Docker 或浏览器；新实现尚待其自身远程运行时检查验证，因此不把离线测试或此前提交的绿色结果称为新代码的端到端验收。
+
+2026-11-01 复核：提交 `e67bba8` 的 GitHub Actions [41167258035](https://github.com/17356085/MagicAlbum/actions/runs/41167258035) 已完成，13 个作业均通过。下载的媒体运行时 `checks.json` 和 JUnit 显示 16 个计划用例全部实际通过，包含 `core-restart-durable-readback`，隔离环境清理成功；该结果针对远程隔离环境，不证明用户本机或生产部署状态。
+
+## 2026-11-01：S3 对象读取失败时主动终止响应
+
+媒体对象读取已有 10 MiB 上限，但 S3 读取超限或读取异常时，旧代码直接关闭未读完的 `ResponseInputStream`。项目实际打包 AWS SDK Apache 客户端；[AWS 文档](https://docs.aws.amazon.com/java/api/latest/software/amazon/awssdk/core/ResponseInputStream.html)说明该客户端关闭部分读取的响应可能继续读取尾部，`abort()` 则放弃剩余响应并关闭连接。本次仅在受限读取抛出 I/O 或运行时异常时先调用 `abort()`；完整成功读取仍正常关闭以复用连接，错误仍统一返回不包含底层细节的 503。
+
+使用真实 AWS SDK `ResponseInputStream` 包装模拟 Apache 关闭行为的可计数流：旧实现 `backend/target/s3-abort-baseline-20261101.log` 的 8 项测试中有 3 项因同一异常关闭路径失败；超大样本在 10,485,761 字节限制之后模拟读取到了 11,534,336 字节。修复后 S3、对象存储及原图恢复共 19 项通过并完成后端打包，见 `backend/target/s3-abort-reviewed-20261101.log`。测试没有连接真实 S3 或真实 Apache HTTP 服务，不能把模拟计数当作生产环境网络实测；异常时关闭连接会牺牲该连接的复用。

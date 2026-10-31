@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.ObjectCannedACL;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import java.io.IOException;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.Locale;
@@ -177,7 +178,17 @@ public class S3StorageService implements ImageStorageProvider {
     public byte[] readManagedObject(String key) {
         MediaObjectStore.requireManagedKey(key);
         try (var input = client().getObject(r -> r.bucket(bucket).key(key))) {
-            return MediaObjectStore.readBounded(input);
+            try {
+                return MediaObjectStore.readBounded(input);
+            } catch (IOException | RuntimeException failure) {
+                // Apache's close can drain unread response bytes; abandon failed reads instead.
+                try {
+                    input.abort();
+                } catch (RuntimeException abortFailure) {
+                    failure.addSuppressed(abortFailure);
+                }
+                throw failure;
+            }
         } catch (Exception failure) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "图片存储暂不可用");
         }
