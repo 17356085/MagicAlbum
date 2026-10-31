@@ -259,6 +259,71 @@ class MediaJobServiceExecutionTest {
     }
 
     @Test
+    void recoveryKeepsFailedBackoffForStalePendingJob() {
+        Fixture fixture = fixture();
+        var delivery = deliveries.claim().orElseThrow();
+        deliveries.failed(delivery);
+        jdbc.update("update media_request_outbox set available_at=? where event_id=?",
+                java.sql.Timestamp.from(Instant.now().plusSeconds(300)), delivery.eventId());
+        Instant failedAvailableAt = jdbc.queryForObject("select available_at from media_request_outbox where event_id=?",
+                java.sql.Timestamp.class, delivery.eventId()).toInstant();
+        assertThat(failedAvailableAt).isAfter(Instant.now().plusSeconds(60));
+
+        jdbc.update("update media_processing_job set status='PENDING',updated_at=? where job_id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(MediaDeliveryTransactions.PENDING_RECOVERY_GRACE_SECONDS + 1)),
+                fixture.jobId());
+
+        deliveries.recover(fixture.jobId());
+
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                delivery.eventId())).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("select attempts from media_request_outbox where event_id=?", Integer.class,
+                delivery.eventId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select available_at from media_request_outbox where event_id=?",
+                java.sql.Timestamp.class, delivery.eventId()).toInstant()).isEqualTo(failedAvailableAt);
+        assertThat(deliveries.claim()).isEmpty();
+
+        jdbc.update("update media_request_outbox set available_at=? where event_id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)), delivery.eventId());
+        var retry = deliveries.claim().orElseThrow();
+        assertThat(retry.eventId()).isEqualTo(delivery.eventId());
+        assertThat(retry.attempts()).isEqualTo(2);
+    }
+
+    @Test
+    void recoveryKeepsFailedBackoffForExpiredProcessingJob() {
+        Fixture fixture = fixture();
+        service.claim(fixture.jobId(), fixture.envelope());
+        var delivery = deliveries.claim().orElseThrow();
+        deliveries.failed(delivery);
+        jdbc.update("update media_request_outbox set available_at=? where event_id=?",
+                java.sql.Timestamp.from(Instant.now().plusSeconds(300)), delivery.eventId());
+        Instant failedAvailableAt = jdbc.queryForObject("select available_at from media_request_outbox where event_id=?",
+                java.sql.Timestamp.class, delivery.eventId()).toInstant();
+        assertThat(failedAvailableAt).isAfter(Instant.now().plusSeconds(60));
+
+        jdbc.update("update media_processing_job set status='PROCESSING',lease_until=?,updated_at=? where job_id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)), java.sql.Timestamp.from(Instant.now()),
+                fixture.jobId());
+
+        deliveries.recover(fixture.jobId());
+
+        assertThat(jdbc.queryForObject("select status from media_request_outbox where event_id=?", String.class,
+                delivery.eventId())).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("select attempts from media_request_outbox where event_id=?", Integer.class,
+                delivery.eventId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select available_at from media_request_outbox where event_id=?",
+                java.sql.Timestamp.class, delivery.eventId()).toInstant()).isEqualTo(failedAvailableAt);
+        assertThat(deliveries.claim()).isEmpty();
+
+        jdbc.update("update media_request_outbox set available_at=? where event_id=?",
+                java.sql.Timestamp.from(Instant.now().minusSeconds(1)), delivery.eventId());
+        var retry = deliveries.claim().orElseThrow();
+        assertThat(retry.eventId()).isEqualTo(delivery.eventId());
+        assertThat(retry.attempts()).isEqualTo(2);
+    }
+
+    @Test
     void recoveryContinuesWithOtherJobsWhenOneJobFails() {
         Fixture failed = fixture();
         Fixture healthy = fixture();

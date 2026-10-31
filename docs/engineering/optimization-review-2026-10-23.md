@@ -1577,3 +1577,17 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 - 远程检查 [41164435643](https://github.com/17356085/MagicAlbum/actions/runs/41164435643) 的前端任务在 `pnpm audit --prod --audit-level=high` 报告 `axios > follow-redirects@1.16.1` 受 [GHSA-mrwp-f3q8-3g9p](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p) 影响，导致后续前端步骤跳过。公告描述的风险依赖跨 JavaScript realm 的自定义敏感头和跨源重定向，且明确称其未在 Axios 1.20.0 的复现中得到结果；这个审计结果不等同于证明本项目存在可利用的凭据泄露。
 - 通过工作区 override 将该传递依赖固定为修复版本 1.16.2，锁文件只变更该依赖及对应 override；本机冻结锁文件安装和依赖树确认实际安装了 1.16.2。
 - 使用 npm 官方源运行 `pnpm audit --prod --audit-level=high`，结果为零已知漏洞；前端 lint、类型检查、3 个请求上下文测试文件（12 项）和生产构建通过。未执行真实跨域重定向漏洞利用或浏览器端端到端测试；审计只覆盖其数据库及指定的生产依赖范围。
+
+## 2026-10-31：身份数据后续审查线索
+
+静态审查发现，邮箱 OTP 新用户的占位手机号以 `198` 开头，OAuth 新用户的占位手机号以 `199` 开头；两者均符合前端接受的 11 位手机号格式，并保存在唯一的 `users.phone` 中。如果该占位值恰好是另一人的实际手机号，注册唯一性检查会拒绝该号码；验证码登录在查到该未验证手机号时也会拒绝将其视为已验证身份。这里描述的是由源码推导出的碰撞条件，尚未进行数据库复现或真实运营商号码验证，也不能由此推断现存数据中已有碰撞。
+
+彻底处理需要区分占位标识与真实联系人，并考虑历史数据、唯一约束、账号设置、密码和 OTP 查找以及安全迁移；不能通过手机号碰撞自动合并不同身份。本次没有改写现有用户数据或声称该问题已修复。
+
+## 2026-10-31：保留媒体消息发布失败的退避时间
+
+`MediaDeliveryTransactions.failed()` 会把发布结果未确认的事件标为 FAILED 并设置重试时间，`claim()` 已负责在到期后重新领取；此前恢复陈旧 PENDING 或租约过期 PROCESSING 任务时，会把该 FAILED 事件直接改回 PENDING 并立即重试，从而覆盖退避。保留事件的 FAILED 状态、到期时间与尝试次数，仍允许已发布事件按原规则恢复。
+
+旧实现的隔离 H2 运行 `backend/target/media-job-recovery-baseline-valid-20261031.log` 中两个场景均因预期 FAILED、实际 PENDING 失败；这是一个共同原因的两种表现，不按两项独立漏洞计算。首次 `media-job-recovery-baseline-20261031.log` 因并行通知测试的编译错误未进入媒体测试，不作为复现证据。修复后完整 `MediaJobServiceExecutionTest` 22 项通过，覆盖两种任务状态、未到期不可领取、到期后保留 event ID 重试，以及原有 PUBLISHED 恢复规则。
+
+这里没有验证真实 RabbitMQ、多个应用实例或生产吞吐；`PUBLISHED` 在工作进程长期不可用时可能重复被恢复并发布的频率问题仍需单独设计和验证，本次不声称解决该问题。

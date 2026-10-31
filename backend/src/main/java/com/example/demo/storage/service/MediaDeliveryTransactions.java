@@ -70,9 +70,10 @@ public class MediaDeliveryTransactions {
                 && !updated.isAfter(now.minusSeconds(PENDING_RECOVERY_GRACE_SECONDS));
         boolean expiredProcessing = "PROCESSING".equals(status) && lease != null && lease.isBefore(now);
         if (!stalePending && !expiredProcessing) return;
+        // FAILED rows retain available_at; claim() retries them when the backoff expires.
         jdbc.update("""
                 UPDATE media_request_outbox SET status='PENDING',available_at=?,lease_owner=NULL,lease_until=NULL
-                WHERE job_id=? AND status IN ('PUBLISHED','FAILED')
+                WHERE job_id=? AND status='PUBLISHED'
                 """, Timestamp.from(now), jobId);
         jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?", Timestamp.from(now), jobId);
     }
