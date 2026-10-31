@@ -66,6 +66,47 @@ class RuntimeGuardTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_restart_waits_for_new_port_without_using_old_mapping(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.ports = {"backend": 1111}
+        runtime.compose = MagicMock()
+        snapshots = iter([{}, {"backend": 2222}])
+        def refresh():
+            runtime.ports = next(snapshots)
+            return runtime.ports
+        runtime.refresh_ports = MagicMock(side_effect=refresh)
+
+        with patch.object(gate.time, "monotonic", side_effect=[0, 1]), patch.object(gate.time, "sleep") as sleep:
+            runtime.restart_service("backend")
+
+        self.assertEqual(runtime.ports, {"backend": 2222})
+        self.assertEqual(runtime.refresh_ports.call_count, 2)
+        self.assertEqual(runtime.compose.call_args_list[0].args, ("stop", "backend"))
+        self.assertEqual(runtime.compose.call_args_list[1].args, ("start", "backend"))
+        self.assertEqual(runtime.compose.call_count, 2)
+        sleep.assert_called_once()
+
+    def test_restart_missing_port_fails_with_service_name(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.ports = {"backend": 1111}
+        runtime.compose = MagicMock()
+        def refresh():
+            runtime.ports = {}
+            return runtime.ports
+        runtime.refresh_ports = MagicMock(side_effect=refresh)
+
+        with patch.object(gate.time, "monotonic", side_effect=[0, 60]), patch.object(gate.time, "sleep"):
+            with self.assertRaisesRegex(gate.GateFailure, "backend"):
+                runtime.restart_service("backend")
+        self.assertNotIn("backend", runtime.ports)
+
+    def test_restart_does_not_hide_port_inventory_errors(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.compose = MagicMock()
+        runtime.refresh_ports = MagicMock(side_effect=gate.GateFailure("inventory failed"))
+        with self.assertRaisesRegex(gate.GateFailure, "inventory failed"):
+            runtime.restart_service("backend")
+
     def test_port_inventory_handles_s3_only_and_does_not_query_stopped_services(self):
         runtime = gate.ComposeRuntime(self.root)
         calls = []

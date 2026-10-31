@@ -596,7 +596,15 @@ class ComposeRuntime:
     def restart_service(self, service: str) -> None:
         self.compose("stop", service, timeout=90)
         self.compose("start", service, timeout=180)
-        self.refresh_ports()
+        # Compose can report a successful start before the service appears in ps.
+        # Only a newly discovered port may be used for the subsequent health check.
+        deadline = time.monotonic() + 30
+        while True:
+            if service in self.refresh_ports():
+                return
+            if time.monotonic() >= deadline:
+                raise GateFailure(f"restarted service {service} has no running mapped port")
+            time.sleep(0.5)
 
     def sql(self, query: str) -> list[list[str]]:
         # -e MYSQL_PWD passes the value from the child environment without
