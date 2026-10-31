@@ -46,14 +46,12 @@ class MediaUploadServiceTest {
         verify(storage, never()).writeImage(upload);
     }
 
-    @Test void failedWriteIsTrackedAndOriginalFailureSurvivesFailedBookkeeping() {
+    @Test void unconfirmedWriteLeavesIntentForReconciliationAndPropagatesOriginalFailure() {
         var upload = prepared();
         var failure = new IllegalStateException("write result uncertain");
         doThrow(failure).when(storage).writeImage(upload);
-        doThrow(new IllegalStateException("db down")).when(registry).failed("asset");
         assertThatThrownBy(() -> service.upload(7L, file)).isSameAs(failure);
-        assertThat(failure.getSuppressed()).hasSize(1);
-        verify(registry).failed("asset");
+        verify(registry, never()).failed("asset");
         verify(registry, never()).ready("asset");
     }
 

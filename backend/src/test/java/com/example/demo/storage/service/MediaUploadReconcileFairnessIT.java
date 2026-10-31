@@ -35,12 +35,16 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Evidence-first regression coverage for the bounded stale-upload reconciler.
@@ -290,6 +294,75 @@ class MediaUploadReconcileFairnessIT {
         assertThat(countOutbox()).isZero();
         assertThat(readOriginal(wrongDigestUpload.intent().objectKey())).isEqualTo(sourceBytes);
         assertThat(readOriginal(wrongSizeUpload.intent().objectKey())).isEqualTo(sourceBytes);
+    }
+
+    @Test
+    void completeOriginalCanBeReconciledWhenTheWriteThrowsAfterPersistingBytes() throws Exception {
+        byte[] sourceBytes = tinyJpeg();
+        String key = "threads/2026/10/31/" + UUID.randomUUID().toString().replace("-", "") + ".jpg";
+        var image = new PreparedImage("local", key, "/uploads/" + key, VALID_CONTENT_TYPE,
+                MediaUploadReconciler.digest(sourceBytes), sourceBytes);
+        var prepared = new StorageService.PreparedUpload(mock(ImageStorageProvider.class), image);
+        var storage = mock(StorageService.class);
+        var file = new org.springframework.mock.web.MockMultipartFile("file", sourceBytes);
+        when(storage.prepareImage(file)).thenReturn(prepared);
+        doAnswer(invocation -> {
+            writeOriginal(key, sourceBytes);
+            throw new IllegalStateException("simulated lost storage acknowledgement");
+        }).when(storage).writeImage(prepared);
+        var uploadService = new MediaUploadService(storage, registry);
+        org.springframework.test.util.ReflectionTestUtils.setField(uploadService, "registrationEnabled", true);
+
+        assertThatThrownBy(() -> uploadService.upload(OWNER_ID, file))
+                .isInstanceOf(IllegalStateException.class);
+        String assetId = jdbc.queryForObject("SELECT asset_id FROM media_asset WHERE object_key=?", String.class, key);
+        String afterWrite = statusOf(assetId);
+        jdbc.update("UPDATE media_asset SET updated_at=? WHERE asset_id=?",
+                Timestamp.from(Instant.now().minus(Duration.ofMinutes(10))), assetId);
+
+        reconciler.reconcileUploads();
+
+        assertThat(statusOf(assetId)).isEqualTo(MediaAsset.STATUS_READY);
+        assertThat(afterWrite).isEqualTo(MediaAsset.STATUS_UPLOADING);
+        assertThat(readOriginal(key)).isEqualTo(sourceBytes);
+        assertThat(countJobsFor(assetId)).isEqualTo(1L);
+        assertThat(countOutboxFor(assetId)).isEqualTo(1L);
+        reconciler.reconcileUploads();
+        assertThat(countJobsFor(assetId)).isEqualTo(1L);
+        assertThat(countOutboxFor(assetId)).isEqualTo(1L);
+    }
+
+    @Test
+    void unconfirmedWriteDoesNotBecomeReadyBeforeMatchingBytesExist() throws Exception {
+        byte[] sourceBytes = tinyJpeg();
+        String key = "threads/2026/10/31/" + UUID.randomUUID().toString().replace("-", "") + ".jpg";
+        var image = new PreparedImage("local", key, "/uploads/" + key, VALID_CONTENT_TYPE,
+                MediaUploadReconciler.digest(sourceBytes), sourceBytes);
+        var prepared = new StorageService.PreparedUpload(mock(ImageStorageProvider.class), image);
+        var storage = mock(StorageService.class);
+        var file = new org.springframework.mock.web.MockMultipartFile("file", sourceBytes);
+        when(storage.prepareImage(file)).thenReturn(prepared);
+        doThrow(new IllegalStateException("simulated write without visible object"))
+                .when(storage).writeImage(prepared);
+        var uploadService = new MediaUploadService(storage, registry);
+        org.springframework.test.util.ReflectionTestUtils.setField(uploadService, "registrationEnabled", true);
+
+        assertThatThrownBy(() -> uploadService.upload(OWNER_ID, file))
+                .isInstanceOf(IllegalStateException.class);
+        String assetId = jdbc.queryForObject("SELECT asset_id FROM media_asset WHERE object_key=?", String.class, key);
+        jdbc.update("UPDATE media_asset SET updated_at=? WHERE asset_id=?",
+                Timestamp.from(Instant.now().minus(Duration.ofMinutes(10))), assetId);
+        reconciler.reconcileUploads();
+        assertThat(statusOf(assetId)).isEqualTo(MediaAsset.STATUS_UPLOADING);
+        assertThat(countJobsFor(assetId)).isZero();
+        assertThat(countOutboxFor(assetId)).isZero();
+
+        writeOriginal(key, sourceBytes);
+        reconciler.reconcileUploads();
+        assertThat(statusOf(assetId)).isEqualTo(MediaAsset.STATUS_READY);
+        assertThat(readOriginal(key)).isEqualTo(sourceBytes);
+        assertThat(countJobsFor(assetId)).isEqualTo(1L);
+        assertThat(countOutboxFor(assetId)).isEqualTo(1L);
     }
 
     private List<RegisteredUpload> registerUploads(String scope, int count, long byteSize, String sha256) {

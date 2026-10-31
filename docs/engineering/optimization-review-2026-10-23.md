@@ -1559,3 +1559,13 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 修复后相关 H2 回归共 20 项通过并完成打包，日志 `backend/target/content-claim-snapshot-reviewed.log`；独立 MySQL 的两种延迟提交场景均通过，旧候选返回空，新领取读取到第 2 次并在失败后写为 `FAILED`，日志 `backend/target/content-claim-mysql-reviewed.log`。MySQL 测试仅接受专用环回端口、随机隔离库、专用账号和匹配的库内标记，使用真实 JPA 与数据库事务，事务时序由测试屏障控制；两次验证后独立数据库实例均正常关闭。测试不证明真实 broker 确认、跨实例网络故障或生产数据库负载。
 
 受本机内存不足影响，第一次最终 H2 回归在编译过程中中止，记录为 `backend/target/content-claim-snapshot-memory-failure.log`；第一次修复后 MySQL 复测也在 Maven 启动阶段中止，记录为 `backend/target/content-claim-mysql-reviewed-memory-failure.log`。内存恢复后限制测试 JVM 内存及线程数并分别重跑，才取得上述通过结果，未修改系统内存设置或关闭其他应用。
+
+## 2026-10-31：上传写入结果未确认时保留恢复意图
+
+登记模式下，存储写入方法抛异常并不能证明对象没有写入：例如数据已经落盘，但调用方未收到成功结果。旧流程会立即把记录标为 `UPLOAD_FAILED`，而原图恢复只扫描 `UPLOADING`，即使之后能读取到完整匹配的原图也不会恢复。现在存储写入抛出运行时异常时保留已提交的 `UPLOADING` 意图，并原样传播异常；后台仍须在既定等待时间后读回原图，长度和 SHA-256 均匹配才转为 `READY` 并创建处理任务。校验前失败、登记失败及写入后登记提交失败的原有边界不变。
+
+修改前的 `backend/target/media-write-uncertain-baseline.log` 在独立 H2 和 JUnit 临时目录中模拟“真实文件字节已写入，存储调用随后抛异常”：一项测试失败，恢复执行后仍为 `UPLOAD_FAILED` 而非 `READY`；测试前后源码哈希一致。这是受控故障注入，没有复现真实 S3 网络超时。修复后 `backend/target/media-write-uncertain-reviewed.log` 共 25 项通过并完成后端打包，覆盖原始异常传播、完整原图恢复和任务/outbox 不重复、文件缺失时不误报成功、文件后来出现后恢复、内容不匹配、真实登记模式定时器及上传接口。测试使用独立 H2 和临时本地文件，未验证真实 S3 或生产网络。
+
+这次变更不提供上传幂等或按请求找回结果：异常响应的客户端仍可能没有 assetId，用户重试仍可能产生重复图片；旧的 `UPLOAD_FAILED` 记录也没有被自动迁移。真正没有写入的对象同样保持待核对，现有恢复任务每次最多尝试 20 条，但缺失或不匹配记录不会自动过期，持续错误可能增加后续存储读取和等待时间；这是保留不确定结果的现有限制，不能据此声称已解决积压或长期成本。
+
+前述 `1c72bc9` 和 `1f75dff` 的 GitHub Actions run `41026135213`、`41028453379` 均已完成且各 13 项作业通过；这些结果不包含本节更改。

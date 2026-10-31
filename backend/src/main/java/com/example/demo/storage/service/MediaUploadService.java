@@ -25,16 +25,9 @@ public class MediaUploadService {
         if (!registrationEnabled) return Map.of("url", storage.uploadImage(file));
         StorageService.PreparedUpload upload = storage.prepareImage(file);
         String assetId = registry.begin(ownerId, upload.image().intent());
-        try {
-            storage.writeImage(upload);
-        } catch (RuntimeException writeFailure) {
-            try {
-                registry.failed(assetId);
-            } catch (RuntimeException persistenceFailure) {
-                writeFailure.addSuppressed(persistenceFailure);
-            }
-            throw writeFailure;
-        }
+        // An exception can arrive after the provider persisted the bytes. Keep
+        // the durable UPLOADING intent so reconciliation can verify the object.
+        storage.writeImage(upload);
         // If this transaction fails, retain the UPLOADING intent for reconciliation.
         // Never delete the external object when commit/response outcome is uncertain.
         MediaAssetStatus result = registry.ready(assetId);
