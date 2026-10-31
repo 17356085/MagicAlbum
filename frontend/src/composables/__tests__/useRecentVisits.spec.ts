@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { persistAuthState } from '@/utils/authStorage'
 import {
   addVisit,
+  captureRecentVisitsScope,
   clearAllRecentVisits,
   getAllRecentVisits,
   getRecentVisits,
+  initRecentVisitsTracking,
   pruneExpired,
   removeRecentVisit,
   updateVisitSectionById,
@@ -18,6 +20,27 @@ function setCurrentUser(id: number | null, token = id == null ? '' : `account-${
   } else {
     persistAuthState({ accessToken: token, user: { id, username: `user-${id}` } })
   }
+}
+
+afterEach(() => {
+  delete window.__recent_visits_hook_installed
+  vi.restoreAllMocks()
+})
+
+function runTracking(identityProvider?: unknown): void {
+  delete window.__recent_visits_hook_installed
+  const afterEachHook = vi.fn()
+  const router = { afterEach: afterEachHook }
+  Reflect.apply(initRecentVisitsTracking, null, [router, identityProvider])
+  const callback = afterEachHook.mock.calls[0]?.[0] as ((to: unknown) => void) | undefined
+  if (!callback) return
+  callback({
+    name: 'thread-detail',
+    path: '/threads/tracked',
+    fullPath: '/threads/tracked?source=history',
+    params: { id: 'tracked' },
+    meta: { title: '导航记录' },
+  })
 }
 
 describe('useRecentVisits account-scoped clearing', () => {
@@ -119,5 +142,77 @@ describe('useRecentVisits account-scoped clearing', () => {
     expect(getRecentVisits()).toEqual([
       expect.objectContaining({ path: '/threads/saved', title: '保留帖子', id: 77 }),
     ])
+  })
+
+  it('fails closed when the tracking provider still represents account A after storage moved to B', () => {
+    setCurrentUser(2, 'account-b')
+    const beforeB = JSON.stringify([{ path: '/threads/b', title: '账号 B', id: 2, ts: Date.now() }])
+    localStorage.setItem('recent_visits_v1:2', beforeB)
+
+    runTracking(() => ({ token: 'account-a', ownerId: 1 }))
+
+    expect(localStorage.getItem('recent_visits_v1:1')).toBeNull()
+    expect(localStorage.getItem('recent_visits_v1:2')).toBe(beforeB)
+    expect(localStorage.getItem('recent_visits_v1:guest')).toBeNull()
+  })
+
+  it('rejects same-token owner drift before the global hook can append to the new owner key', () => {
+    setCurrentUser(2, 'same-token')
+    const beforeB = JSON.stringify([{ path: '/threads/b', title: '账号 B', id: 2, ts: Date.now() }])
+    localStorage.setItem('recent_visits_v1:2', beforeB)
+
+    runTracking(() => ({ token: 'same-token', ownerId: 1 }))
+
+    expect(localStorage.getItem('recent_visits_v1:1')).toBeNull()
+    expect(localStorage.getItem('recent_visits_v1:2')).toBe(beforeB)
+  })
+
+  it('keeps normal account and guest tracking when the caller supplies the current identity', () => {
+    setCurrentUser(1, 'account-a')
+    runTracking(() => ({ token: 'account-a', ownerId: 1 }))
+    expect(getAllRecentVisits()).toEqual([
+      expect.objectContaining({ path: '/threads/tracked', title: '导航记录' }),
+    ])
+
+    setCurrentUser(null)
+    runTracking(() => ({ token: '', ownerId: null }))
+    expect(localStorage.getItem('recent_visits_v1:1')).toContain('导航记录')
+    expect(JSON.parse(localStorage.getItem('recent_visits_v1:guest') || '[]')).toEqual([
+      expect.objectContaining({ path: '/threads/tracked', title: '导航记录' }),
+    ])
+  })
+
+  it('does not infer an account from storage when the identity provider is missing', () => {
+    setCurrentUser(1, 'account-a')
+    runTracking()
+    expect(localStorage.getItem('recent_visits_v1:1')).toBeNull()
+    expect(localStorage.getItem('recent_visits_v1:guest')).toBeNull()
+  })
+
+  it('revalidates a supplied scope after reading before writing the list', () => {
+    setCurrentUser(1, 'account-a')
+    const scope = captureRecentVisitsScope({ token: 'account-a', ownerId: 1 })
+    if (!scope) throw new Error('expected account A scope')
+    const beforeA = JSON.stringify([{ path: '/threads/a', title: '账号 A', id: 1, ts: Date.now() }])
+    localStorage.setItem('recent_visits_v1:1', beforeA)
+    const beforeB = JSON.stringify([{ path: '/threads/b', title: '账号 B', id: 2, ts: Date.now() }])
+    let switched = false
+    const originalGetItem = Storage.prototype.getItem
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string): string | null {
+      const value = originalGetItem.call(this, key)
+      if (key === 'recent_visits_v1:1' && !switched) {
+        switched = true
+        setCurrentUser(2, 'account-b')
+        localStorage.setItem('recent_visits_v1:2', beforeB)
+      }
+      return value
+    })
+
+    Reflect.apply(addVisit, null, [{
+      path: '/threads/should-not-write', title: '不应写入', id: 9, scope,
+    }])
+
+    expect(localStorage.getItem('recent_visits_v1:1')).toBe(beforeA)
+    expect(localStorage.getItem('recent_visits_v1:2')).toBe(beforeB)
   })
 })

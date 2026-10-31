@@ -5,6 +5,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { initRecentVisitsTracking } from './composables/useRecentVisits'
+import { useAuthStore } from './stores/auth'
 import { initializeTheme } from './utils/theme'
 
 // Import highlight.js themes as URLs for dynamic switching
@@ -36,9 +37,15 @@ const observer = new MutationObserver(applyHljsTheme)
 observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 if (import.meta.hot) import.meta.hot.dispose(() => observer.disconnect())
 
-try { initRecentVisitsTracking(router) } catch (_) {}
-
 const app = createApp(App)
-app.use(createPinia())
+const pinia = createPinia()
+app.use(pinia)
+const auth = useAuthStore(pinia)
+try {
+  initRecentVisitsTracking(router, () => ({
+    token: auth.token,
+    ownerId: auth.user?.id ?? auth.user?.userId ?? null,
+  }))
+} catch (_) {}
 app.use(router)
 app.mount('#app')

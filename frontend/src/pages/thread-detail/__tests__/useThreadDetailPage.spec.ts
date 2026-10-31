@@ -6,6 +6,7 @@ import { getThread } from '@/api/threads'
 import { getUserProfile } from '@/api/users'
 import { addVisit, getRecentVisits } from '@/composables/useRecentVisits'
 import { useAuthStore } from '@/stores/auth'
+import { persistAuthState } from '@/utils/authStorage'
 import { useThreadDetailPage } from '../useThreadDetailPage'
 import type { Thread } from '@/types'
 
@@ -159,6 +160,22 @@ describe('thread detail request ownership', () => {
     expect(state.loading.value).toBe(false)
     expect(state.thread.value?.id).toBe(1)
     expect(getRecentVisits().find(visitWithId(1))).toMatchObject({ title: '帖子 1', sectionId: 1 })
+    expect(localStorage.getItem('recent_visits_v1:guest')).toBeNull()
+  })
+
+  it('preserves guest history without moving an authenticated record into the guest key', async () => {
+    useAuthStore().applyAuthState({ accessToken: '', user: null })
+    vi.mocked(getThread).mockResolvedValueOnce(thread(1))
+    const { state } = setup()
+
+    await state.load()
+
+    expect(JSON.parse(localStorage.getItem('recent_visits_v1:guest') || '[]')).toEqual([
+      expect.objectContaining({ title: '帖子 1', sectionId: 1 }),
+    ])
+    expect(JSON.parse(localStorage.getItem('recent_visits_v1:1') || '[]')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 1, title: '初始一' }),
+    ]))
   })
 
   it('records a completed token-only view after same-token hydration without touching other caches', async () => {
@@ -204,6 +221,28 @@ describe('thread detail request ownership', () => {
     expect(document.title).toBe('原页面')
     const staleAccountHistory = JSON.parse(localStorage.getItem('recent_visits_v1:1') || '[]')
     expect(staleAccountHistory.find(visitWithId(1))?.title).toBe('初始一')
+  })
+
+  it('does not write account A metadata when storage owner changes under the same token', async () => {
+    const pending = deferred<Thread>()
+    vi.mocked(getThread).mockReturnValue(pending.promise)
+    const otherOwner = JSON.stringify([{ id: 88, path: '/threads/88', title: '其他账号', ts: Date.now() }])
+    localStorage.setItem('recent_visits_v1:2', otherOwner)
+    const { state } = setup()
+    const request = state.load()
+
+    // Keep the in-memory request owner at 1 while storage metadata drifts to owner 2.
+    persistAuthState({ accessToken: 'account-a', user: { id: 2, username: 'b' } })
+    pending.resolve(thread(1))
+    await request
+
+    const movedHistory = JSON.parse(localStorage.getItem('recent_visits_v1:2') || '[]')
+    expect(movedHistory).toEqual(JSON.parse(otherOwner))
+    expect(localStorage.getItem('recent_visits_v1:guest')).toBeNull()
+    expect(JSON.parse(localStorage.getItem('recent_visits_v1:1') || '[]')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 1, title: '初始一' }),
+      expect.objectContaining({ id: 2, title: '初始二' }),
+    ]))
   })
 
   it('rejects an ABA response after logout and login events restore the same token', async () => {

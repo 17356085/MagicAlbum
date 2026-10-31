@@ -14,6 +14,8 @@ export interface RecentVisitsIdentity {
   readonly ownerId: Id | null
 }
 
+export type RecentVisitsIdentityProvider = () => RecentVisitsIdentity | null
+
 export interface RecentVisitsScope {
   readonly token: string
   readonly ownerId: string | null
@@ -150,6 +152,7 @@ export function addVisit({
   id,
   sectionId,
   sectionName,
+  scope,
 }: {
   path: string
   name?: string
@@ -157,8 +160,12 @@ export function addVisit({
   id?: Id | null
   sectionId?: Id
   sectionName?: string
+  scope?: RecentVisitsScope | null
 }): void {
-  const key = storageKey()
+  // Capture the implicit scope once so a synchronous storage change cannot
+  // redirect this write to a different account between key selection and read.
+  const capturedScope = scope === undefined ? captureRecentVisitsScope() : scope
+  const key = storageKey(capturedScope)
   if (!key) return
   const ts = Date.now()
   const list = readStoredVisits(key)
@@ -172,6 +179,9 @@ export function addVisit({
   filtered.unshift({ path: basePath, name, title, id: id ?? undefined, sectionId, sectionName, ts })
   // 过滤过期项与限制长度
   const recent = filtered.filter(it => (ts - Number(it.ts || 0)) <= MAX_AGE_MS).slice(0, MAX_ITEMS)
+  // Storage may be changed by an auth transition while the list is being
+  // decoded. Never commit a stale list after that transition.
+  if (!isRecentVisitsScopeCurrent(capturedScope)) return
   writeRaw(recent, key)
 }
 
@@ -263,8 +273,14 @@ export function updateVisitSectionById(
   }
 }
 
-export function initRecentVisitsTracking(router: Router | null | undefined): void {
-  if (!router || typeof router.afterEach !== 'function') return
+export function initRecentVisitsTracking(
+  router: Router | null | undefined,
+  identityProvider?: RecentVisitsIdentityProvider,
+): void {
+  // The caller must provide the in-memory identity owner. Falling back to
+  // storage here would allow a late navigation from account A to write into
+  // account B after a token/session transition.
+  if (!router || typeof router.afterEach !== 'function' || typeof identityProvider !== 'function') return
   // 避免重复注册
   if (window.__recent_visits_hook_installed) return
   window.__recent_visits_hook_installed = true
@@ -279,7 +295,11 @@ export function initRecentVisitsTracking(router: Router | null | undefined): voi
       // 优先 meta.title，其次 document.title
       const title = String((to.meta && to.meta.title) || document.title || String(name || path))
       // sectionId 暂不可从路由直接获取，详情页加载后会补全
-      addVisit({ path, name, title, id })
+      const identity = identityProvider()
+      if (!identity) return
+      const scope = captureRecentVisitsScope(identity)
+      if (!scope) return
+      addVisit({ path, name, title, id, scope })
     } catch (_) {}
   })
 }

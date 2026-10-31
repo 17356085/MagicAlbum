@@ -3,8 +3,8 @@ import { isAxiosError } from 'axios'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { getThread } from '@/api/threads'
 import { getUserProfile } from '@/api/users'
-import { addVisit } from '@/composables/useRecentVisits'
-import { getStoredAccessToken, getStoredCurrentUser, hasRealToken } from '@/utils/authStorage'
+import { addVisit, captureRecentVisitsScope } from '@/composables/useRecentVisits'
+import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
 import type { Thread } from '@/types'
 import { formatPageTitle } from '@/config/brand'
@@ -87,6 +87,8 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
     const id = getRouteParamId(route.params.id as string | string[] | undefined)
     const path = route.path
     const token = auth.token
+    const requestedOwnerId = currentUserId()
+    let historyScope = captureRecentVisitsScope({ token, ownerId: requestedOwnerId })
     const epoch = authEventEpoch
     loadedHistoryCallback = null
     const isCurrent = (): boolean => !disposed && sequence === requestSequence &&
@@ -134,8 +136,21 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
           return
         }
 
+        const isHistoryIdentityCurrent = (): boolean => {
+          if (!isCurrent()) return false
+          if (!hasRealToken(token)) return true
+          const ownerId = currentUserId()
+          if (requestedOwnerId == null) return ownerId != null
+          return ownerId != null && String(ownerId) === String(requestedOwnerId)
+        }
+
         const recordHistory = (): void => {
-          if (!isCurrent()) return
+          if (!isHistoryIdentityCurrent()) return
+          const ownerId = currentUserId()
+          if (!historyScope) {
+            historyScope = captureRecentVisitsScope({ token, ownerId })
+          }
+          if (!historyScope) return
           addVisit({
             id,
             path,
@@ -143,11 +158,12 @@ export function useThreadDetailPage(route: RouteLocationNormalizedLoaded) {
             title: titleText,
             sectionId: data.sectionId,
             sectionName: data.sectionName,
+            scope: historyScope,
           })
         }
 
         recordHistory()
-        if (hasRealToken(token) && !getStoredCurrentUser(token)) {
+        if (hasRealToken(token) && currentUserId() == null) {
           loadedHistoryCallback = recordHistory
         }
       } catch (_) {}
