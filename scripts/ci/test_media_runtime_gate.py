@@ -66,6 +66,17 @@ class RuntimeGuardTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_compose_failure_detail_redacts_bare_runtime_secret(self):
+        runtime = gate.ComposeRuntime(self.root)
+        secret = runtime.secrets["RABBITMQ_PASSWORD"]
+        result = MagicMock(returncode=1, stdout=b"", stderr=f"failed with {secret}".encode())
+        with patch.object(gate.subprocess, "run", return_value=result):
+            with self.assertRaises(gate.GateFailure) as raised:
+                runtime.compose("port", "--index", "1", "rabbitmq", "5672")
+        detail = str(raised.exception)
+        self.assertNotIn(secret, detail)
+        self.assertIn("[redacted]", detail)
+
     def test_restart_waits_for_new_port_without_using_old_mapping(self):
         runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
         runtime.ports = {"backend": 1111}
@@ -106,6 +117,209 @@ class RuntimeGuardTests(unittest.TestCase):
         runtime.refresh_ports = MagicMock(side_effect=gate.GateFailure("inventory failed"))
         with self.assertRaisesRegex(gate.GateFailure, "inventory failed"):
             runtime.restart_service("backend")
+
+    def test_refresh_ports_excludes_expected_stopped_broker_even_if_ps_race_says_running(self):
+        runtime = gate.ComposeRuntime(self.root)
+        runtime.ports = {"rabbitmq": 15672, "rabbitmq-management": 15673, "media-worker": 19091}
+        calls = []
+
+        def compose(*args, **kwargs):
+            calls.append((args, kwargs))
+            if args[0] == "ps":
+                return json.dumps([
+                    {"Service": "rabbitmq", "State": "running"},
+                    {"Service": "media-worker", "State": "running"},
+                ])
+            self.assertEqual(args[0], "port")
+            self.assertEqual(args[3], "media-worker")
+            return "127.0.0.1:29091"
+
+        runtime.compose = compose
+        ports = runtime.refresh_ports(exclude_services={"rabbitmq", "rabbitmq-management"})
+
+        self.assertEqual(ports, {"media-worker": 29091})
+        self.assertEqual(runtime.ports, ports)
+        self.assertEqual([call[0][3] for call in calls if call[0][0] == "port"], ["media-worker"])
+
+    def test_broker_restart_waits_for_fresh_broker_ports_before_readiness(self):
+        acceptance = gate.Acceptance.__new__(gate.Acceptance)
+        runtime = MagicMock()
+        acceptance.runtime = runtime
+        acceptance.owner = MagicMock()
+        acceptance.fixture = b"original"
+        acceptance.fixture_sha = "original-hash"
+        old_ports = {
+            "rabbitmq": 15672,
+            "rabbitmq-management": 15673,
+            "backend": 18080,
+            "notification-service": 18081,
+            "gateway": 19000,
+            "frontend": 19080,
+            "media-worker": 19091,
+            "s3mock": 19090,
+        }
+        stopped_ports = {
+            "backend": 28080,
+            "notification-service": 28081,
+            "gateway": 29000,
+            "frontend": 29080,
+            "media-worker": 29091,
+            "s3mock": 29090,
+        }
+        new_ports = {**stopped_ports, "rabbitmq": 29001, "rabbitmq-management": 29002}
+        runtime.ports = old_ports.copy()
+        runtime.compose.return_value = ""
+        runtime.wait_http.return_value = None
+        acceptance.upload = MagicMock()
+        acceptance.fetch_object = MagicMock()
+        acceptance.asset_status = MagicMock()
+        acceptance.poll_succeeded = MagicMock()
+        acceptance.upload.return_value = {"assetId": "asset", "url": "http://original"}
+        acceptance.fetch_object.return_value = acceptance.fixture
+        acceptance.asset_status.return_value = (MagicMock(status_code=200), {"processingStatus": "PENDING"})
+        acceptance.poll_succeeded.return_value = {"processingStatus": "SUCCEEDED"}
+
+        def refresh_ports(**kwargs):
+            self.assertEqual(kwargs, {"exclude_services": {"rabbitmq", "rabbitmq-management"}})
+            runtime.ports = stopped_ports.copy()
+            return runtime.ports
+
+        runtime.refresh_ports.side_effect = refresh_ports
+
+        def wait_for_ports(services, **kwargs):
+            self.assertEqual(set(services), {"rabbitmq", "rabbitmq-management"})
+            self.assertGreater(kwargs.get("timeout", 30), 0)
+            self.assertEqual(acceptance.management, "")
+            self.assertEqual(acceptance.backend, "http://127.0.0.1:28080")
+            runtime.ports = new_ports.copy()
+            return runtime.ports
+
+        runtime.wait_for_ports.side_effect = wait_for_ports
+
+        with patch.object(gate.time, "sleep"):
+            acceptance.broker_restart_recovery()
+
+        runtime.refresh_ports.assert_called_once_with(
+            exclude_services={"rabbitmq", "rabbitmq-management"}
+        )
+        runtime.wait_for_ports.assert_called_once()
+        self.assertNotIn(15672, runtime.ports.values())
+        self.assertNotIn(15673, runtime.ports.values())
+        self.assertEqual(runtime.ports["rabbitmq"], 29001)
+        self.assertEqual(runtime.ports["rabbitmq-management"], 29002)
+        self.assertEqual(acceptance.gateway, "http://127.0.0.1:29000")
+        self.assertEqual(acceptance.frontend, "http://127.0.0.1:29080")
+        self.assertEqual(acceptance.backend, "http://127.0.0.1:28080")
+        self.assertEqual(acceptance.notification, "http://127.0.0.1:28081")
+        self.assertEqual(acceptance.s3, "http://127.0.0.1:29090")
+        self.assertEqual(acceptance.management, "http://127.0.0.1:29002")
+
+    def test_refresh_urls_clears_management_when_broker_is_allowed_missing(self):
+        acceptance = gate.Acceptance.__new__(gate.Acceptance)
+        runtime = MagicMock()
+        acceptance.runtime = runtime
+        runtime.ports = {
+            "backend": 28080,
+            "notification-service": 28081,
+            "gateway": 29000,
+            "frontend": 29080,
+            "media-worker": 29091,
+            "s3mock": 29090,
+        }
+        acceptance.management = "http://127.0.0.1:15673"
+
+        acceptance.refresh_urls(allow_broker_missing=True)
+
+        self.assertEqual(acceptance.backend, "http://127.0.0.1:28080")
+        self.assertEqual(acceptance.notification, "http://127.0.0.1:28081")
+        self.assertEqual(acceptance.gateway, "http://127.0.0.1:29000")
+        self.assertEqual(acceptance.frontend, "http://127.0.0.1:29080")
+        self.assertEqual(acceptance.s3, "http://127.0.0.1:29090")
+        self.assertEqual(acceptance.management, "")
+        with self.assertRaisesRegex(gate.GateFailure, "management URL is unavailable"):
+            acceptance.rabbit_request("GET", "/api/overview")
+
+        runtime.ports["rabbitmq-management"] = 29002
+        acceptance.refresh_urls()
+        self.assertEqual(acceptance.management, "http://127.0.0.1:29002")
+
+        runtime.ports.pop("rabbitmq-management")
+        with self.assertRaisesRegex(gate.GateFailure, "management port is missing"):
+            acceptance.refresh_urls()
+
+    def test_wait_for_ports_retries_only_transient_target_port_failure(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.ports = {"rabbitmq": 15672, "rabbitmq-management": 15673}
+        port_calls = []
+
+        def compose(*args, **kwargs):
+            if args[0] == "ps":
+                return json.dumps([{"Service": "rabbitmq", "State": "running"}])
+            port_calls.append(args)
+            if len(port_calls) == 1:
+                raise gate.GateFailure(
+                    'compose port --index failed with exit 1: service "rabbitmq" is not running container #1'
+                )
+            return "127.0.0.1:29001" if args[4] == "5672" else "127.0.0.1:29002"
+
+        runtime.compose = compose
+        with patch.object(gate.time, "sleep"):
+            ports = runtime.wait_for_ports({"rabbitmq", "rabbitmq-management"}, timeout=5)
+
+        self.assertEqual(ports, {"rabbitmq": 29001, "rabbitmq-management": 29002})
+        self.assertEqual(len(port_calls), 3)
+
+    def test_wait_for_ports_propagates_not_running_error_for_other_service(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.ports = {}
+        port_calls = []
+
+        def compose(*args, **kwargs):
+            if args[0] == "ps":
+                return json.dumps([{"Service": "rabbitmq", "State": "running"}])
+            port_calls.append(args)
+            raise gate.GateFailure(
+                'compose port --index failed with exit 1: service "backend" is not running container #1'
+            )
+
+        runtime.compose = compose
+        with self.assertRaisesRegex(gate.GateFailure, 'service "backend"'):
+            runtime.wait_for_ports({"rabbitmq"}, timeout=5)
+        self.assertEqual(len(port_calls), 1)
+
+    def test_wait_for_ports_propagates_other_service_port_errors(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.ports = {}
+
+        def compose(*args, **kwargs):
+            if args[0] == "ps":
+                return json.dumps([
+                    {"Service": "rabbitmq", "State": "running"},
+                    {"Service": "backend", "State": "running"},
+                ])
+            if args[3] == "backend":
+                raise gate.GateFailure("permanent backend port inventory failure")
+            return "127.0.0.1:29001" if args[4] == "5672" else "127.0.0.1:29002"
+
+        runtime.compose = compose
+        with self.assertRaisesRegex(gate.GateFailure, "permanent backend"):
+            runtime.wait_for_ports({"rabbitmq", "rabbitmq-management"}, timeout=5)
+
+    def test_wait_for_ports_has_explicit_timeout_for_target_port_race(self):
+        runtime = gate.ComposeRuntime.__new__(gate.ComposeRuntime)
+        runtime.ports = {"rabbitmq": 15672}
+
+        def compose(*args, **kwargs):
+            if args[0] == "ps":
+                return json.dumps([{"Service": "rabbitmq", "State": "running"}])
+            raise gate.GateFailure(
+                'compose port --index failed with exit 1: service "rabbitmq" is not running container #1'
+            )
+
+        runtime.compose = compose
+        with patch.object(gate.time, "monotonic", side_effect=[0, 0.25, 1]), patch.object(gate.time, "sleep"):
+            with self.assertRaisesRegex(gate.GateFailure, "timed out waiting for mapped host port for rabbitmq"):
+                runtime.wait_for_ports({"rabbitmq"}, timeout=1)
 
     def test_port_inventory_handles_s3_only_and_does_not_query_stopped_services(self):
         runtime = gate.ComposeRuntime(self.root)

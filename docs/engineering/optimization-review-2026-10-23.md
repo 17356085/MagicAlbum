@@ -1701,3 +1701,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 修改前的原始基线 `backend/target/connected-unlink-baseline-20261101.log` 为 3 项中 2 项失败：接口返回 204 而非 409，后续相同第三方身份解析到新用户 ID；这是同一条删除路径造成的两项观察。最终真实安全链、H2 持久化与后续 OAuth 身份解析、两个服务实现、账号绑定事务及 API 安全回归共 41 项通过并完成后端打包，见 `backend/target/connected-unlink-acceptance-20261101.log`。测试使用隔离数据库与模拟第三方资料，没有访问真实第三方平台、浏览器或生产用户；未来恢复解绑需要单独设计并验证实际可用的备用凭据、并发和权限边界。
 
 内部 `bindExternalAccount` 目前仍可替换同一用户同一平台的既有外部标识；本次核对的生产调用方只在 OAuth 新建用户时写入绑定。今后如果向已有账号开放绑定或换绑，需要先明确身份确认、冲突及并发语义，不能把内部方法直接暴露给客户端。
+
+## 2026-11-02：媒体运行时检查的 RabbitMQ 端口竞态
+
+提交 `c20aecf` 的远程运行 [41307297689](https://github.com/17356085/MagicAlbum/actions/runs/41307297689) 中，M3 媒体运行时检查在 `broker-restart-outbox-recovery` 阶段执行到第 13/16 个计划用例时失败：停止 RabbitMQ 后的 Compose 服务清单仍短暂显示其运行，而查询端口返回 `service "rabbitmq" is not running container #1`。现有制品证明的是端口发现失败，不能据此认定业务服务本身失败或未失败。
+
+现在检查脚本在主动停止 broker 后排除两个 RabbitMQ 端口并清除管理地址，同时刷新其他服务地址；重新启动后限时发现两项新端口，只对目标服务匹配的短暂退出信息重试，其他端口错误继续失败。错误详情经过运行时密钥脱敏；broker 地址未恢复前不会使用旧地址。原始模拟基线 `backend/target/media-runtime-port-race-regression-old.log` 为 1 项失败、1 项错误；最终 guard 共 19 项通过，见 `backend/target/media-runtime-port-race-reviewed-20261102.log`，Python 语法检查通过。它们是离线模拟，未启动 Docker；本提交仍需自身的远程媒体运行时验收。
+
+同一次远程运行的 M4B 摘要检查另在构建阶段遇到 `MediaRegistrationOnlyRecoveryIT.clearRegistry` 的 Mockito 未完成桩错误，只执行了 2/18 项；现有日志未能单独证明具体线程原因，也没有证明外部模型。此次 M3 脚本修正不等于该 M4B 失败已经解决。

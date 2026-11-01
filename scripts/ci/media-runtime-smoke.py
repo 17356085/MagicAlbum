@@ -37,6 +37,19 @@ from urllib.parse import quote
 ROOT_DIR = Path(__file__).resolve().parents[2]
 BASE_COMPOSE = ROOT_DIR / "docker-compose.yml"
 PYTHON_VERSION = sys.version_info[:2]
+PORT_BINDINGS = {
+    "mysql": 3306,
+    "redis": 6379,
+    "rabbitmq": 5672,
+    "rabbitmq-management": 15672,
+    "backend": 8080,
+    "notification-service": 8081,
+    "gateway": 9000,
+    "frontend": 80,
+    "media-worker": 9091,
+    "s3mock": 9090,
+}
+BROKER_PORT_SERVICES = frozenset({"rabbitmq", "rabbitmq-management"})
 
 
 class GateFailure(RuntimeError):
@@ -477,7 +490,13 @@ class ComposeRuntime:
             raise GateFailure(f"compose {' '.join(args[:2])} timed out") from exc
         self._record_command_output(label, result.stdout, result.stderr)
         if result.returncode != 0:
-            raise GateFailure(f"compose {' '.join(args[:2])} failed with exit {result.returncode}")
+            raw_error = result.stderr or b""
+            error_text = raw_error.decode("utf-8", "replace") if isinstance(raw_error, bytes) else raw_error
+            detail = safe_text(self._redact(error_text)).strip()
+            suffix = f": {detail}" if detail else ""
+            raise GateFailure(
+                f"compose {' '.join(args[:2])} failed with exit {result.returncode}{suffix}"
+            )
         return result.stdout.decode("utf-8", "replace").strip()
 
     def docker(self, *args: str, timeout: float = 60.0) -> str:
@@ -506,28 +525,52 @@ class ComposeRuntime:
             if out:
                 raise GateFailure(f"Compose project label already has {kind}s")
 
-    def refresh_ports(self) -> dict[str, int]:
-        bindings = {
-            "mysql": 3306,
-            "redis": 6379,
-            "rabbitmq": 5672,
-            "rabbitmq-management": 15672,
-            "backend": 8080,
-            "notification-service": 8081,
-            "gateway": 9000,
-            "frontend": 80,
-            "media-worker": 9091,
-            "s3mock": 9090,
-        }
+    @staticmethod
+    def _is_transient_port_failure(error: GateFailure, compose_service: str) -> bool:
+        message = str(error).lower()
+        prefix = "compose port --index failed with exit 1"
+        if not message.startswith(prefix):
+            return False
+        match = re.search(
+            r'service\s+"(?P<service>[^"]+)"\s+is\s+not\s+running\s+container\s+#\d+\s*$',
+            message,
+            re.IGNORECASE,
+        )
+        return bool(match and match.group("service").casefold() == compose_service.casefold())
+
+    def refresh_ports(
+        self,
+        *,
+        exclude_services: set[str] | None = None,
+        retry_services: set[str] | None = None,
+        retry_deadline: float | None = None,
+    ) -> dict[str, int]:
+        excluded = set(exclude_services or ())
+        retrying = set(retry_services or ())
+        if retrying and retry_deadline is None:
+            retry_deadline = time.monotonic() + 30.0
         inventory = self.compose("ps", "--all", "--format", "json", timeout=30)
         rows = json.loads(inventory) if inventory.lstrip().startswith("[") else [json.loads(line) for line in inventory.splitlines() if line.strip()]
         running = {row["Service"] for row in rows if row.get("State") == "running"}
         ports: dict[str, int] = {}
-        for service, private_port in bindings.items():
+        for service, private_port in PORT_BINDINGS.items():
+            if service in excluded:
+                continue
             compose_service = "rabbitmq" if service == "rabbitmq-management" else service
             if compose_service not in running:
                 continue
-            output = self.compose("port", "--index", "1", compose_service, str(private_port), timeout=30)
+            while True:
+                try:
+                    output = self.compose("port", "--index", "1", compose_service, str(private_port), timeout=30)
+                except GateFailure as exc:
+                    if service not in retrying or not self._is_transient_port_failure(exc, compose_service):
+                        raise
+                    remaining = (retry_deadline or 0.0) - time.monotonic()
+                    if remaining <= 0:
+                        raise GateFailure(f"timed out waiting for mapped host port for {service}") from exc
+                    time.sleep(min(0.5, remaining))
+                    continue
+                break
             match = re.search(r":(\d+)\s*$", output)
             if not match:
                 raise GateFailure(f"could not read mapped host port for {service}")
@@ -537,6 +580,29 @@ class ComposeRuntime:
             ports[service] = port
         self.ports = ports
         return ports
+
+    def wait_for_ports(self, services: set[str], timeout: float = 30.0) -> dict[str, int]:
+        expected = set(services)
+        unknown = expected - PORT_BINDINGS.keys()
+        if not expected:
+            raise GateFailure("no services were supplied while waiting for mapped ports")
+        if unknown:
+            raise GateFailure(f"unknown services while waiting for mapped ports: {sorted(unknown)}")
+        if timeout <= 0:
+            raise GateFailure(f"invalid mapped-port wait timeout for {sorted(expected)}")
+
+        deadline = time.monotonic() + timeout
+        for service in expected:
+            self.ports.pop(service, None)
+        while True:
+            ports = self.refresh_ports(retry_services=expected, retry_deadline=deadline)
+            missing = expected - ports.keys()
+            if not missing:
+                return ports
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise GateFailure(f"timed out waiting for running mapped port(s): {sorted(missing)}")
+            time.sleep(min(0.5, remaining))
 
     def wait_http(self, url: str, expected: set[int], timeout: float = 180.0) -> None:
         try:
@@ -708,14 +774,21 @@ class Acceptance:
         self.success_status: dict[str, Any] = {}
         self.success_job: dict[str, Any] = {}
 
-    def refresh_urls(self) -> None:
+    def refresh_urls(self, *, allow_broker_missing: bool = False) -> None:
         ports = self.runtime.ports
         self.gateway = f"http://127.0.0.1:{ports['gateway']}"
         self.frontend = f"http://127.0.0.1:{ports['frontend']}"
         self.backend = f"http://127.0.0.1:{ports['backend']}"
         self.notification = f"http://127.0.0.1:{ports['notification-service']}"
         self.s3 = f"http://127.0.0.1:{ports['s3mock']}"
-        self.management = f"http://127.0.0.1:{ports['rabbitmq-management']}"
+        if allow_broker_missing:
+            self.management = ""
+            return
+        try:
+            management_port = ports["rabbitmq-management"]
+        except KeyError as exc:
+            raise GateFailure("RabbitMQ management port is missing from the refreshed port inventory") from exc
+        self.management = f"http://127.0.0.1:{management_port}"
 
     def health_and_isolation(self) -> None:
         self.refresh_urls()
@@ -1190,6 +1263,8 @@ class Acceptance:
             raise GateFailure("retry result did not become the latest successful job")
 
     def rabbit_request(self, method: str, path: str, **kwargs: Any) -> Any:
+        if not self.management:
+            raise GateFailure("RabbitMQ management URL is unavailable until broker ports are refreshed")
         import httpx
 
         url = f"{self.management}{path}"
@@ -1359,7 +1434,11 @@ class Acceptance:
         if self.owner is None:
             raise GateFailure("owner identity was not initialized")
         self.runtime.compose("stop", "rabbitmq", timeout=90)
-        self.runtime.refresh_ports()
+        # RabbitMQ can remain visible as running for one short `ps` snapshot
+        # after stop.  Never query or retain either of its old host mappings
+        # while the broker is intentionally stopped.
+        self.runtime.refresh_ports(exclude_services=set(BROKER_PORT_SERVICES))
+        self.refresh_urls(allow_broker_missing=True)
         asset = self.upload(self.owner)
         asset_id = str(asset["assetId"])
         original = self.fetch_object(str(asset["url"]), self.fixture_sha)
@@ -1369,7 +1448,11 @@ class Acceptance:
         if response.status_code != 200 or status.get("processingStatus") not in {"PENDING", "PROCESSING"}:
             raise GateFailure("broker-stopped upload did not remain pending")
         self.runtime.compose("start", "rabbitmq", timeout=180)
-        self.runtime.refresh_ports()
+        # Wait for both newly discovered broker bindings.  refresh_ports still
+        # validates every currently running service, so unrelated port errors
+        # propagate instead of being mistaken for broker startup lag.
+        self.runtime.wait_for_ports(set(BROKER_PORT_SERVICES), timeout=30.0)
+        self.refresh_urls()
         time.sleep(5)
         self.runtime.wait_http(f"http://127.0.0.1:{self.runtime.ports['media-worker']}/ready", {200}, timeout=180)
         final = self.poll_succeeded(self.owner, asset_id, timeout=240)
