@@ -1,5 +1,6 @@
 package com.example.demo.threads.event;
 
+import com.example.demo.storage.MediaRegistryMySqlAssertions;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261020.5";
+    private static final String LATEST_MIGRATION_VERSION = "20261101.1";
+    private static final int LEGACY_MEDIA_ATTEMPTS = 7;
+    private static final String LEGACY_MEDIA_AVAILABLE_AT = "2026-01-02 03:04:05.123456";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
     private static final String UPGRADE_USERNAME = "CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME";
     private static final String UPGRADE_PASSWORD = "CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD";
@@ -68,6 +71,17 @@ class ContentEventMySqlUpgradeAcceptance {
                 oldSummary.executeUpdate();
             }
 
+            Flyway mediaRecoveryBaseline = flyway(url, username, password)
+                    .target("20261020.5")
+                    .load();
+            mediaRecoveryBaseline.migrate();
+            mediaRecoveryBaseline.validate();
+            assertFlywayVersion(connection, "20261020.5");
+            MediaRegistryMySqlAssertions.MediaRecoveryFixture mediaRecoveryFixture =
+                    MediaRegistryMySqlAssertions.insertPublishedMediaRecoveryFixture(
+                            connection, LEGACY_MEDIA_ATTEMPTS, LEGACY_MEDIA_AVAILABLE_AT);
+            assertPublishedMediaRecovery(connection, mediaRecoveryFixture, false);
+
             Flyway complete = flyway(url, username, password).load();
             complete.migrate();
             complete.validate();
@@ -104,6 +118,7 @@ class ContentEventMySqlUpgradeAcceptance {
                     + "AND attempts=0 AND available_at=occurred_at AND status='PENDING' "
                     + "AND lease_owner IS NULL AND lease_until IS NULL AND published_at IS NULL "
                     + "AND last_error IS NULL", eventId)).isEqualTo(1);
+            assertPublishedMediaRecovery(connection, mediaRecoveryFixture, true);
             assertThat(count(connection, "SELECT COUNT(*) FROM content_search_control "
                     + "WHERE id=1 AND ready=0 AND pause_owner IS NULL AND active_index IS NULL")).isEqualTo(1);
 
@@ -116,7 +131,7 @@ class ContentEventMySqlUpgradeAcceptance {
                     .satisfies(error -> assertThat(((SQLException) error).getSQLState())
                             .startsWith("23"));
 
-            com.example.demo.storage.MediaRegistryMySqlAssertions.assertMediaRegistry(connection);
+            MediaRegistryMySqlAssertions.assertMediaRegistry(connection);
         }
     }
 
@@ -227,6 +242,34 @@ class ContentEventMySqlUpgradeAcceptance {
             actual = result.getString(1);
         }
         assertThat(normalizeVersion(actual)).isEqualTo(normalizeVersion(expected));
+    }
+
+    private static void assertPublishedMediaRecovery(Connection connection,
+                                                     MediaRegistryMySqlAssertions.MediaRecoveryFixture fixture,
+                                                     boolean recoveryColumnsAdded) throws SQLException {
+        assertThat(count(connection,
+                "SELECT COUNT(*) FROM media_asset WHERE asset_id=? AND status='READY' "
+                        + "AND processing_status='NOT_REQUESTED'", fixture.assetId()))
+                .as("legacy media asset remains valid")
+                .isEqualTo(1);
+        assertThat(count(connection,
+                "SELECT COUNT(*) FROM media_processing_job WHERE job_id=? AND asset_id=? "
+                        + "AND job_version=1 AND status='PENDING' AND attempts=0",
+                fixture.jobId(), fixture.assetId()))
+                .as("legacy media job remains valid")
+                .isEqualTo(1);
+        String outboxSql = "SELECT COUNT(*) FROM media_request_outbox WHERE event_id=? AND asset_id=? "
+                + "AND job_id=? AND job_version=1 AND status='PUBLISHED' AND attempts=? "
+                + "AND DATE_FORMAT(available_at,'%Y-%m-%d %H:%i:%s.%f')=?";
+        if (recoveryColumnsAdded) {
+            outboxSql += " AND processing_recovery_lease_hash IS NULL AND processing_recovery_next_at IS NULL";
+        }
+        assertThat(count(connection, outboxSql, fixture.eventId(), fixture.assetId(), fixture.jobId(),
+                fixture.attempts(), fixture.availableAt()))
+                .as(recoveryColumnsAdded
+                        ? "legacy published media outbox row survives recovery migration unchanged"
+                        : "legacy published media outbox row is seeded at the old migration")
+                .isEqualTo(1);
     }
 
     private static void assertIndex(Connection connection, String indexName) throws SQLException {

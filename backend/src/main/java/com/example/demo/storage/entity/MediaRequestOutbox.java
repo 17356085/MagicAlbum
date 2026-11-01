@@ -68,6 +68,18 @@ public class MediaRequestOutbox {
     @Column(name = "last_error", length = 64)
     private String lastError;
 
+    /**
+     * The processing-worker lease generation that most recently triggered a
+     * recovery republish.  This marker is deliberately separate from the
+     * publisher lease fields above: it survives PUBLISHED/IN_FLIGHT changes
+     * and therefore can enforce a per-worker-generation recovery cooldown.
+     */
+    @Column(name = "processing_recovery_lease_hash", length = 64)
+    private String processingRecoveryLeaseHash;
+
+    @Column(name = "processing_recovery_next_at")
+    private Instant processingRecoveryNextAt;
+
     @PrePersist
     void onCreate() {
         if (availableAt == null) availableAt = Instant.now();

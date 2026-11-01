@@ -14,6 +14,7 @@ import java.util.UUID;
 @Service
 public class MediaDeliveryTransactions {
     static final int PENDING_RECOVERY_GRACE_SECONDS = 120;
+    static final int PROCESSING_RECOVERY_COOLDOWN_SECONDS = 120;
     private final JdbcTemplate jdbc;
 
     public MediaDeliveryTransactions(JdbcTemplate jdbc) { this.jdbc = jdbc; }
@@ -59,7 +60,12 @@ public class MediaDeliveryTransactions {
 
     @Transactional
     public void recover(String jobId) {
-        var rows = jdbc.queryForList("SELECT status,lease_until,updated_at FROM media_processing_job WHERE job_id=? FOR UPDATE", jobId);
+        var rows = jdbc.queryForList("""
+                SELECT status,lease_until,lease_token_hash,updated_at
+                  FROM media_processing_job
+                 WHERE job_id=?
+                 FOR UPDATE
+                """, jobId);
         if (rows.isEmpty()) return;
         var row = rows.getFirst();
         Instant now = Instant.now();
@@ -70,11 +76,36 @@ public class MediaDeliveryTransactions {
                 && !updated.isAfter(now.minusSeconds(PENDING_RECOVERY_GRACE_SECONDS));
         boolean expiredProcessing = "PROCESSING".equals(status) && lease != null && lease.isBefore(now);
         if (!stalePending && !expiredProcessing) return;
-        // FAILED rows retain available_at; claim() retries them when the backoff expires.
-        jdbc.update("""
-                UPDATE media_request_outbox SET status='PENDING',available_at=?,lease_owner=NULL,lease_until=NULL
-                WHERE job_id=? AND status='PUBLISHED'
-                """, Timestamp.from(now), jobId);
+        if (stalePending) {
+            // FAILED rows retain available_at; claim() retries them when the backoff expires.
+            jdbc.update("""
+                    UPDATE media_request_outbox
+                       SET status='PENDING',available_at=?,lease_owner=NULL,lease_until=NULL
+                     WHERE job_id=? AND status='PUBLISHED'
+                    """, Timestamp.from(now), jobId);
+        } else {
+            // Keep the processing-worker generation marker on the outbox row,
+            // independent of publisher attempts/leases.  The null-safe
+            // comparison treats two null hashes as the same historical
+            // generation, while a null/non-null pair is a new generation.
+            String leaseHash = (String) row.get("lease_token_hash");
+            Timestamp nextAt = Timestamp.from(now.plusSeconds(PROCESSING_RECOVERY_COOLDOWN_SECONDS));
+            jdbc.update("""
+                    UPDATE media_request_outbox
+                       SET status='PENDING', available_at=?, lease_owner=NULL, lease_until=NULL,
+                           processing_recovery_lease_hash=?, processing_recovery_next_at=?
+                     WHERE job_id=?
+                       AND status='PUBLISHED'
+                       AND (
+                           processing_recovery_next_at IS NULL
+                           OR processing_recovery_next_at<=?
+                           OR processing_recovery_lease_hash<>?
+                           OR (processing_recovery_lease_hash IS NULL AND ? IS NOT NULL)
+                           OR (processing_recovery_lease_hash IS NOT NULL AND ? IS NULL)
+                       )
+                    """, Timestamp.from(now), leaseHash, nextAt, jobId,
+                    Timestamp.from(now), leaseHash, leaseHash, leaseHash);
+        }
         jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?", Timestamp.from(now), jobId);
     }
 

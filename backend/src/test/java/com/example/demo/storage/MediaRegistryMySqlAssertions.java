@@ -79,6 +79,18 @@ public final class MediaRegistryMySqlAssertions {
         assertColumn(connection, "media_request_outbox", "lease_owner", "varchar", true);
         assertColumn(connection, "media_request_outbox", "lease_until", "timestamp", true);
         assertColumn(connection, "media_request_outbox", "last_error", "varchar", true);
+        assertColumn(connection, "media_request_outbox", "processing_recovery_lease_hash", "varchar", true);
+        assertThat(longValue(connection, "SELECT character_maximum_length FROM information_schema.columns "
+                + "WHERE table_schema=DATABASE() AND table_name='media_request_outbox' "
+                + "AND column_name='processing_recovery_lease_hash'"))
+                .as("media_request_outbox.processing_recovery_lease_hash length")
+                .isEqualTo(64);
+        assertColumn(connection, "media_request_outbox", "processing_recovery_next_at", "timestamp", true);
+        assertThat(longValue(connection, "SELECT datetime_precision FROM information_schema.columns "
+                + "WHERE table_schema=DATABASE() AND table_name='media_request_outbox' "
+                + "AND column_name='processing_recovery_next_at'"))
+                .as("media_request_outbox.processing_recovery_next_at precision")
+                .isEqualTo(6);
 
         assertIndex(connection, "media_asset", "PRIMARY", true, "asset_id");
         assertIndex(connection, "media_asset", "uk_media_asset_provider_object_key", true,
@@ -243,16 +255,54 @@ public final class MediaRegistryMySqlAssertions {
             connection.setAutoCommit(true);
         }
 
-        assertThat(count(connection, "SELECT COUNT(*) FROM media_asset"))
+        assertThat(count(connection, "SELECT COUNT(*) FROM media_asset WHERE asset_id=?", assetId))
                 .as("media asset fixtures are rolled back")
                 .isZero();
-        assertThat(count(connection, "SELECT COUNT(*) FROM media_processing_job"))
+        assertThat(count(connection, "SELECT COUNT(*) FROM media_processing_job WHERE job_id=?", jobId))
                 .as("media processing job fixtures are rolled back")
                 .isZero();
-        assertThat(count(connection, "SELECT COUNT(*) FROM media_request_outbox"))
+        assertThat(count(connection, "SELECT COUNT(*) FROM media_request_outbox WHERE event_id=?", eventId))
                 .as("media request outbox fixtures are rolled back")
                 .isZero();
     }
+
+    /**
+     * Inserts a valid published media recovery fixture with deterministic delivery state for upgrade tests.
+     * The caller owns the transaction and may roll the fixture back when the assertions are complete.
+     */
+    public static MediaRecoveryFixture insertPublishedMediaRecoveryFixture(Connection connection, int attempts,
+                                                                            String availableAt) throws SQLException {
+        if (attempts < 0) {
+            throw new IllegalArgumentException("attempts must be non-negative");
+        }
+        if (availableAt == null || !availableAt.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{6}")) {
+            throw new IllegalArgumentException("availableAt must contain six fractional-second digits");
+        }
+
+        String assetId = UUID.randomUUID().toString();
+        String assetObjectKey = "upgrade-media-recovery-" + UUID.randomUUID();
+        String jobId = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
+        insertMediaAsset(connection, assetId, "local", assetObjectKey, "image/png", 128,
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "READY", "NOT_REQUESTED");
+        insertMediaJob(connection, jobId, assetId, 1, "thumbnail", "processor-1", "PENDING", 0);
+        insertMediaRequestOutbox(connection, eventId, assetId, jobId, 1,
+                "thumbnail", "processor-1", "PUBLISHED");
+        try (PreparedStatement statement = connection.prepareStatement(
+                "UPDATE media_request_outbox SET attempts=?,available_at=CAST(? AS DATETIME(6)) WHERE event_id=?")) {
+            statement.setInt(1, attempts);
+            statement.setString(2, availableAt);
+            statement.setString(3, eventId);
+            if (statement.executeUpdate() != 1) {
+                throw new SQLException("The media recovery fixture did not update its outbox row");
+            }
+        }
+        return new MediaRecoveryFixture(assetId, jobId, eventId, attempts, availableAt);
+    }
+
+    public record MediaRecoveryFixture(String assetId, String jobId, String eventId, int attempts,
+                                       String availableAt) {}
 
     private static void assertTable(Connection connection, String tableName) throws SQLException {
         assertThat(count(connection, "SELECT COUNT(*) FROM information_schema.tables "
