@@ -13,5 +13,6 @@ public interface ConnectedAccountsService {
 
     Long findUserIdByExternalAccount(String provider, String externalId);
 
+    /** Rejects unlinking until a supported alternative-login verification flow is available. */
     void disconnect(Long userId, String provider);
 }

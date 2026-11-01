@@ -3,6 +3,7 @@ package com.example.demo.user.connected.service.mock;
 import com.example.demo.user.connected.dto.ConnectedAccountDto;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -35,17 +36,19 @@ class InMemoryConnectedAccountsServiceTest {
     }
 
     @Test
-    void disconnect_removes_lookup_binding_and_marks_list_item_disconnected() {
+    void disconnect_is_rejected_and_preserves_lookup_and_list() {
         InMemoryConnectedAccountsService service = new InMemoryConnectedAccountsService();
         service.bindExternalAccount(42L, "github", "gh-42", "Alice");
 
-        service.disconnect(42L, "github");
+        assertThatThrownBy(() -> service.disconnect(42L, "github"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode().value()).isEqualTo(409));
 
-        assertThat(service.findUserIdByExternalAccount("github", "gh-42")).isNull();
+        assertThat(service.findUserIdByExternalAccount("github", "gh-42")).isEqualTo(42L);
         ConnectedAccountDto item = findItem(service.list(42L), "github");
         assertThat(item).isNotNull();
-        assertThat(item.isConnected()).isFalse();
-        assertThat(item.getDisplayName()).isNull();
+        assertThat(item.isConnected()).isTrue();
+        assertThat(item.getDisplayName()).isEqualTo("Alice");
     }
 
     @Test
@@ -82,7 +85,7 @@ class InMemoryConnectedAccountsServiceTest {
     }
 
     @Test
-    void conflicting_bind_preserves_other_owner_bindings_and_disconnect_releases_external_id() {
+    void conflicting_bind_and_rejected_disconnect_preserve_all_owners() {
         InMemoryConnectedAccountsService service = new InMemoryConnectedAccountsService();
         service.bindExternalAccount(100L, "github", "same-gh", "Alice");
         service.bindExternalAccount(100L, "google", "google-100", "Alice Google");
@@ -97,18 +100,20 @@ class InMemoryConnectedAccountsServiceTest {
         assertThat(service.findUserIdByExternalAccount("github", "bob-old-gh")).isEqualTo(200L);
         assertThat(findItem(service.list(200L), "github").getDisplayName()).isEqualTo("Bob Before");
 
-        service.disconnect(100L, "github");
-        service.bindExternalAccount(200L, "github", "same-gh", "Bob");
+        assertThatThrownBy(() -> service.disconnect(100L, "github"))
+                .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> service.bindExternalAccount(200L, "github", "same-gh", "Bob"))
+                .isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(service.findUserIdByExternalAccount("github", "same-gh")).isEqualTo(200L);
-        assertThat(service.findUserIdByExternalAccount("github", "bob-old-gh")).isNull();
-        assertThat(findItem(service.list(100L), "github").isConnected()).isFalse();
+        assertThat(service.findUserIdByExternalAccount("github", "same-gh")).isEqualTo(100L);
+        assertThat(service.findUserIdByExternalAccount("github", "bob-old-gh")).isEqualTo(200L);
+        assertThat(findItem(service.list(100L), "github").isConnected()).isTrue();
         assertThat(findItem(service.list(100L), "google").isConnected()).isTrue();
-        assertThat(findItem(service.list(200L), "github").getDisplayName()).isEqualTo("Bob");
+        assertThat(findItem(service.list(200L), "github").getDisplayName()).isEqualTo("Bob Before");
     }
 
     @Test
-    void provider_and_external_id_normalization_is_used_by_lookup_list_and_disconnect() {
+    void provider_and_external_id_normalization_is_used_by_lookup_and_list() {
         InMemoryConnectedAccountsService service = new InMemoryConnectedAccountsService();
 
         service.bindExternalAccount(42L, "  GITHUB  ", "  gh-42  ", "Alice");
@@ -121,10 +126,11 @@ class InMemoryConnectedAccountsServiceTest {
         assertThat(githubItems).hasSize(1);
         assertThat(githubItems.get(0).isConnected()).isTrue();
 
-        service.disconnect(42L, " GITHUB ");
+        assertThatThrownBy(() -> service.disconnect(42L, " GITHUB "))
+                .isInstanceOf(ResponseStatusException.class);
 
-        assertThat(service.findUserIdByExternalAccount("github", "gh-42")).isNull();
-        assertThat(findItem(service.list(42L), "github").isConnected()).isFalse();
+        assertThat(service.findUserIdByExternalAccount("github", "gh-42")).isEqualTo(42L);
+        assertThat(findItem(service.list(42L), "github").isConnected()).isTrue();
     }
 
     @Test

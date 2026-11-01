@@ -60,10 +60,13 @@ class PersistentConnectedAccountsServiceTest {
             Locale.setDefault(Locale.forLanguageTag("tr-TR"));
             service.bindExternalAccount(42L, " GITHUB ", "external", "name");
             service.findUserIdByExternalAccount(" GITHUB ", "external");
-            service.disconnect(42L, " GITHUB ");
+            assertThatThrownBy(() -> service.disconnect(42L, " GITHUB "))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode().value()).isEqualTo(409));
             verify(repository).findByUserIdAndProvider(42L, "github");
+            verify(repository).save(any(UserConnectedAccount.class));
             verify(repository).findByProviderAndExternalId("github", "external");
-            verify(repository).deleteByUserIdAndProvider(42L, "github");
+            verifyNoMoreInteractions(repository);
         } finally {
             Locale.setDefault(previous);
         }

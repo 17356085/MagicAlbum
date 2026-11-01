@@ -86,23 +86,8 @@ public class InMemoryConnectedAccountsService implements ConnectedAccountsServic
     }
 
     @Override
-    public synchronized void disconnect(Long userId, String provider) {
-        Objects.requireNonNull(userId, "userId");
-        Map<String, Binding> map = store.get(userId);
-        if (map == null) {
-            return;
-        }
-        String normalizedProvider = normalizeProvider(provider);
-        Binding previous = map.remove(normalizedProvider);
-        if (previous != null) {
-            ExternalAccountKey key = new ExternalAccountKey(normalizedProvider, previous.externalId());
-            if (userId.equals(externalAccountIndex.get(key))) {
-                externalAccountIndex.remove(key);
-            }
-        }
-        if (map.isEmpty()) {
-            store.remove(userId);
-        }
+    public void disconnect(Long userId, String provider) {
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "暂不支持解绑第三方账号");
     }
 
     private ConnectedAccountDto toDto(String provider, Binding binding) {

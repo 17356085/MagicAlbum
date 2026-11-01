@@ -10,8 +10,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
@@ -27,12 +29,14 @@ class ConnectedAccountsPersistenceIntegrationTest {
     }
 
     @Test
-    void binding_and_disconnect_are_persisted_without_a_caller_transaction() {
+    void binding_is_persisted_and_rejected_disconnect_preserves_it() {
         accounts.bindExternalAccount(4200101L, "github", "connected-persist-a", "name");
         accounts.bindExternalAccount(4200102L, "github", "connected-persist-b", "other");
         assertThat(repository.findByProviderAndExternalId("github", "connected-persist-a")).isPresent();
-        accounts.disconnect(4200101L, "github");
-        assertThat(repository.findByProviderAndExternalId("github", "connected-persist-a")).isEmpty();
+        assertThatThrownBy(() -> accounts.disconnect(4200101L, "github"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode().value()).isEqualTo(409));
+        assertThat(repository.findByProviderAndExternalId("github", "connected-persist-a")).isPresent();
         assertThat(repository.findByProviderAndExternalId("github", "connected-persist-b")).isPresent();
     }
 

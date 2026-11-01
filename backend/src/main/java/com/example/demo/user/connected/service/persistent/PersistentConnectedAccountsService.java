@@ -66,9 +66,10 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
     }
 
     @Override
-    @Transactional
     public void disconnect(Long userId, String provider) {
-        repository.deleteByUserIdAndProvider(userId, normalizeProvider(provider));
+        // The product has no verified alternative-login flow yet. Removing a
+        // binding can therefore leave an OAuth-only account inaccessible.
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "暂不支持解绑第三方账号");
     }
 
     private List<ConnectedAccountDto> listFromRepository(Long userId) {

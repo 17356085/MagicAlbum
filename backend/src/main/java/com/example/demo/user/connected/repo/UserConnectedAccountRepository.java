@@ -12,6 +12,4 @@ public interface UserConnectedAccountRepository extends JpaRepository<UserConnec
     Optional<UserConnectedAccount> findByUserIdAndProvider(Long userId, String provider);
 
     Optional<UserConnectedAccount> findByProviderAndExternalId(String provider, String externalId);
-
-    void deleteByUserIdAndProvider(Long userId, String provider);
 }
