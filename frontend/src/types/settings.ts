@@ -8,7 +8,7 @@ export interface PasswordUpdatePayload {
 export interface BasicInfoPayload {
   username: string
   phone: string | null
-  email: string
+  email: string | null
 }
 
 /** Canonical response returned by GET/PATCH /users/me/basic. */

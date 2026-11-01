@@ -65,8 +65,7 @@ class OAuthUserProvisioningServiceTest {
         User provisioned = provisioning.resolveOrCreateGoogleUser(profile);
 
         assertThat(provisioned.getId()).isEqualTo(9001L);
-        assertThat(provisioned.getEmail()).endsWith("@oauth.invalid");
-        assertThat(provisioned.getEmail()).isNotEqualTo("victim@example.com");
+        assertThat(provisioned.getEmail()).isNull();
         assertThat(provisioned.isEmailVerified()).isFalse();
         assertThat(provisioned.isPhoneVerified()).isFalse();
         assertThat(provisioned.getPhone()).isNull();
@@ -109,9 +108,7 @@ class OAuthUserProvisioningServiceTest {
         User provisioned = provisioning.resolveOrCreateGithubUser(profile);
 
         assertThat(provisioned.getId()).isEqualTo(9001L);
-        assertThat(provisioned.getEmail()).endsWith("@oauth.invalid");
-        assertThat(provisioned.getEmail()).isNotEqualTo("victim@example.com");
-        assertThat(provisioned.getEmail()).isNotEqualTo("github_12345@oauth.local");
+        assertThat(provisioned.getEmail()).isNull();
         assertThat(provisioned.isEmailVerified()).isFalse();
         assertThat(provisioned.isPhoneVerified()).isFalse();
         assertThat(provisioned.getPhone()).isNull();
@@ -138,14 +135,14 @@ class OAuthUserProvisioningServiceTest {
     }
 
     @Test
-    void missingAppleEmailUsesSyntheticUnverifiedContact() {
+    void missingAppleEmailRemainsUnassigned() {
         AppleIdTokenClaims claims = new AppleIdTokenClaims();
         claims.setSub("apple-no-email");
         claims.setEmailVerified(true);
 
         User provisioned = provisioning.resolveOrCreateAppleUser(claims);
 
-        assertThat(provisioned.getEmail()).endsWith("@oauth.invalid");
+        assertThat(provisioned.getEmail()).isNull();
         assertThat(provisioned.isEmailVerified()).isFalse();
         assertThat(provisioned.isPhoneVerified()).isFalse();
         assertThat(provisioned.getPhone()).isNull();

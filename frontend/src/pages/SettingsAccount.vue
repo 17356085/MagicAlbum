@@ -139,7 +139,7 @@ function validateBasicInfoResponse(value: unknown): BasicInfoResponse {
   const hasOwn = (field: string): boolean => Object.prototype.hasOwnProperty.call(record, field)
   if (!hasOwn('username') || typeof record.username !== 'string' || !record.username.trim()
     || !hasOwn('phone') || (record.phone !== null && (typeof record.phone !== 'string' || !record.phone.trim()))
-    || !hasOwn('email') || typeof record.email !== 'string' || !record.email.trim()) {
+    || !hasOwn('email') || (record.email !== null && (typeof record.email !== 'string' || !record.email.trim()))) {
     throw new BasicInfoResponseError()
   }
 
@@ -219,6 +219,7 @@ function passwordHasValue(): boolean {
 
 const accountDirty = computed(() => accountSnapshot(profile) !== profileBaseline.value || passwordHasValue())
 const baselineHasPhone = computed(() => Boolean((JSON.parse(profileBaseline.value) as AccountForm).phone.trim()))
+const baselineHasEmail = computed(() => Boolean((JSON.parse(profileBaseline.value) as AccountForm).email.trim()))
 const contactChanged = computed(() => {
   if (!accountLoaded.value) return false
   const baseline = JSON.parse(profileBaseline.value) as AccountForm
@@ -396,7 +397,7 @@ async function reloadProfile(): Promise<void> {
     confirmedOwnerKey = idKey(response.id)
     profile.username = response.username
     profile.phone = response.phone ?? ''
-    profile.email = response.email
+    profile.email = response.email ?? ''
     profileBaseline.value = accountSnapshot(normalizeAccount(response))
     accountLoaded.value = true
     clearErrors()
@@ -422,9 +423,9 @@ function validateProfile(): boolean {
   const email = String(profile.email || '').trim()
   if (!phone && baselineHasPhone.value) { errors.phone = '请输入手机号'; ok = false }
   else if (phone && !isValidPhone(phone)) { errors.phone = '请输入有效手机号（1 开头的 11 位）'; ok = false }
-  if (!email) { errors.email = '请输入邮箱'; ok = false }
+  if (!email && baselineHasEmail.value) { errors.email = '请输入邮箱'; ok = false }
   else if (email.length > 255) { errors.email = '邮箱长度不能超过 255 个字符'; ok = false }
-  else if (!isValidEmail(email)) { errors.email = '邮箱格式不正确'; ok = false }
+  else if (email && !isValidEmail(email)) { errors.email = '邮箱格式不正确'; ok = false }
   return ok
 }
 
@@ -447,7 +448,7 @@ async function onSaveProfile(): Promise<void> {
   profileMessage.value = ''
   profileMessageError.value = false
   try {
-    const data = await updateMyBasicInfo({ ...submitted, phone: submitted.phone || null })
+    const data = await updateMyBasicInfo({ ...submitted, phone: submitted.phone || null, email: submitted.email || null })
     if (!isCurrentOperation(context, sequence, profileSaveSeq)) return
     assertResponseOwner(data)
     const server = validateBasicInfoResponse(data)
@@ -455,7 +456,7 @@ async function onSaveProfile(): Promise<void> {
     const current = normalizeAccount(profile)
     profile.username = current.username !== submitted.username ? current.username : server.username
     profile.phone = current.phone !== submitted.phone ? current.phone : (server.phone ?? '')
-    profile.email = current.email !== submitted.email ? current.email : server.email
+    profile.email = current.email !== submitted.email ? current.email : (server.email ?? '')
     profileBaseline.value = accountSnapshot(normalizeAccount(server))
     const confirmedOwnerId = currentOwnerId()
     const ownerId = confirmedOwnerId !== null
@@ -602,8 +603,8 @@ onBeforeUnmount(() => {
           <p v-if="errors.phone" id="settings-account-phone-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.phone }}</p>
         </div>
         <div>
-          <label for="settings-account-email" class="mb-1 block text-sm font-medium">电子邮箱</label>
-          <input id="settings-account-email" v-model.trim="profile.email" type="email" required placeholder="name@example.com"
+          <label for="settings-account-email" class="mb-1 block text-sm font-medium">电子邮箱{{ baselineHasEmail ? '' : '（可稍后添加）' }}</label>
+          <input id="settings-account-email" v-model.trim="profile.email" type="email" :required="baselineHasEmail" placeholder="name@example.com"
                  :aria-invalid="errors.email ? 'true' : 'false'" :aria-describedby="errors.email ? 'settings-account-email-error' : undefined"
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.email" id="settings-account-email-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.email }}</p>

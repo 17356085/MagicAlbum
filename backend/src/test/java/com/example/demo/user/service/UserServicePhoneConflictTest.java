@@ -167,6 +167,42 @@ class UserServicePhoneConflictTest {
         verify(userRepository).findByPhone(PHONE);
     }
 
+    @Test
+    void basic_info_update_allows_an_existing_missing_email_without_looking_up_null() {
+        User current = user(7L, "current_user", null, PHONE);
+        current.setPhoneVerified(true);
+        BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
+        request.setUsername("renamed_user");
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var updated = service.updateBasicInfo(7L, request);
+
+        assertThat(updated.getEmail()).isNull();
+        assertThat(current.isPhoneVerified()).isTrue();
+        assertThat(current.isEmailVerified()).isFalse();
+        verify(userRepository, never()).findByEmail(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void basic_info_update_can_add_an_unverified_email_to_an_account_without_one() {
+        User current = user(7L, "current_user", null, PHONE);
+        current.setPhoneVerified(true);
+        BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
+        request.setEmail("new@example.test");
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var updated = service.updateBasicInfo(7L, request);
+
+        assertThat(updated.getEmail()).isEqualTo("new@example.test");
+        assertThat(current.isPhoneVerified()).isTrue();
+        assertThat(current.isEmailVerified()).isFalse();
+        verify(userRepository).findByEmail("new@example.test");
+    }
+
     private static User user(Long id, String username, String email, String phone) {
         User user = new User();
         user.setId(id);

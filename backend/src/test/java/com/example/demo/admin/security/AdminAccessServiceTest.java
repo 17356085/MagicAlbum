@@ -148,6 +148,30 @@ class AdminAccessServiceTest {
     }
 
     @Test
+    void explicit_id_and_email_reject_a_user_with_no_email() {
+        when(userRepository.findById(42L)).thenReturn(Optional.of(user(42L, null, false)));
+        AdminAccessService service = new AdminAccessService(
+                userRepository, governanceService, "owner@example.com", 42L);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, service::resolveConfiguredAdmin);
+
+        assertTrue(failure.getMessage().contains("selected user account"));
+        verifyNoInteractions(governanceService);
+    }
+
+    @Test
+    void explicit_id_without_configured_email_can_select_a_user_without_email() {
+        when(userRepository.findById(42L)).thenReturn(Optional.of(user(42L, null, false)));
+        when(governanceService.isAdmin(42L)).thenReturn(true);
+        AdminAccessService service = new AdminAccessService(userRepository, governanceService, "", 42L);
+
+        service.resolveConfiguredAdmin();
+
+        verify(governanceService).bootstrapAdmin(42L);
+        assertTrue(service.isAdmin(42L));
+    }
+
+    @Test
     void negative_explicit_id_fails_before_any_lookup_or_bootstrap() {
         AdminAccessService service = new AdminAccessService(
                 userRepository, governanceService, "", -1L);

@@ -358,7 +358,6 @@ class CognitoOtpAuthServiceTest {
 
         when(userRepository.findByPhone("13800138000")).thenReturn(Optional.empty());
         when(userRepository.existsByUsername("13800138000_ph")).thenReturn(false);
-        when(userRepository.existsByEmail(any())).thenReturn(false);
         when(passwordEncoder.encode(any())).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User user = invocation.getArgument(0);
@@ -392,12 +391,15 @@ class CognitoOtpAuthServiceTest {
         assertEquals("phone-project-jwt", loginResponse.getAccessToken());
         assertEquals("13800138000_ph", loginResponse.getUser().getUsername());
         assertEquals("13800138000", loginResponse.getUser().getPhone());
+        assertNull(loginResponse.getUser().getEmail());
         assertEquals(601L, loginResponse.getUser().getId());
 
         var created = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(created.capture());
         assertFalse(created.getValue().isEmailVerified());
         assertTrue(created.getValue().isPhoneVerified());
+        assertNull(created.getValue().getEmail());
+        verify(userRepository, never()).existsByEmail(anyString());
     }
 
     @Test

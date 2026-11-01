@@ -45,8 +45,10 @@ class AuthOAuthCodeExchangeTest {
                 () -> service.exchangeAuthorizationCode(code, "a".repeat(43)));
         assertEquals(400, wrong.getStatusCode().value());
         org.mockito.Mockito.verifyNoInteractions(tokens);
-        assertEquals("owned-jwt", service.exchangeAuthorizationCode(code,
-                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk").getAccessToken());
+        LoginResponse response = service.exchangeAuthorizationCode(code, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+        assertEquals("owned-jwt", response.getAccessToken());
+        assertNull(response.getUser().getEmail());
+        assertNull(response.getUser().getPhone());
     }
 
     @Test
@@ -96,12 +98,14 @@ class AuthOAuthCodeExchangeTest {
         user.setId(77L);
         user.setUsername("oauth-user");
         user.setPhone("13800138000");
+        user.setEmail("existing@example.test");
         String code = queryParameter(service.buildSuccessRedirect(OAuthProvider.github, user,
                 "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"), "code");
 
         LoginResponse response = service.exchangeAuthorizationCode(code, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
 
         assertEquals("13800138000", response.getUser().getPhone());
+        assertEquals("existing@example.test", response.getUser().getEmail());
     }
 
     @Test
@@ -130,6 +134,7 @@ class AuthOAuthCodeExchangeTest {
 
         assertEquals("owned-jwt", response.getAccessToken());
         assertNull(response.getUser().getPhone());
+        assertNull(response.getUser().getEmail());
     }
 
     private AuthOAuthService service(JwtTokenProvider jwtTokenProvider) {

@@ -161,6 +161,66 @@ describe('SettingsAccount', () => {
     expect(wrapper.get('#settings-account-phone-error').text()).toContain('请输入手机号')
   })
 
+  it('loads an account without an email and saves another field without inventing one', async () => {
+    const noEmail: BasicInfoResponse = { ...account, email: null }
+    getMyBasicInfoMock.mockResolvedValueOnce(noEmail)
+    updateMyBasicInfoMock.mockResolvedValueOnce({ ...noEmail, username: 'renamed_user' })
+    const { wrapper, auth } = createWrapper()
+    await flushPromises()
+
+    expect((wrapper.get('#settings-account-email').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#settings-account-email').element as HTMLInputElement).required).toBe(false)
+    await wrapper.get('#settings-account-username').setValue('renamed_user')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: 'renamed_user', phone: account.phone, email: null })
+    expect(wrapper.get('[role="status"]').text()).toContain('保存成功')
+    expect(auth.user?.email).toBeNull()
+  })
+
+  it('can add an email to an account that did not have one', async () => {
+    getMyBasicInfoMock.mockResolvedValueOnce({ ...account, email: null })
+    updateMyBasicInfoMock.mockResolvedValueOnce({ ...account, email: 'new@example.test' })
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    await wrapper.get('#settings-account-email').setValue('new@example.test')
+    expect(wrapper.text()).toContain('新的邮箱或手机号暂不能用于验证码登录')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: account.username, phone: account.phone, email: 'new@example.test' })
+    expect((wrapper.get('#settings-account-email').element as HTMLInputElement).value).toBe('new@example.test')
+  })
+
+  it('does not silently clear a previously supplied email', async () => {
+    const { wrapper } = createWrapper()
+    await flushPromises()
+    await wrapper.get('#settings-account-email').setValue('')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+
+    expect(updateMyBasicInfoMock).not.toHaveBeenCalled()
+    expect(wrapper.get('#settings-account-email-error').text()).toContain('请输入邮箱')
+  })
+
+  it('supports an OAuth account with neither contact provided', async () => {
+    const noContacts: BasicInfoResponse = { ...account, phone: null, email: null }
+    getMyBasicInfoMock.mockResolvedValueOnce(noContacts)
+    updateMyBasicInfoMock.mockResolvedValueOnce({ ...noContacts, username: 'renamed_user' })
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('手机号（可稍后添加）')
+    expect(wrapper.text()).toContain('电子邮箱（可稍后添加）')
+    await wrapper.get('#settings-account-username').setValue('renamed_user')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: 'renamed_user', phone: null, email: null })
+    expect(wrapper.get('[role="status"]').text()).toContain('保存成功')
+  })
+
   it.each(malformedAccountResponses)('keeps the account unloaded for a malformed GET response (%s)', async (_label, response) => {
     getMyBasicInfoMock.mockResolvedValueOnce(response as BasicInfoResponse)
     const { wrapper } = createWrapper()

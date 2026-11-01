@@ -144,7 +144,6 @@ public class OAuthUserProvisioningService {
     private User createUserFromGithub(GithubUserProfile githubUser) {
         User user = new User();
         user.setUsername(resolveUniqueUsername(githubUser));
-        user.setEmail(createUniqueSyntheticOAuthEmail("github"));
         user.setEmailVerified(false);
         user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
@@ -154,9 +153,7 @@ public class OAuthUserProvisioningService {
     private User createUserFromGoogle(GoogleUserProfile googleUser, boolean emailVerified) {
         User user = new User();
         user.setUsername(resolveUniqueUsername(googleUser));
-        user.setEmail(emailVerified
-                ? normalizeProviderEmail(googleUser.getEmail())
-                : createUniqueSyntheticOAuthEmail("google"));
+        user.setEmail(emailVerified ? normalizeProviderEmail(googleUser.getEmail()) : null);
         user.setEmailVerified(emailVerified);
         user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
@@ -166,9 +163,7 @@ public class OAuthUserProvisioningService {
     private User createUserFromApple(AppleIdTokenClaims appleUser, boolean emailVerified) {
         User user = new User();
         user.setUsername(resolveUniqueUsername(appleUser));
-        user.setEmail(emailVerified
-                ? normalizeProviderEmail(appleUser.getEmail())
-                : createUniqueSyntheticOAuthEmail("apple"));
+        user.setEmail(emailVerified ? normalizeProviderEmail(appleUser.getEmail()) : null);
         user.setEmailVerified(emailVerified);
         user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
@@ -280,18 +275,6 @@ public class OAuthUserProvisioningService {
             return true;
         }
         return userRepository.findByEmail(normalized).isPresent() || userRepository.existsByEmail(normalized);
-    }
-
-    private String createUniqueSyntheticOAuthEmail(String provider) {
-        String normalizedProvider = trimToEmpty(provider).toLowerCase(Locale.ROOT);
-        for (int attempt = 0; attempt < 16; attempt++) {
-            String candidate = "oauth-" + normalizedProvider + "-"
-                    + UUID.randomUUID().toString().replace("-", "") + "@oauth.invalid";
-            if (!userRepository.existsByEmail(candidate)) {
-                return candidate;
-            }
-        }
-        throw new IllegalStateException("无法生成唯一的 OAuth 合成邮箱");
     }
 
     private boolean isVerifiedEmail(Boolean verified, String email) {

@@ -38,6 +38,33 @@ async function submitPassword(): Promise<void> {
 }
 
 describe('account form with the real API client and auth store', () => {
+  it('preserves two absent contacts in the serialized PATCH and auth state', async () => {
+    let patchPayload: unknown
+    api.defaults.adapter = async config => {
+      expect(config.headers.get('Authorization')).toBe('Bearer account-token')
+      if (config.method === 'get') {
+        return { config, data: { ...account, phone: null, email: null }, headers: {}, status: 200, statusText: 'OK' }
+      }
+      expect(config.method).toBe('patch')
+      patchPayload = typeof config.data === 'string' ? JSON.parse(config.data) : config.data
+      return {
+        config, data: { ...account, username: 'saved_user', phone: null, email: null },
+        headers: {}, status: 200, statusText: 'OK',
+      }
+    }
+
+    wrapper = mount(SettingsAccount)
+    await flushPromises()
+    await wrapper.get('#settings-account-username').setValue('saved_user')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(patchPayload).toEqual({ username: 'saved_user', phone: null, email: null })
+    expect(wrapper.text()).toContain('保存成功')
+    expect(useAuthStore().user?.phone).toBeNull()
+    expect(useAuthStore().user?.email).toBeNull()
+  })
+
   it('sends an explicit null phone through the API client for an account without one', async () => {
     let patchPayload: unknown
     api.defaults.adapter = async config => {

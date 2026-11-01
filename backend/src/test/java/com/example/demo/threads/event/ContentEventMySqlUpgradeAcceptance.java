@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261101.2";
+    private static final String LATEST_MIGRATION_VERSION = "20261101.3";
     private static final int LEGACY_MEDIA_ATTEMPTS = 7;
     private static final String LEGACY_MEDIA_AVAILABLE_AT = "2026-01-02 03:04:05.123456";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
@@ -92,6 +92,15 @@ class ContentEventMySqlUpgradeAcceptance {
             assertPublishedMediaRecovery(connection, mediaRecoveryFixture, true);
             insertPhoneFixture(connection, "legacy-unverified-phone", "19821864416");
 
+            Flyway emailBaseline = flyway(url, username, password).target("20261101.2").load();
+            emailBaseline.migrate();
+            emailBaseline.validate();
+            assertFlywayVersion(connection, "20261101.2");
+            assertThat(count(connection, "SELECT COUNT(*) FROM information_schema.columns "
+                    + "WHERE table_schema=DATABASE() AND table_name='users' "
+                    + "AND column_name='email' AND is_nullable='NO'")).isEqualTo(1);
+            insertContactFixture(connection, "legacy-unverified-email", "phone_13800138001@otp.local", "13800138001");
+
             Flyway complete = flyway(url, username, password).load();
             complete.migrate();
             complete.validate();
@@ -108,7 +117,12 @@ class ContentEventMySqlUpgradeAcceptance {
                     + "AND phone=? AND phone_verified=FALSE", "legacy-unverified-phone", "19821864416"))
                     .as("ambiguous historical numbers are not automatically rewritten")
                     .isEqualTo(1);
+            assertThat(count(connection, "SELECT COUNT(*) FROM users WHERE username=? "
+                    + "AND email=? AND email_verified=FALSE", "legacy-unverified-email", "phone_13800138001@otp.local"))
+                    .as("ambiguous historical email addresses are not automatically rewritten")
+                    .isEqualTo(1);
             assertNullablePhoneUniqueness(connection);
+            assertNullableEmailUniqueness(connection);
             assertThat(longValue(connection,
                     "SELECT content_version FROM threads WHERE id=?", legacyThreadId))
                     .as("legacy thread content_version")
@@ -181,10 +195,40 @@ class ContentEventMySqlUpgradeAcceptance {
     }
 
     private static void insertPhoneFixture(Connection connection, String username, String phone) throws SQLException {
+        insertContactFixture(connection, username, username + "@example.test", phone);
+    }
+
+    private static void assertNullableEmailUniqueness(Connection connection) throws SQLException {
+        assertThat(count(connection, "SELECT COUNT(*) FROM information_schema.columns "
+                + "WHERE table_schema=DATABASE() AND table_name='users' "
+                + "AND column_name='email' AND is_nullable='YES'"))
+                .as("missing email addresses are stored as NULL")
+                .isEqualTo(1);
+        boolean previousAutoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            String suffix = UUID.randomUUID().toString().replace("-", "");
+            insertContactFixture(connection, "email-null-a-" + suffix, null, null);
+            insertContactFixture(connection, "email-null-b-" + suffix, null, null);
+            assertThat(count(connection, "SELECT COUNT(*) FROM users "
+                    + "WHERE username IN (?,?) AND email IS NULL AND phone IS NULL",
+                    "email-null-a-" + suffix, "email-null-b-" + suffix)).isEqualTo(2);
+            assertThatThrownBy(() -> insertContactFixture(connection, "email-duplicate-" + suffix,
+                    "legacy-content-author@example.test", null))
+                    .isInstanceOf(SQLException.class)
+                    .satisfies(error -> assertThat(((SQLException) error).getSQLState()).startsWith("23"));
+        } finally {
+            connection.rollback();
+            connection.setAutoCommit(previousAutoCommit);
+        }
+    }
+
+    private static void insertContactFixture(Connection connection, String username, String email, String phone)
+            throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO users (username,email,phone,password_hash) VALUES (?,?,?,?)")) {
             statement.setString(1, username);
-            statement.setString(2, username + "@example.test");
+            statement.setString(2, email);
             statement.setString(3, phone);
             statement.setString(4, "test-only-hash");
             statement.executeUpdate();

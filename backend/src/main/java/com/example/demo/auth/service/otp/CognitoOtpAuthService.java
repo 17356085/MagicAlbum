@@ -280,7 +280,6 @@ public class CognitoOtpAuthService {
         User user = new User();
         user.setUsername(resolveUniqueUsername(phone));
         user.setPhone(phone);
-        user.setEmail(generateSyntheticEmail(phone));
         user.setPasswordHash(passwordEncoder.encode("cognito_phone_otp_" + UUID.randomUUID()));
         user.setEmailVerified(false);
         user.setPhoneVerified(true);
@@ -335,20 +334,6 @@ public class CognitoOtpAuthService {
         int seq = 1;
         while (userRepository.existsByUsername(candidate)) {
             candidate = (base.length() > 42 ? base.substring(0, 42) : base) + "_" + seq++;
-        }
-        return candidate;
-    }
-
-    private String generateSyntheticEmail(String seed) {
-        String email = "phone_" + trimToEmpty(seed) + "@otp.local";
-        if (!userRepository.existsByEmail(email)) {
-            return email;
-        }
-        long numeric = Math.abs(trimToEmpty(seed).hashCode());
-        String candidate = "phone_" + numeric + "@otp.local";
-        while (userRepository.existsByEmail(candidate)) {
-            numeric++;
-            candidate = "phone_" + numeric + "@otp.local";
         }
         return candidate;
     }

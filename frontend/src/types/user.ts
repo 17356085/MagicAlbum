@@ -14,7 +14,7 @@ export interface User {
   userId?: Id
   username: string
   nickname?: string
-  email?: string
+  email?: string | null
   phone?: string | null
   avatarUrl?: string
   bio?: string

@@ -303,7 +303,7 @@ public class AuthOAuthService {
                 provider,
                 user.getId(),
                 trimToEmpty(user.getUsername()),
-                trimToEmpty(user.getEmail()),
+                user.getEmail() == null ? null : user.getEmail().trim(),
                 user.getPhone() == null ? null : user.getPhone().trim(),
                 user.getCreatedAt(),
                 codeChallenge,
