@@ -884,4 +884,115 @@ describe('AuthLoginForm async lifecycle', () => {
 
     expect(authMocks.store.invalidateAuthOperations).not.toHaveBeenCalled()
   })
+
+  it('trims identity input values before the parent submits them', async () => {
+    const wrapper = mountLogin()
+    await wrapper.get('#auth-login-phone').setValue(' 13800000000 ')
+    await wrapper.get('#auth-login-password').setValue('Password1')
+
+    expect((wrapper.get('#auth-login-phone').element as HTMLInputElement).value).toBe('13800000000')
+
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    expect(authMocks.store.loginWithPhonePassword).toHaveBeenCalledWith(expect.objectContaining({
+      phone: '13800000000',
+    }))
+    wrapper.unmount()
+  })
+
+  it('defers a composing identity input update until composition ends, then trims it', async () => {
+    const wrapper = mountLogin()
+    const input = wrapper.get('#auth-login-phone')
+    const element = input.element as HTMLInputElement
+
+    await input.trigger('compositionstart')
+    element.value = ' 13800000000 '
+    await input.trigger('input')
+    expect(element.value).toBe(' 13800000000 ')
+
+    await input.trigger('compositionend')
+    await settle()
+    expect(element.value).toBe('13800000000')
+
+    element.value = ' 13800000000 '
+    await input.trigger('change')
+    expect(element.value).toBe('13800000000')
+
+    wrapper.unmount()
+  })
+
+  it('keeps one identity field mounted with its original mode-specific contract', async () => {
+    const wrapper = mountLogin()
+    const phoneInput = wrapper.get('#auth-login-phone').element
+
+    expect((phoneInput as HTMLInputElement).type).toBe('tel')
+    expect((phoneInput as HTMLInputElement).placeholder).toBe('请输入手机号')
+    expect(wrapper.get('label[for="auth-login-phone"]').text()).toBe('手机号')
+    expect(wrapper.find('#auth-login-email').exists()).toBe(false)
+    expect(wrapper.find('#auth-login-phone-code').exists()).toBe(false)
+
+    await wrapper.findAll('button').find((button) => button.text() === '验证码登录')!.trigger('click')
+    expect(wrapper.find('#auth-login-phone').exists()).toBe(false)
+    expect(wrapper.find('#auth-login-phone-code').exists()).toBe(true)
+    expect((wrapper.get('#auth-login-phone-code').element as HTMLInputElement).type).toBe('tel')
+    expect((wrapper.get('#auth-login-phone-code').element as HTMLInputElement).placeholder).toBe('请输入手机号')
+    expect((phoneInput as HTMLInputElement).isConnected).toBe(false)
+
+    await wrapper.findAll('button').find((button) => button.text() === '邮箱验证码登录')!.trigger('click')
+    expect(wrapper.find('#auth-login-phone-code').exists()).toBe(false)
+    expect(wrapper.find('#auth-login-email').exists()).toBe(true)
+    expect((wrapper.get('#auth-login-email').element as HTMLInputElement).type).toBe('email')
+    expect((wrapper.get('#auth-login-email').element as HTMLInputElement).placeholder).toBe('name@example.com')
+    expect(wrapper.get('label[for="auth-login-email"]').text()).toBe('邮箱')
+
+    wrapper.unmount()
+  })
+
+  it.each([
+    {
+      mode: 'phone-password',
+      id: '#auth-login-phone',
+      errorId: 'auth-login-phone-error',
+      message: '请输入手机号',
+    },
+    {
+      mode: 'email-password',
+      id: '#auth-login-email',
+      errorId: 'auth-login-email-error',
+      message: '请输入邮箱',
+    },
+    {
+      mode: 'email-code',
+      id: '#auth-login-email',
+      errorId: 'auth-login-email-error',
+      message: '请输入邮箱',
+    },
+    {
+      mode: 'phone-code',
+      id: '#auth-login-phone-code',
+      errorId: 'auth-login-phone-error',
+      message: '请输入手机号',
+    },
+  ] as const)('associates $mode identity errors with the matching input', async ({ mode, id, errorId, message }) => {
+    const wrapper = mountLogin()
+    if (mode === 'email-password') {
+      await wrapper.findAll('button').find((button) => button.text() === '切换到邮箱登录')!.trigger('click')
+    } else if (mode === 'email-code') {
+      await useEmailCodeMode(wrapper)
+    } else if (mode === 'phone-code') {
+      await usePhoneCodeMode(wrapper)
+    }
+
+    await wrapper.get('form').trigger('submit')
+    await settle()
+
+    const input = wrapper.get(id)
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(input.attributes('aria-describedby')).toBe(errorId)
+    const error = wrapper.get(`#${errorId}`)
+    expect(error.attributes('role')).toBe('alert')
+    expect(error.text()).toBe(message)
+    wrapper.unmount()
+  })
 })

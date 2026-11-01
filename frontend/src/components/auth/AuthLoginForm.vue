@@ -6,47 +6,38 @@
       <span class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
     </div>
 
-    <div v-if="mode === 'phone-password'">
-      <label for="auth-login-phone" class="mb-1 block text-sm font-medium">手机号</label>
-      <input
-        v-model.trim="form.phone"
-        id="auth-login-phone"
-        type="tel"
-        placeholder="请输入手机号"
-        :aria-invalid="Boolean(errors.phone)"
-        :aria-describedby="errors.phone ? 'auth-login-phone-error' : undefined"
-        class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
-      />
-      <p v-if="errors.phone" id="auth-login-phone-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
-    </div>
+    <AuthLoginIdentityField
+      v-if="mode === 'phone-password'"
+      v-model="form.phone"
+      id="auth-login-phone"
+      error-id="auth-login-phone-error"
+      label="手机号"
+      type="tel"
+      placeholder="请输入手机号"
+      :error="errors.phone"
+    />
 
-    <div v-else-if="mode === 'email-password' || mode === 'email-code'">
-      <label for="auth-login-email" class="mb-1 block text-sm font-medium">邮箱</label>
-      <input
-        v-model.trim="form.email"
-        id="auth-login-email"
-        type="email"
-        placeholder="name@example.com"
-        :aria-invalid="Boolean(errors.email)"
-        :aria-describedby="errors.email ? 'auth-login-email-error' : undefined"
-        class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
-      />
-      <p v-if="errors.email" id="auth-login-email-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.email }}</p>
-    </div>
+    <AuthLoginIdentityField
+      v-else-if="mode === 'email-password' || mode === 'email-code'"
+      v-model="form.email"
+      id="auth-login-email"
+      error-id="auth-login-email-error"
+      label="邮箱"
+      type="email"
+      placeholder="name@example.com"
+      :error="errors.email"
+    />
 
-    <div v-else>
-      <label for="auth-login-phone-code" class="mb-1 block text-sm font-medium">手机号</label>
-      <input
-        v-model.trim="form.phone"
-        id="auth-login-phone-code"
-        type="tel"
-        placeholder="请输入手机号"
-        :aria-invalid="Boolean(errors.phone)"
-        :aria-describedby="errors.phone ? 'auth-login-phone-error' : undefined"
-        class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
-      />
-      <p v-if="errors.phone" id="auth-login-phone-error" role="alert" class="mt-1 text-xs text-red-600">{{ errors.phone }}</p>
-    </div>
+    <AuthLoginIdentityField
+      v-else
+      v-model="form.phone"
+      id="auth-login-phone-code"
+      error-id="auth-login-phone-error"
+      label="手机号"
+      type="tel"
+      placeholder="请输入手机号"
+      :error="errors.phone"
+    />
 
     <div v-if="mode === 'phone-password' || mode === 'email-password'">
       <label for="auth-login-password" class="mb-1 block text-sm font-medium">密码</label>
@@ -153,6 +144,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { isAuthOperationSuperseded, useAuthStore } from '@/stores/auth'
+import AuthLoginIdentityField from '@/components/auth/AuthLoginIdentityField.vue'
 import AuthVerifyBlock from '@/components/auth/AuthVerifyBlock.vue'
 import { isAuthVerifyEnabled, toVerifyPayload } from '@/services/authVerify'
 import { startEmailCodeLogin, startPhoneCodeLogin } from '@/api/auth'
