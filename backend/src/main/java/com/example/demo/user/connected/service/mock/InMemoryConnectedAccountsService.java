@@ -64,10 +64,7 @@ public class InMemoryConnectedAccountsService implements ConnectedAccountsServic
         Map<String, Binding> map = store.computeIfAbsent(userId, ignored -> new LinkedHashMap<>());
         Binding previous = map.get(normalizedProvider);
         if (previous != null && !previous.externalId().equals(normalizedExternalId)) {
-            ExternalAccountKey previousKey = new ExternalAccountKey(normalizedProvider, previous.externalId());
-            if (userId.equals(externalAccountIndex.get(previousKey))) {
-                externalAccountIndex.remove(previousKey);
-            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "该平台已关联其他账号");
         }
         map.put(normalizedProvider, new Binding(
                 normalizedExternalId,

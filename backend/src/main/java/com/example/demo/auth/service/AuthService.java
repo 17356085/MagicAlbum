@@ -6,43 +6,23 @@ import com.example.demo.auth.dto.LoginResponse;
 import com.example.demo.auth.service.otp.AuthVerifyService;
 import com.example.demo.user.dto.UserDto;
 import com.example.demo.user.entity.User;
-import com.example.demo.user.repo.UserRepository;
-import org.springframework.http.HttpStatus;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
-
-import java.util.Optional;
 
 @Service
 public class AuthService {
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final LocalPasswordAuthenticator passwordAuthenticator;
     private final JwtTokenProvider jwtTokenProvider;
     private final AuthVerifyService authVerifyService;
 
-    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtTokenProvider jwtTokenProvider, AuthVerifyService authVerifyService) {
-        this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
+    public AuthService(LocalPasswordAuthenticator passwordAuthenticator, JwtTokenProvider jwtTokenProvider, AuthVerifyService authVerifyService) {
+        this.passwordAuthenticator = passwordAuthenticator;
         this.jwtTokenProvider = jwtTokenProvider;
         this.authVerifyService = authVerifyService;
     }
 
     public LoginResponse login(LoginRequest req) {
         authVerifyService.verify(req.getVerifyToken(), req.getVerifyProvider(), req.getVerifyScene(), "login");
-        if ((req.getEmail() == null || req.getEmail().isBlank()) && (req.getPhone() == null || req.getPhone().isBlank())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "必须提供邮箱或手机号");
-        }
-        Optional<User> userOpt;
-        if (req.getEmail() != null && !req.getEmail().isBlank()) {
-            userOpt = userRepository.findByEmail(req.getEmail());
-        } else {
-            userOpt = userRepository.findByPhone(req.getPhone());
-        }
-        User user = userOpt.orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户名或密码错误"));
-        if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户名或密码错误");
-        }
+        User user = passwordAuthenticator.authenticate(req.getEmail(), req.getPhone(), req.getPassword());
 
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
         UserDto dto = new UserDto();

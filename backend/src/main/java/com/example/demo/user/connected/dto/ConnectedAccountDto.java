@@ -7,6 +7,7 @@ public class ConnectedAccountDto {
     private boolean connected;
     private String displayName;
     private Instant linkedAt;
+    private String bindingTag;
 
     public ConnectedAccountDto() {}
 
@@ -28,4 +29,7 @@ public class ConnectedAccountDto {
 
     public Instant getLinkedAt() { return linkedAt; }
     public void setLinkedAt(Instant linkedAt) { this.linkedAt = linkedAt; }
+
+    public String getBindingTag() { return bindingTag; }
+    public void setBindingTag(String bindingTag) { this.bindingTag = bindingTag; }
 }

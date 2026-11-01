@@ -24,6 +24,11 @@ function isValidOptionalTextField(value: Record<string, unknown>, key: 'displayN
   return value[key] === null || typeof value[key] === 'string'
 }
 
+function isValidOptionalBindingTag(value: Record<string, unknown>): boolean {
+  if (!hasOwn(value, 'bindingTag') || value.bindingTag === null) return true
+  return typeof value.bindingTag === 'string' && /^[0-9a-f]{64}$/.test(value.bindingTag)
+}
+
 function decodeConnectedAccount(value: unknown, providers: Set<string>): ConnectedAccount {
   if (!isRecord(value)
     || !hasOwn(value, 'provider')
@@ -32,7 +37,8 @@ function decodeConnectedAccount(value: unknown, providers: Set<string>): Connect
     || !hasOwn(value, 'connected')
     || typeof value.connected !== 'boolean'
     || !isValidOptionalTextField(value, 'displayName')
-    || !isValidOptionalTextField(value, 'linkedAt')) {
+    || !isValidOptionalTextField(value, 'linkedAt')
+    || !isValidOptionalBindingTag(value)) {
     throw new ConnectedAccountsResponseError()
   }
 
@@ -64,6 +70,15 @@ export async function connectAccount(provider: string): Promise<ConnectedAccount
   return data
 }
 
-export async function disconnectAccount(provider: string): Promise<void> {
-  await api.delete(`/users/me/connected-accounts/${provider}`)
+export interface DisconnectAccountProof {
+  identifier: string
+  currentPassword: string
+  bindingTag: string
+}
+
+export async function disconnectAccount(provider: string, proof: DisconnectAccountProof, accessToken: string): Promise<void> {
+  const response = await api.post(`/users/me/connected-accounts/${encodeURIComponent(provider)}/disconnect`, proof, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (response.status !== 204) throw new Error('无法确认解绑结果')
 }

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { listConnectedAccounts } from '@/api/connected'
+import { disconnectAccount, listConnectedAccounts } from '@/api/connected'
+import type { DisconnectAccountProof } from '@/api/connected'
 import { useAuthStore } from '@/stores/auth'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import type { ConnectedAccount } from '@/types'
+import ConnectedAccountUnlinkForm from './ConnectedAccountUnlinkForm.vue'
 
 interface ConnectedAccountsState {
   items: ConnectedAccount[]
@@ -19,6 +21,11 @@ interface SessionContext {
 const connected = ref<ConnectedAccountsState>({ items: [] })
 const connectedLoading = ref(false)
 const connectedError = ref('')
+const disconnectProvider = ref<string | null>(null)
+const disconnectError = ref('')
+const disconnectPending = ref(false)
+const disconnectFeedback = ref('')
+const pendingReadback = ref<string | null>(null)
 
 const authStore = useAuthStore()
 const { token, user } = storeToRefs(authStore)
@@ -31,6 +38,10 @@ let observedToken = ''
 let observedStoredToken = ''
 let observedOwnerKey: string | null = null
 let stopSessionWatch: (() => void) | null = null
+let disconnectSequence = 0
+let disconnectContext: SessionContext | null = null
+let disconnectBindingTag: string | null = null
+let disclosureButton: HTMLElement | null = null
 
 function currentToken(): string {
   return String(token.value || '').trim()
@@ -87,9 +98,103 @@ function invalidateOperations(): void {
 
 function resetConnectedState(): void {
   invalidateOperations()
+  clearDisconnectForm()
+  disconnectFeedback.value = ''
+  pendingReadback.value = null
   connected.value = { items: [] }
   connectedLoading.value = false
   connectedError.value = captureSession() ? '' : unavailableSessionMessage()
+}
+
+function clearDisconnectForm(): void {
+  disconnectSequence += 1
+  disconnectProvider.value = null
+  disconnectError.value = ''
+  disconnectPending.value = false
+  disconnectContext = null
+  disconnectBindingTag = null
+  disclosureButton = null
+}
+
+function canDisconnect(account: ConnectedAccount): boolean {
+  return account.connected === true && typeof account.bindingTag === 'string' && /^[0-9a-f]{64}$/.test(account.bindingTag)
+}
+
+function providerKey(provider: string): string {
+  return provider.trim().toLowerCase()
+}
+
+function beginDisconnect(account: ConnectedAccount, event: Event): void {
+  const context = captureSession()
+  if (!context || context.ownerKey === null || !canDisconnect(account)) {
+    disconnectFeedback.value = '账号信息尚未就绪，请刷新后重试。'
+    return
+  }
+  clearDisconnectForm()
+  disconnectFeedback.value = ''
+  disconnectProvider.value = providerKey(account.provider)
+  disconnectContext = context
+  disconnectBindingTag = account.bindingTag ?? null
+  disclosureButton = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  void nextTick(() => document.getElementById('connected-disconnect-identifier')?.focus())
+}
+
+function cancelDisconnect(): void {
+  if (disconnectPending.value) return
+  const previousButton = disclosureButton
+  clearDisconnectForm()
+  void nextTick(() => { if (previousButton?.isConnected) previousButton.focus() })
+}
+
+function statusCode(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null || !('response' in error)) return null
+  const response = error.response
+  if (typeof response !== 'object' || response === null || !('status' in response)) return null
+  return typeof response.status === 'number' ? response.status : null
+}
+
+async function submitDisconnect(proof: Omit<DisconnectAccountProof, 'bindingTag'>): Promise<void> {
+  if (disconnectPending.value || !disconnectProvider.value || !disconnectContext || !disconnectBindingTag) return
+  const context = disconnectContext
+  if (!isCurrentSession(context)) {
+    resetConnectedState()
+    return
+  }
+  const provider = disconnectProvider.value
+  const sequence = ++disconnectSequence
+  disconnectError.value = ''
+  disconnectPending.value = true
+  try {
+    await disconnectAccount(provider, { ...proof, bindingTag: disconnectBindingTag }, context.token)
+    if (!isCurrentSession(context) || sequence !== disconnectSequence) return
+    disconnectProvider.value = null
+    disconnectContext = null
+    disconnectBindingTag = null
+    pendingReadback.value = provider
+    disconnectFeedback.value = '解绑请求已完成，正在刷新关联状态。'
+    // A read started before the write may still contain the old binding.
+    requestSequence += 1
+    connectedLoading.value = false
+    await loadConnected()
+    if (isCurrentSession(context) && sequence === disconnectSequence) {
+      void nextTick(() => document.getElementById('connected-settings-title')?.focus())
+    }
+  } catch (error) {
+    if (!isCurrentSession(context) || sequence !== disconnectSequence) return
+    const status = statusCode(error)
+    disconnectError.value = status === 400
+      ? '邮箱、手机号或密码不正确，请检查后重试。'
+      : status === 409
+        ? '关联状态已变更，请刷新后重试。'
+        : status === 429
+        ? '操作过于频繁，请稍后再试。'
+        : '暂时无法确认解绑结果，请刷新关联状态后再试。'
+  } finally {
+    if (!disposed && sequence === disconnectSequence) {
+      if (!isCurrentSession(context)) resetConnectedState()
+      else disconnectPending.value = false
+    }
+  }
 }
 
 function scheduleReload(): void {
@@ -139,9 +244,32 @@ async function loadConnected(): Promise<void> {
     const data = await listConnectedAccounts()
     if (!isCurrentRequest(context, sequence)) return
     connected.value = { items: Array.isArray(data?.items) ? data.items : [] }
+    if (disconnectProvider.value) {
+      const provider = disconnectProvider.value
+      const current = connected.value.items.find(item => providerKey(item.provider) === provider)
+      if (!current) {
+        clearDisconnectForm()
+        disconnectFeedback.value = '关联列表未返回该平台，请稍后重试。'
+      } else if (!current.connected) {
+        clearDisconnectForm()
+        disconnectFeedback.value = '该账号当前未关联。'
+      } else if (current.bindingTag !== disconnectBindingTag) {
+        clearDisconnectForm()
+        disconnectFeedback.value = '关联状态已变更，请重新确认。'
+      }
+    }
+    if (pendingReadback.value) {
+      const provider = pendingReadback.value
+      const current = connected.value.items.find(item => providerKey(item.provider) === provider)
+      pendingReadback.value = null
+      disconnectFeedback.value = !current
+        ? '解绑请求已完成；关联列表未返回该平台，请刷新确认。'
+        : current.connected ? '账号当前仍显示关联，请刷新后确认。' : '解绑完成。'
+    }
   } catch (_) {
     if (!isCurrentRequest(context, sequence)) return
     connectedError.value = '关联状态加载失败，暂时无法确认账号状态。'
+    if (pendingReadback.value) disconnectFeedback.value = '解绑请求已完成，但关联状态刷新失败，请重试。'
   } finally {
     if (!disposed && sequence === requestSequence) {
       if (!isCurrentSession(context)) {
@@ -161,11 +289,12 @@ function providerLabel(provider: string): string {
     wechat: '微信',
   }
   const displayProvider = provider.trim()
-  return labels[displayProvider.toLowerCase()] || displayProvider
+  return labels[providerKey(provider)] || displayProvider
 }
 
 function statusLabel(account: ConnectedAccount): string {
-  return account.connected === true ? '该第三方账号已与当前账号关联。' : '尚未关联到当前账号。'
+  if (!account.connected) return '尚未关联到当前账号。'
+  return canDisconnect(account) ? '该第三方账号已与当前账号关联。' : '该账号已关联，当前服务暂不支持安全解绑。'
 }
 
 function onAuthStateChanged(): void {
@@ -197,6 +326,7 @@ onBeforeUnmount(() => {
     reloadTimer = null
   }
   invalidateOperations()
+  clearDisconnectForm()
   window.removeEventListener('auth-state-changed', onAuthStateChanged)
   stopSessionWatch?.()
   stopSessionWatch = null
@@ -205,10 +335,11 @@ onBeforeUnmount(() => {
 
 <template>
   <section aria-labelledby="connected-settings-title" class="space-y-4">
-    <h2 id="connected-settings-title" class="text-base font-semibold">第三方关联</h2>
+    <h2 id="connected-settings-title" class="text-base font-semibold" tabindex="-1">第三方关联</h2>
     <p class="ui-muted border border-gray-200 bg-[var(--ui-subtle)] p-4 text-sm leading-6 dark:border-gray-700">
-      此页面用于查看第三方账号的关联状态，暂不提供绑定或解绑操作。
+      可使用本地邮箱或手机号及密码验证后解绑。仅通过验证码或第三方登录的账号暂不支持解绑；绑定功能尚未开放。
     </p>
+    <p v-if="disconnectFeedback" class="text-sm" role="status" aria-live="polite">{{ disconnectFeedback }}</p>
     <div>
       <div v-if="connectedLoading" class="ui-muted text-sm" role="status" aria-live="polite">正在加载关联状态...</div>
       <div v-else-if="connectedError" class="ui-error flex items-center justify-between gap-3 text-sm" role="alert">
@@ -221,14 +352,27 @@ onBeforeUnmount(() => {
         暂无已关联账号。当前页面暂不提供绑定操作。
       </div>
       <ul v-else class="divide-y divide-gray-200 text-sm dark:divide-gray-700" aria-label="已关联账号状态">
-        <li v-for="account in connected.items || []" :key="account.provider" class="ui-list-row flex flex-col gap-3 px-0 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div class="font-medium">{{ providerLabel(account.provider) }}</div>
-            <div class="ui-muted mt-1 text-xs">{{ statusLabel(account) }}</div>
+        <li v-for="account in connected.items || []" :key="account.provider" class="ui-list-row px-0 py-4">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div class="font-medium">{{ providerLabel(account.provider) }}</div>
+              <div class="ui-muted mt-1 text-xs">{{ statusLabel(account) }}</div>
+            </div>
+            <div class="flex items-center gap-3">
+              <span :class="account.connected === true ? 'text-[var(--ui-accent)]' : 'ui-muted'" class="ui-tag w-fit text-[11px]">
+                {{ account.connected === true ? '已关联' : '未关联' }}
+              </span>
+              <button v-if="canDisconnect(account) && disconnectProvider !== providerKey(account.provider)" type="button"
+                      class="ui-button min-h-11 px-3 text-xs" :disabled="disconnectProvider !== null || disconnectPending"
+                      :aria-label="`解绑 ${providerLabel(account.provider)}`" @click="beginDisconnect(account, $event)">
+                解绑
+              </button>
+            </div>
           </div>
-          <span :class="account.connected === true ? 'text-[var(--ui-accent)]' : 'ui-muted'" class="ui-tag w-fit text-[11px]">
-            {{ account.connected === true ? '已关联' : '未关联' }}
-          </span>
+          <ConnectedAccountUnlinkForm v-if="disconnectProvider === providerKey(account.provider)"
+                                      :pending="disconnectPending || connectedLoading" :error="disconnectError"
+                                      @submit="submitDisconnect" @cancel="cancelDisconnect"
+                                      @refresh="loadConnected" @edit="disconnectError = ''" />
         </li>
       </ul>
     </div>

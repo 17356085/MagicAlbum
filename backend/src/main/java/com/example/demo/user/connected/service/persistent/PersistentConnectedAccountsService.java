@@ -4,6 +4,8 @@ import com.example.demo.user.connected.dto.ConnectedAccountDto;
 import com.example.demo.user.connected.entity.UserConnectedAccount;
 import com.example.demo.user.connected.repo.UserConnectedAccountRepository;
 import com.example.demo.user.connected.service.ConnectedAccountsService;
+import com.example.demo.user.connected.service.ConnectedAccountBindingTag;
+import com.example.demo.user.repo.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -18,9 +20,14 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
     private static final String[] DEFAULT_PROVIDERS = new String[] {"github", "google", "wechat"};
 
     private final UserConnectedAccountRepository repository;
+    private final UserRepository users;
+    private final ConnectedAccountBindingTag bindingTags;
 
-    public PersistentConnectedAccountsService(UserConnectedAccountRepository repository) {
+    public PersistentConnectedAccountsService(UserConnectedAccountRepository repository, UserRepository users,
+                                              ConnectedAccountBindingTag bindingTags) {
         this.repository = repository;
+        this.users = users;
+        this.bindingTags = bindingTags;
     }
 
     @Override
@@ -45,11 +52,18 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
             throw new IllegalArgumentException("第三方平台不能为空");
         }
         String normalized = normalizeProvider(provider);
+        String normalizedExternalId = externalId.trim();
+        users.findByIdForAccountUpdate(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
         UserConnectedAccount entity = repository.findByUserIdAndProvider(userId, normalized)
                 .orElseGet(UserConnectedAccount::new);
+        if (entity.getExternalId() != null && !entity.getExternalId().isBlank()
+                && !entity.getExternalId().equals(normalizedExternalId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "该平台已关联其他账号");
+        }
         entity.setUserId(userId);
         entity.setProvider(normalized);
-        entity.setExternalId(trimToNull(externalId));
+        entity.setExternalId(normalizedExternalId);
         entity.setDisplayName(trimToNull(displayName));
         entity.setLinkedAt(Instant.now());
         repository.save(entity);
@@ -86,12 +100,14 @@ public class PersistentConnectedAccountsService implements ConnectedAccountsServ
     private ConnectedAccountDto toDto(UserConnectedAccount entity) {
         boolean authorized = entity.getExternalId() != null && !entity.getExternalId().isBlank()
                 && entity.getLinkedAt() != null;
-        return new ConnectedAccountDto(
+        ConnectedAccountDto dto = new ConnectedAccountDto(
                 normalizeProvider(entity.getProvider()),
                 authorized,
                 authorized ? entity.getDisplayName() : null,
                 authorized ? entity.getLinkedAt() : null
         );
+        if (authorized) dto.setBindingTag(bindingTags.forBinding(entity));
+        return dto;
     }
 
     private String normalizeProvider(String provider) {

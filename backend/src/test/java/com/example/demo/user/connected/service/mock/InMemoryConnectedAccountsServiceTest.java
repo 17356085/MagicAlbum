@@ -52,18 +52,19 @@ class InMemoryConnectedAccountsServiceTest {
     }
 
     @Test
-    void rebinding_same_owner_and_provider_removes_old_lookup_binding() {
+    void rebinding_same_owner_and_provider_cannot_silently_replace_identity() {
         InMemoryConnectedAccountsService service = new InMemoryConnectedAccountsService();
         service.bindExternalAccount(42L, "github", "old-gh-42", "Old Alice");
 
-        service.bindExternalAccount(42L, "github", "new-gh-42", "New Alice");
+        assertThatThrownBy(() -> service.bindExternalAccount(42L, "github", "new-gh-42", "New Alice"))
+                .isInstanceOf(ResponseStatusException.class);
 
-        assertThat(service.findUserIdByExternalAccount("github", "old-gh-42")).isNull();
-        assertThat(service.findUserIdByExternalAccount("github", "new-gh-42")).isEqualTo(42L);
+        assertThat(service.findUserIdByExternalAccount("github", "old-gh-42")).isEqualTo(42L);
+        assertThat(service.findUserIdByExternalAccount("github", "new-gh-42")).isNull();
         ConnectedAccountDto item = findItem(service.list(42L), "github");
         assertThat(item).isNotNull();
         assertThat(item.isConnected()).isTrue();
-        assertThat(item.getDisplayName()).isEqualTo("New Alice");
+        assertThat(item.getDisplayName()).isEqualTo("Old Alice");
     }
 
     @Test

@@ -551,13 +551,13 @@ describe('SettingsConnectedTab', () => {
     localStorage.clear()
   })
 
-  it('shows only backend-confirmed status without bind or unbind actions', async () => {
+  it('shows the status without unlink actions when the server supplies no binding marker', async () => {
     const wrapper = mount(SettingsConnectedTab)
     wrappers.push(wrapper)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('暂不提供绑定或解绑操作')
-    expect(wrapper.text()).toContain('该第三方账号已与当前账号关联。')
+    expect(wrapper.text()).toContain('绑定功能尚未开放')
+    expect(wrapper.text()).toContain('该账号已关联，当前服务暂不支持安全解绑。')
     expect(wrapper.text()).toContain('尚未关联到当前账号。')
     expect(wrapper.findAll('button').filter((button) => /绑定|解绑/.test(button.text()))).toHaveLength(0)
   })

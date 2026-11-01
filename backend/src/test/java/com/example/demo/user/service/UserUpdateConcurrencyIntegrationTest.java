@@ -1,6 +1,11 @@
 package com.example.demo.user.service;
 
 import com.example.demo.Demo1Application;
+import com.example.demo.common.DistributedRateLimiter;
+import com.example.demo.user.connected.service.ConnectedAccountsService;
+import com.example.demo.user.connected.service.ConnectedAccountBindingTag;
+import com.example.demo.user.connected.service.VerifiedConnectedAccountRemovalService;
+import com.example.demo.user.connected.repo.UserConnectedAccountRepository;
 import com.example.demo.user.dto.BasicInfoUpdateRequest;
 import com.example.demo.user.dto.ChangePasswordRequest;
 import com.example.demo.user.dto.UserDto;
@@ -22,6 +27,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.aot.DisabledInAotMode;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
@@ -83,11 +89,27 @@ class UserUpdateConcurrencyIntegrationTest {
     @Autowired
     private ControlledPasswordEncoder passwordEncoder;
 
+    @Autowired
+    private ConnectedAccountsService connectedAccounts;
+
+    @Autowired
+    private VerifiedConnectedAccountRemovalService verifiedRemoval;
+
+    @Autowired
+    private UserConnectedAccountRepository bindings;
+
+    @Autowired
+    private ConnectedAccountBindingTag bindingTags;
+
+    @MockitoBean
+    private DistributedRateLimiter rateLimiter;
+
     private Long userId;
     private String initialHash;
     private String updatedUsername;
     private String updatedEmail;
     private String updatedPhone;
+    private String initialEmail;
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -107,7 +129,7 @@ class UserUpdateConcurrencyIntegrationTest {
 
         String suffix = DATABASE_NAME.substring(DATABASE_NAME.length() - 12);
         String initialUsername = "race_old_" + suffix;
-        String initialEmail = "race_old_" + suffix + "@example.test";
+        initialEmail = "race_old_" + suffix + "@example.test";
         updatedUsername = "race_new_" + suffix;
         updatedEmail = "race_new_" + suffix + "@example.test";
         updatedPhone = "13900000002";
@@ -122,6 +144,91 @@ class UserUpdateConcurrencyIntegrationTest {
 
         userId = saved.getId();
         initialHash = saved.getPasswordHash();
+    }
+
+    @Test
+    void unlink_waits_for_password_change_and_rejects_stale_credentials() throws Exception {
+        String externalId = "race-unlink-" + UUID.randomUUID();
+        connectedAccounts.bindExternalAccount(userId, "github", externalId, "test account");
+        String tag = bindingTags.forBinding(bindings.findByUserIdAndProvider(userId, "github").orElseThrow());
+        passwordEncoder.armPauseBeforePasswordMatch();
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> change = workers.submit(() -> {
+                ChangePasswordRequest request = new ChangePasswordRequest();
+                request.setCurrentPassword(CURRENT_PASSWORD);
+                request.setNewPassword(NEW_PASSWORD);
+                userService.changePassword(userId, request);
+            });
+            assertThat(passwordEncoder.awaitPasswordMatchEntry()).isTrue();
+            CountDownLatch unlinkStarted = new CountDownLatch(1);
+            Future<Integer> unlink = workers.submit(() -> {
+                unlinkStarted.countDown();
+                try {
+                    verifiedRemoval.disconnect(userId, "github", initialEmail, CURRENT_PASSWORD, tag);
+                    return 204;
+                } catch (ResponseStatusException rejected) {
+                    return rejected.getStatusCode().value();
+                }
+            });
+            assertThat(unlinkStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            boolean completedBeforeRelease = false;
+            try {
+                unlink.get(500, TimeUnit.MILLISECONDS);
+                completedBeforeRelease = true;
+            } catch (TimeoutException expectedLockWait) {
+                // This is only a lock observation; both requests are awaited below.
+            }
+            passwordEncoder.releasePasswordMatch();
+            change.get(30, TimeUnit.SECONDS);
+            assertThat(unlink.get(30, TimeUnit.SECONDS)).isEqualTo(400);
+            assertThat(completedBeforeRelease).isFalse();
+            assertThat(connectedAccounts.findUserIdByExternalAccount("github", externalId)).isEqualTo(userId);
+            assertThat(passwordEncoder.matches(NEW_PASSWORD, userRepository.findById(userId).orElseThrow().getPasswordHash()))
+                    .isTrue();
+        } finally {
+            passwordEncoder.releasePasswordMatch();
+            workers.shutdownNow();
+            workers.awaitTermination(30, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void concurrent_rebind_waits_for_unlink_and_keeps_the_new_identity() throws Exception {
+        String oldId = "race-old-" + UUID.randomUUID();
+        String newId = "race-new-" + UUID.randomUUID();
+        connectedAccounts.bindExternalAccount(userId, "github", oldId, "old account");
+        String tag = bindingTags.forBinding(bindings.findByUserIdAndProvider(userId, "github").orElseThrow());
+        passwordEncoder.armPauseBeforePasswordMatch();
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> unlink = workers.submit(() ->
+                    verifiedRemoval.disconnect(userId, "github", initialEmail, CURRENT_PASSWORD, tag));
+            assertThat(passwordEncoder.awaitPasswordMatchEntry()).isTrue();
+            CountDownLatch bindStarted = new CountDownLatch(1);
+            Future<?> bind = workers.submit(() -> {
+                bindStarted.countDown();
+                connectedAccounts.bindExternalAccount(userId, "github", newId, "new account");
+            });
+            assertThat(bindStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            boolean completedBeforeRelease = false;
+            try {
+                bind.get(500, TimeUnit.MILLISECONDS);
+                completedBeforeRelease = true;
+            } catch (TimeoutException expectedLockWait) {
+                // Both transactions are awaited after the controlled lock is released.
+            }
+            passwordEncoder.releasePasswordMatch();
+            unlink.get(30, TimeUnit.SECONDS);
+            bind.get(30, TimeUnit.SECONDS);
+            assertThat(completedBeforeRelease).isFalse();
+            assertThat(connectedAccounts.findUserIdByExternalAccount("github", oldId)).isNull();
+            assertThat(connectedAccounts.findUserIdByExternalAccount("github", newId)).isEqualTo(userId);
+        } finally {
+            passwordEncoder.releasePasswordMatch();
+            workers.shutdownNow();
+            workers.awaitTermination(30, TimeUnit.SECONDS);
+        }
     }
 
     @Test

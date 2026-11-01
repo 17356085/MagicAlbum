@@ -2,6 +2,8 @@ package com.example.demo.user.connected.service;
 
 import com.example.demo.user.connected.repo.UserConnectedAccountRepository;
 import com.example.demo.user.connected.service.persistent.PersistentConnectedAccountsService;
+import com.example.demo.user.entity.User;
+import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +13,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,6 +25,7 @@ class ConnectedAccountsPersistenceIntegrationTest {
     @Autowired ConnectedAccountsService accounts;
     @Autowired UserConnectedAccountRepository repository;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired UserRepository users;
 
     @Test
     void selects_database_implementation_when_repository_exists() {
@@ -30,10 +34,12 @@ class ConnectedAccountsPersistenceIntegrationTest {
 
     @Test
     void binding_is_persisted_and_rejected_disconnect_preserves_it() {
-        accounts.bindExternalAccount(4200101L, "github", "connected-persist-a", "name");
-        accounts.bindExternalAccount(4200102L, "github", "connected-persist-b", "other");
+        Long first = createUser();
+        Long second = createUser();
+        accounts.bindExternalAccount(first, "github", "connected-persist-a", "name");
+        accounts.bindExternalAccount(second, "github", "connected-persist-b", "other");
         assertThat(repository.findByProviderAndExternalId("github", "connected-persist-a")).isPresent();
-        assertThatThrownBy(() -> accounts.disconnect(4200101L, "github"))
+        assertThatThrownBy(() -> accounts.disconnect(first, "github"))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode().value()).isEqualTo(409));
         assertThat(repository.findByProviderAndExternalId("github", "connected-persist-a")).isPresent();
@@ -42,11 +48,19 @@ class ConnectedAccountsPersistenceIntegrationTest {
 
     @Test
     void binding_joins_caller_transaction_and_rolls_back() {
+        Long userId = createUser();
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            accounts.bindExternalAccount(4200103L, "github", "connected-persist-rollback", "name");
+            accounts.bindExternalAccount(userId, "github", "connected-persist-rollback", "name");
             status.setRollbackOnly();
         });
         assertThat(repository.findByProviderAndExternalId("github", "connected-persist-rollback")).isEmpty();
         assertThat(accounts.findUserIdByExternalAccount("github", "connected-persist-rollback")).isNull();
+    }
+
+    private Long createUser() {
+        User user = new User();
+        user.setUsername("connected_" + UUID.randomUUID().toString().replace("-", ""));
+        user.setPasswordHash("test-only-hash");
+        return users.saveAndFlush(user).getId();
     }
 }

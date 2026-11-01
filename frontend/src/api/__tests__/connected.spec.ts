@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import api from '../client'
-import { ConnectedAccountsResponseError, listConnectedAccounts } from '../connected'
+import { ConnectedAccountsResponseError, disconnectAccount, listConnectedAccounts } from '../connected'
 
 vi.mock('../client', () => ({
   default: {
@@ -59,6 +59,8 @@ describe('connected-account read response contract', () => {
   it.each([
     ['displayName', { provider: 'github', connected: true, displayName: 42 }],
     ['linkedAt', { provider: 'github', connected: true, linkedAt: 42 }],
+    ['bindingTag', { provider: 'github', connected: true, bindingTag: 'short' }],
+    ['bindingTag type', { provider: 'github', connected: true, bindingTag: 42 }],
   ])('rejects a non-string non-null optional DTO field: %s', async (_label, row) => {
     await expectInvalidResponse({ items: [row] })
   })
@@ -119,5 +121,26 @@ describe('connected-account read response contract', () => {
     getMock.mockRejectedValueOnce(failure)
 
     await expect(listConnectedAccounts()).rejects.toBe(failure)
+  })
+})
+
+describe('verified connected-account removal', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('uses the captured token and sends credentials in a POST body', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ status: 204 })
+
+    await disconnectAccount('custom/idp', { identifier: 'user@example.test', currentPassword: 'ExamplePassword1', bindingTag: 'a'.repeat(64) }, 'token-a')
+
+    expect(api.post).toHaveBeenCalledWith('/users/me/connected-accounts/custom%2Fidp/disconnect',
+      { identifier: 'user@example.test', currentPassword: 'ExamplePassword1', bindingTag: 'a'.repeat(64) },
+      { headers: { Authorization: 'Bearer token-a' } })
+  })
+
+  it('does not treat an unexpected success response as confirmation', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ status: 200, data: {} })
+
+    await expect(disconnectAccount('github', { identifier: 'user@example.test', currentPassword: 'ExamplePassword1', bindingTag: 'a'.repeat(64) }, 'token-a'))
+      .rejects.toThrow('无法确认解绑结果')
   })
 })

@@ -2,12 +2,16 @@ package com.example.demo.user.connected.service.persistent;
 
 import com.example.demo.user.connected.entity.UserConnectedAccount;
 import com.example.demo.user.connected.repo.UserConnectedAccountRepository;
+import com.example.demo.user.connected.service.ConnectedAccountBindingTag;
+import com.example.demo.user.entity.User;
+import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -17,7 +21,7 @@ class PersistentConnectedAccountsServiceTest {
     @Test
     void direct_connect_cannot_forge_authorized_account() {
         UserConnectedAccountRepository repository = mock(UserConnectedAccountRepository.class);
-        PersistentConnectedAccountsService service = new PersistentConnectedAccountsService(repository);
+        PersistentConnectedAccountsService service = service(repository);
 
         assertThatThrownBy(() -> service.connect(42L, "github"))
                 .isInstanceOf(ResponseStatusException.class);
@@ -34,7 +38,7 @@ class PersistentConnectedAccountsServiceTest {
         oldRecord.setLinkedAt(Instant.now());
         when(repository.findByUserId(42L)).thenReturn(List.of(oldRecord));
 
-        PersistentConnectedAccountsService service = new PersistentConnectedAccountsService(repository);
+        PersistentConnectedAccountsService service = service(repository);
         assertThat(service.list(42L).get("items"))
                 .asList().extracting("connected").containsOnly(false);
     }
@@ -42,7 +46,7 @@ class PersistentConnectedAccountsServiceTest {
     @Test
     void blank_provider_is_rejected_before_repository_access() {
         UserConnectedAccountRepository repository = mock(UserConnectedAccountRepository.class);
-        PersistentConnectedAccountsService service = new PersistentConnectedAccountsService(repository);
+        PersistentConnectedAccountsService service = service(repository);
 
         assertThatThrownBy(() -> service.bindExternalAccount(42L, null, "external", "name"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -54,7 +58,7 @@ class PersistentConnectedAccountsServiceTest {
     @Test
     void provider_keys_are_independent_of_default_locale() {
         UserConnectedAccountRepository repository = mock(UserConnectedAccountRepository.class);
-        PersistentConnectedAccountsService service = new PersistentConnectedAccountsService(repository);
+        PersistentConnectedAccountsService service = service(repository);
         Locale previous = Locale.getDefault();
         try {
             Locale.setDefault(Locale.forLanguageTag("tr-TR"));
@@ -70,5 +74,26 @@ class PersistentConnectedAccountsServiceTest {
         } finally {
             Locale.setDefault(previous);
         }
+    }
+
+    @Test
+    void an_existing_provider_identity_cannot_be_silently_replaced() {
+        UserConnectedAccountRepository repository = mock(UserConnectedAccountRepository.class);
+        UserConnectedAccount existing = new UserConnectedAccount();
+        existing.setExternalId("old-external");
+        when(repository.findByUserIdAndProvider(42L, "github")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service(repository).bindExternalAccount(42L, "github", "new-external", "name"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode().value()).isEqualTo(409));
+        assertThat(existing.getExternalId()).isEqualTo("old-external");
+        verify(repository, never()).save(any());
+    }
+
+    private PersistentConnectedAccountsService service(UserConnectedAccountRepository repository) {
+        UserRepository users = mock(UserRepository.class);
+        when(users.findByIdForAccountUpdate(anyLong())).thenReturn(Optional.of(new User()));
+        return new PersistentConnectedAccountsService(repository, users,
+                new ConnectedAccountBindingTag("test-only-secret-with-more-than-32-bytes"));
     }
 }

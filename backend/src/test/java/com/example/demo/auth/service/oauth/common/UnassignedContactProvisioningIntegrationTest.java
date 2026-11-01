@@ -8,6 +8,7 @@ import com.example.demo.auth.dto.CognitoAuthenticationResult;
 import com.example.demo.auth.dto.LoginRequest;
 import com.example.demo.auth.dto.github.GithubUserProfile;
 import com.example.demo.auth.service.AuthService;
+import com.example.demo.auth.service.LocalPasswordAuthenticator;
 import com.example.demo.auth.service.otp.AuthVerifyService;
 import com.example.demo.auth.service.otp.CognitoOtpAuthService;
 import com.example.demo.auth.service.otp.CognitoOtpClient;
@@ -105,7 +106,7 @@ class UnassignedContactProvisioningIntegrationTest {
         LoginRequest login = new LoginRequest();
         login.setPhone("19821864416");
         login.setPassword("TestPassword1");
-        assertThat(new AuthService(users, passwords, tokens, verify).login(login).getUser().getId())
+        assertThat(new AuthService(new LocalPasswordAuthenticator(users, passwords), tokens, verify).login(login).getUser().getId())
                 .isEqualTo(phoneOwner.getId());
     }
 

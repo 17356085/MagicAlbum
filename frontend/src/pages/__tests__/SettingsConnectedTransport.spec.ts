@@ -131,8 +131,8 @@ describe('connected-account reader transport contract', () => {
     expect(wrapper.find('[aria-label="已关联账号状态"]').exists()).toBe(false)
   })
 
-  it('renders a confirmed provider and exposes no connect or disconnect operation buttons', async () => {
-    const requests = createTransport([{ items: [{ provider: 'github', connected: true }] }])
+  it('renders a confirmed provider and offers verified unlink', async () => {
+    const requests = createTransport([{ items: [{ provider: 'github', connected: true, bindingTag: 'a'.repeat(64) }] }])
     const vueErrors: unknown[] = []
     const wrapper = mountConnected(vueErrors)
 
@@ -142,11 +142,11 @@ describe('connected-account reader transport contract', () => {
     expect(requests).toHaveLength(1)
     expect(wrapper.get('[aria-label="已关联账号状态"]').text()).toContain('GitHub')
     expect(wrapper.text()).toContain('该第三方账号已与当前账号关联。')
-    expect(wrapper.findAll('button')).toHaveLength(0)
+    expect(wrapper.find('[aria-label="解绑 GitHub"]').exists()).toBe(true)
   })
 
   it('retries through the existing retry button after a malformed envelope and preserves auth state', async () => {
-    const requests = createTransport([{}, { items: [{ provider: 'github', connected: true }] }])
+    const requests = createTransport([{}, { items: [{ provider: 'github', connected: true, bindingTag: 'a'.repeat(64) }] }])
     const vueErrors: unknown[] = []
     const auth = useAuthStore()
     const beforeLocalStorage = storageSnapshot(localStorage)
@@ -168,7 +168,7 @@ describe('connected-account reader transport contract', () => {
     expect(requests.every((request) => request.authorization === 'Bearer token-a')).toBe(true)
     expect(wrapper.get('[aria-label="已关联账号状态"]').text()).toContain('GitHub')
     expect(wrapper.text()).toContain('该第三方账号已与当前账号关联。')
-    expect(wrapper.findAll('button')).toHaveLength(0)
+    expect(wrapper.find('[aria-label="解绑 GitHub"]').exists()).toBe(true)
     expectNoAuthSideEffects(auth, beforeLocalStorage, beforeSessionStorage, beforeGeneration)
   })
 })

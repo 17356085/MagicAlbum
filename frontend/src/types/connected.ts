@@ -11,4 +11,5 @@ export interface ConnectedAccount {
   connectedAt?: string
   displayName?: string | null
   linkedAt?: string | null
+  bindingTag?: string | null
 }
