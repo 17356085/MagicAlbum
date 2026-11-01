@@ -355,7 +355,7 @@ public class CognitoOtpAuthService {
     }
 
     private String generateSyntheticPhone(String seed) {
-        long numeric = Math.abs(trimToEmpty(seed).hashCode());
+        long numeric = Math.abs((long) trimToEmpty(seed).hashCode());
         String suffix = String.format("%08d", numeric % 100_000_000L);
         String candidate = "198" + suffix;
         while (userRepository.existsByPhone(candidate)) {

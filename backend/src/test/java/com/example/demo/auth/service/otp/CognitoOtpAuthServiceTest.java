@@ -220,6 +220,42 @@ class CognitoOtpAuthServiceTest {
     }
 
     @Test
+    void emailFinishWithMinValueHashCreatesAnElevenDigitSyntheticPhone() {
+        String email = "9iaplaw@example.com";
+        EmailFinishFixture fixture = emailFinishFixture(email, "session-min", "9iaplaw", 801L);
+        when(fixture.users.existsByPhone(anyString())).thenReturn(false);
+
+        LoginResponse response = fixture.service.finish(finishRequest(AuthCodeChannel.email, email, "session-min"));
+
+        assertProvisionedPhone(fixture.users, response, "19847483648");
+    }
+
+    @Test
+    void emailFinishWithNormalHashKeepsTheExistingSyntheticPhone() {
+        String email = "demo@example.com";
+        EmailFinishFixture fixture = emailFinishFixture(email, "session-normal", "demo", 802L);
+        when(fixture.users.existsByPhone("19821864416")).thenReturn(false);
+
+        LoginResponse response = fixture.service.finish(finishRequest(AuthCodeChannel.email, email, "session-normal"));
+
+        assertProvisionedPhone(fixture.users, response, "19821864416");
+    }
+
+    @Test
+    void emailFinishAdvancesSyntheticPhoneWhenThePreferredNumberIsOccupied() {
+        String email = "demo@example.com";
+        EmailFinishFixture fixture = emailFinishFixture(email, "session-collision", "demo", 803L);
+        when(fixture.users.existsByPhone("19821864416")).thenReturn(true);
+        when(fixture.users.existsByPhone("19821864417")).thenReturn(false);
+
+        LoginResponse response = fixture.service.finish(finishRequest(AuthCodeChannel.email, email, "session-collision"));
+
+        assertProvisionedPhone(fixture.users, response, "19821864417");
+        verify(fixture.users).existsByPhone("19821864416");
+        verify(fixture.users).existsByPhone("19821864417");
+    }
+
+    @Test
     void emailFinishRejectsAnUnverifiedExistingAssociationWithoutChangingIt() {
         CognitoOtpClient client = mock(CognitoOtpClient.class);
         UserRepository users = mock(UserRepository.class);
@@ -488,6 +524,53 @@ class CognitoOtpAuthServiceTest {
         assertEquals("project-jwt", response.getAccessToken());
         assertTrue(existing.isPhoneVerified());
         verify(users, never()).save(any(User.class));
+    }
+
+    private static EmailFinishFixture emailFinishFixture(String email, String session, String username, long id) {
+        CognitoOtpClient client = mock(CognitoOtpClient.class);
+        UserRepository users = mock(UserRepository.class);
+        UserProfileRepository profiles = mock(UserProfileRepository.class);
+        PasswordEncoder passwords = mock(PasswordEncoder.class);
+        JwtTokenProvider tokens = mock(JwtTokenProvider.class);
+        when(client.respondToChallenge(eq("EMAIL_OTP"), eq(email), any(), eq(session)))
+                .thenReturn(authenticated("cognito-access"));
+        when(users.findByEmail(email)).thenReturn(Optional.empty());
+        when(users.existsByUsername(username)).thenReturn(false);
+        when(passwords.encode(anyString())).thenReturn("encoded-password");
+        when(users.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            user.setId(id);
+            return user;
+        });
+        when(profiles.findById(id)).thenReturn(Optional.empty());
+        when(profiles.save(any(UserProfile.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(tokens.generateToken(id, username)).thenReturn("project-jwt");
+
+        CognitoOtpAuthService service = new CognitoOtpAuthService(
+                client, users, profiles, passwords, tokens,
+                AuthVerifyService.forTest("off", "", mock(TurnstileVerifyClient.class)),
+                300, 300, 60
+        );
+        return new EmailFinishFixture(service, users);
+    }
+
+    private static void assertProvisionedPhone(UserRepository users, LoginResponse response, String expected) {
+        var created = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(users).save(created.capture());
+        assertEquals(expected, created.getValue().getPhone());
+        assertTrue(created.getValue().getPhone().matches("^1\\d{10}$"));
+        assertEquals(created.getValue().getPhone(), response.getUser().getPhone());
+        assertTrue(response.getUser().getPhone().matches("^1\\d{10}$"));
+    }
+
+    private static final class EmailFinishFixture {
+        private final CognitoOtpAuthService service;
+        private final UserRepository users;
+
+        private EmailFinishFixture(CognitoOtpAuthService service, UserRepository users) {
+            this.service = service;
+            this.users = users;
+        }
     }
 
     private static CognitoAuthFlowResponse authenticated(String accessToken) {
