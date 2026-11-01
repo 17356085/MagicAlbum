@@ -65,8 +65,10 @@ class MediaRecoveryMySqlAcceptance {
         DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         MediaDeliveryTransactions deliveries = new MediaDeliveryTransactions(jdbc);
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
 
         Fixture first = insertFixture(jdbc, transaction, "PUBLISHED");
+        setJobUpdatedAt(jdbc, transaction, first.jobId(), oldUpdatedAt);
         recover(transaction, deliveries, first.jobId());
         assertThat(outbox(jdbc, first.eventId()).status())
                 .as("the first expired lease must make its published outbox due")
@@ -74,8 +76,10 @@ class MediaRecoveryMySqlAcceptance {
         ProcessingSnapshot firstJob = processing(jdbc, first.jobId());
         RecoverySnapshot firstRecovery = recovery(jdbc, first.eventId());
         assertRecoveryMarker(firstJob, firstRecovery, first.leaseTokenHash());
+        assertThat(jobUpdatedAt(jdbc, first.jobId())).isAfter(oldUpdatedAt);
 
         publishWithRealDatabaseTransactions(jdbc, transaction, deliveries, first);
+        setJobUpdatedAt(jdbc, transaction, first.jobId(), oldUpdatedAt);
         recover(transaction, deliveries, first.jobId());
         assertThat(outbox(jdbc, first.eventId()).status())
                 .as("the same lease token must be suppressed while next_at is in the future")
@@ -86,6 +90,9 @@ class MediaRecoveryMySqlAcceptance {
         assertThat(suppressed.nextAt())
                 .as("same-token suppression must retain the scheduled next recovery")
                 .isEqualTo(firstRecovery.nextAt());
+        assertThat(jobUpdatedAt(jdbc, first.jobId()))
+                .as("same-token suppression must not update the job timestamp")
+                .isEqualTo(oldUpdatedAt);
 
         setRecoveryNextAt(jdbc, transaction, first.eventId(), Instant.now().minusSeconds(1));
         recover(transaction, deliveries, first.jobId());
@@ -135,6 +142,7 @@ class MediaRecoveryMySqlAcceptance {
         OutboxSnapshot failedBeforeRecovery = outbox(jdbc, failed.eventId());
         RecoverySnapshot failedMarkerBeforeRecovery = recovery(jdbc, failed.eventId());
         assertThat(failedBeforeRecovery.status()).isEqualTo("FAILED");
+        setJobUpdatedAt(jdbc, transaction, failed.jobId(), oldUpdatedAt);
         recover(transaction, deliveries, failed.jobId());
         OutboxSnapshot failedAfterRecovery = outbox(jdbc, failed.eventId());
         assertThat(failedAfterRecovery.status()).isEqualTo("FAILED");
@@ -147,6 +155,17 @@ class MediaRecoveryMySqlAcceptance {
         assertThat(recovery(jdbc, failed.eventId()))
                 .as("recovery must not change a FAILED outbox marker")
                 .isEqualTo(failedMarkerBeforeRecovery);
+        assertThat(jobUpdatedAt(jdbc, failed.jobId())).isEqualTo(oldUpdatedAt);
+
+        transaction.executeWithoutResult(status -> jdbc.update(
+                "UPDATE media_processing_job SET status='PENDING',updated_at=? WHERE job_id=?",
+                Timestamp.from(oldUpdatedAt), failed.jobId()));
+        recover(transaction, deliveries, failed.jobId());
+        Instant deferredAt = jobUpdatedAt(jdbc, failed.jobId());
+        assertThat(deferredAt).isAfter(oldUpdatedAt);
+        assertThat(outbox(jdbc, failed.eventId()).status()).isEqualTo("FAILED");
+        recover(transaction, deliveries, failed.jobId());
+        assertThat(jobUpdatedAt(jdbc, failed.jobId())).isEqualTo(deferredAt);
 
         Fixture concurrent = insertFixture(jdbc, transaction, "PUBLISHED");
         concurrentRecoveries(transactionManager, deliveries, concurrent.jobId());
@@ -257,6 +276,20 @@ class MediaRecoveryMySqlAcceptance {
                     Timestamp.from(nextAt), eventId);
             assertCondition(updated == 1, "the isolated recovery row was not updated");
         });
+    }
+
+    private static void setJobUpdatedAt(JdbcTemplate jdbc, TransactionTemplate transaction, String jobId,
+                                        Instant updatedAt) {
+        transaction.executeWithoutResult(status -> {
+            int updated = jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                    Timestamp.from(updatedAt), jobId);
+            assertCondition(updated == 1, "the isolated processing job was not updated");
+        });
+    }
+
+    private static Instant jobUpdatedAt(JdbcTemplate jdbc, String jobId) {
+        return jdbc.queryForObject("SELECT updated_at FROM media_processing_job WHERE job_id=?",
+                Timestamp.class, jobId).toInstant();
     }
 
     private static void updateExpiredLease(JdbcTemplate jdbc, TransactionTemplate transaction, String jobId,

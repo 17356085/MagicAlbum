@@ -16,6 +16,7 @@ import org.springframework.test.context.aot.DisabledInAotMode;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -99,6 +100,57 @@ class MediaRecoveryRepublishTest {
     }
 
     @Test
+    void cooldownSuppressionDoesNotTouchProcessingJobTimestamp() {
+        Fixture fixture = fixture();
+        claimWorkerThenPublishAndExpire(fixture);
+        deliveries.recover(fixture.jobId());
+        assertThat(deliveries.published(awaitRecoveredDelivery(fixture.eventId()))).isTrue();
+
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
+        List<Instant> observed = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                    Timestamp.from(oldUpdatedAt), fixture.jobId());
+            deliveries.recover(fixture.jobId());
+            observed.add(jobUpdatedAt(fixture.jobId()));
+        }
+
+        assertThat(outboxStatus(fixture.eventId())).isEqualTo("PUBLISHED");
+        assertThat(observed).containsOnly(oldUpdatedAt);
+    }
+
+    @Test
+    void successfulProcessingRecoveryStillUpdatesJobTimestamp() {
+        Fixture fixture = fixture();
+        claimWorkerThenPublishAndExpire(fixture);
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
+        jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                Timestamp.from(oldUpdatedAt), fixture.jobId());
+
+        deliveries.recover(fixture.jobId());
+
+        assertThat(outboxStatus(fixture.eventId())).isEqualTo("PENDING");
+        assertThat(jobUpdatedAt(fixture.jobId())).isAfter(oldUpdatedAt);
+    }
+
+    @Test
+    void stalePendingJobStillDefersRescanWhenOutboxIsFailed() {
+        Fixture fixture = fixture();
+        MediaDeliveryTransactions.Delivery delivery = deliveries.claim().orElseThrow();
+        deliveries.failed(delivery);
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
+        jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                Timestamp.from(oldUpdatedAt), fixture.jobId());
+
+        deliveries.recover(fixture.jobId());
+        Instant deferredAt = jobUpdatedAt(fixture.jobId());
+        assertThat(outboxStatus(fixture.eventId())).isEqualTo("FAILED");
+        assertThat(deferredAt).isAfter(oldUpdatedAt);
+        deliveries.recover(fixture.jobId());
+        assertThat(jobUpdatedAt(fixture.jobId())).isEqualTo(deferredAt);
+    }
+
+    @Test
     void sameLeaseCanRepublishAgainAfterCooldownWithoutSleeping() {
         Fixture fixture = fixture();
         claimWorkerThenPublishAndExpire(fixture);
@@ -172,6 +224,9 @@ class MediaRecoveryRepublishTest {
         Fixture fixture = fixture();
         claimWorkerThenFailAndExpire(fixture);
         OutboxSnapshot failed = outbox(fixture.eventId());
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
+        jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                Timestamp.from(oldUpdatedAt), fixture.jobId());
 
         deliveries.recover(fixture.jobId());
 
@@ -182,6 +237,7 @@ class MediaRecoveryRepublishTest {
         assertThat(recovered.lastError()).isEqualTo(failed.lastError());
         assertThat(recovered.processingRecoveryLeaseHash()).isEqualTo(failed.processingRecoveryLeaseHash());
         assertThat(recovered.processingRecoveryNextAt()).isEqualTo(failed.processingRecoveryNextAt());
+        assertThat(jobUpdatedAt(fixture.jobId())).isEqualTo(oldUpdatedAt);
     }
 
     @Test
@@ -191,10 +247,14 @@ class MediaRecoveryRepublishTest {
                 .isEqualTo(MediaJobService.STATUS_CLAIMED);
         expireJobLease(fixture.jobId());
         var before = outboxWithPublisherLease(fixture.eventId());
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
+        jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                Timestamp.from(oldUpdatedAt), fixture.jobId());
 
         deliveries.recover(fixture.jobId());
 
         assertThat(outboxWithPublisherLease(fixture.eventId())).isEqualTo(before);
+        assertThat(jobUpdatedAt(fixture.jobId())).isEqualTo(oldUpdatedAt);
     }
 
     @Test
@@ -207,10 +267,14 @@ class MediaRecoveryRepublishTest {
         jdbc.update("UPDATE media_request_outbox SET lease_until=? WHERE event_id=?",
                 Timestamp.from(Instant.now().plusSeconds(300)), fixture.eventId());
         var before = outboxWithPublisherLease(fixture.eventId());
+        Instant oldUpdatedAt = Instant.parse("2001-01-01T00:00:00Z");
+        jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?",
+                Timestamp.from(oldUpdatedAt), fixture.jobId());
 
         deliveries.recover(fixture.jobId());
 
         assertThat(outboxWithPublisherLease(fixture.eventId())).isEqualTo(before);
+        assertThat(jobUpdatedAt(fixture.jobId())).isEqualTo(oldUpdatedAt);
         assertThat(deliveries.published(delivery)).isTrue();
     }
 
@@ -402,6 +466,11 @@ class MediaRecoveryRepublishTest {
     private String jobLeaseHash(String jobId) {
         return jdbc.queryForObject("SELECT lease_token_hash FROM media_processing_job WHERE job_id=?",
                 String.class, jobId);
+    }
+
+    private Instant jobUpdatedAt(String jobId) {
+        return jdbc.queryForObject("SELECT updated_at FROM media_processing_job WHERE job_id=?",
+                Timestamp.class, jobId).toInstant();
     }
 
     private OutboxSnapshot outbox(String eventId) {

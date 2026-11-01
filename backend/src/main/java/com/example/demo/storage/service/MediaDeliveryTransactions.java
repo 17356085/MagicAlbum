@@ -76,9 +76,10 @@ public class MediaDeliveryTransactions {
                 && !updated.isAfter(now.minusSeconds(PENDING_RECOVERY_GRACE_SECONDS));
         boolean expiredProcessing = "PROCESSING".equals(status) && lease != null && lease.isBefore(now);
         if (!stalePending && !expiredProcessing) return;
+        int recoveredOutboxes;
         if (stalePending) {
             // FAILED rows retain available_at; claim() retries them when the backoff expires.
-            jdbc.update("""
+            recoveredOutboxes = jdbc.update("""
                     UPDATE media_request_outbox
                        SET status='PENDING',available_at=?,lease_owner=NULL,lease_until=NULL
                      WHERE job_id=? AND status='PUBLISHED'
@@ -90,7 +91,7 @@ public class MediaDeliveryTransactions {
             // generation, while a null/non-null pair is a new generation.
             String leaseHash = (String) row.get("lease_token_hash");
             Timestamp nextAt = Timestamp.from(now.plusSeconds(PROCESSING_RECOVERY_COOLDOWN_SECONDS));
-            jdbc.update("""
+            recoveredOutboxes = jdbc.update("""
                     UPDATE media_request_outbox
                        SET status='PENDING', available_at=?, lease_owner=NULL, lease_until=NULL,
                            processing_recovery_lease_hash=?, processing_recovery_next_at=?
@@ -106,7 +107,12 @@ public class MediaDeliveryTransactions {
                     """, Timestamp.from(now), leaseHash, nextAt, jobId,
                     Timestamp.from(now), leaseHash, leaseHash, leaseHash);
         }
-        jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?", Timestamp.from(now), jobId);
+        // PENDING uses updated_at to defer the next scan even if the publisher
+        // already owns the row or is waiting for retry backoff. PROCESSING is
+        // scanned by lease_until, so only record an actual recovery there.
+        if (stalePending || recoveredOutboxes > 0) {
+            jdbc.update("UPDATE media_processing_job SET updated_at=? WHERE job_id=?", Timestamp.from(now), jobId);
+        }
     }
 
     public record Delivery(String eventId, String owner, int attempts, MediaRequestEnvelope envelope) {}
