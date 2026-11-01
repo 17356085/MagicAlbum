@@ -83,6 +83,26 @@ function load(): void {
   scopeError.value = false
 }
 
+// 外部标签页或同窗口侧栏变更只读刷新当前已确认的 scope。不要调用
+// load()：它会 pruneExpired 并再次派发 recent-visits-updated，形成写回/递归。
+function refreshReadOnly(scope: RecentVisitsScope | null = displayedScope.value): void {
+  if (!scope) return
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+
+  const nextItems = getAllRecentVisits(scope)
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+
+  displayedScope.value = scope
+  items.value = nextItems
+  scopeError.value = false
+}
+
 async function loadSections(): Promise<void> {
   try {
     const data = await listSections({ size: 200 })
@@ -205,11 +225,47 @@ function onAuthStateChanged(): void {
   load()
 }
 
+function onRecentUpdated(): void {
+  const scope = displayedScope.value
+  if (scope) {
+    refreshReadOnly(scope)
+    return
+  }
+  if (!scopeError.value) return
+  const recovered = captureRecentVisitsScope(currentIdentity())
+  if (!recovered) return
+  refreshReadOnly(recovered)
+}
+
+function onStorageChanged(event: StorageEvent): void {
+  if (event.storageArea !== localStorage) return
+
+  const scope = displayedScope.value
+  if (!scope) {
+    if (!scopeError.value) return
+    const recovered = captureRecentVisitsScope(currentIdentity())
+    if (!recovered) return
+    // 绑定记录恢复后仅按已确认的当前身份只读恢复，不读取事件中的其他账号 key。
+    refreshReadOnly(recovered)
+    return
+  }
+  // 检查身份漂移必须先于 key 过滤，避免其他账号的事件让旧列表继续可见。
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+  if (event.key !== null && event.key !== scope.key) return
+
+  refreshReadOnly()
+}
+
 onMounted(load)
 onMounted(loadSections)
 // 未登录则跳转走
 onMounted(() => {
   window.addEventListener('auth-state-changed', onAuthStateChanged)
+  window.addEventListener('recent-visits-updated', onRecentUpdated)
+  window.addEventListener('storage', onStorageChanged)
   if (!isLoggedIn.value) {
     router.replace({ name: 'discover' })
   }
@@ -231,6 +287,8 @@ watch(() => query.value.page, (val) => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('auth-state-changed', onAuthStateChanged)
+  window.removeEventListener('recent-visits-updated', onRecentUpdated)
+  window.removeEventListener('storage', onStorageChanged)
 })
 </script>
 

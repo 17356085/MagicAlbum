@@ -18,6 +18,7 @@ const SHARED_PATH = '/threads/shared-history'
 const SHARED_ID = 42
 const A_KEY = 'recent_visits_v1:1'
 const B_KEY = 'recent_visits_v1:2'
+const BINDING_KEY = 'currentUserSession.v1'
 
 let pinia: ReturnType<typeof createPinia>
 const wrappers: VueWrapper[] = []
@@ -49,6 +50,14 @@ function storageBytes(): { a: string | null; b: string | null } {
     a: localStorage.getItem(A_KEY),
     b: localStorage.getItem(B_KEY),
   }
+}
+
+function dispatchStorage(key: string | null, storageArea: Storage | null = localStorage): void {
+  window.dispatchEvent(new StorageEvent('storage', {
+    key,
+    newValue: key === null || !storageArea ? null : storageArea.getItem(key),
+    storageArea,
+  }))
 }
 
 function driftPersistedStorageToB(): void {
@@ -177,5 +186,183 @@ describe('RecentVisitsPanel storage scope during a stale rendered session', () =
     expect(localStorage.getItem('recent_visits_v1:guest')).toBeNull()
     expect(localStorage.getItem('recent_visits_v1:1')).toBe(accountBytes)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('refreshes the current account on update and clear storage events', async () => {
+    seedAccountHistory()
+    const vueErrors: unknown[] = []
+    const wrapper = await mountPanel(vueErrors)
+
+    const updated = JSON.stringify([
+      { path: '/threads/new', title: '账号 A 新增', id: 43, ts: Date.now() },
+    ])
+    localStorage.setItem(A_KEY, updated)
+    localStorage.setItem(B_KEY, JSON.stringify([
+      { path: '/threads/other', title: '账号 B 更新', id: 44, ts: Date.now() },
+    ]))
+    sessionStorage.setItem(A_KEY, JSON.stringify([
+      { path: '/threads/session', title: 'sessionStorage 记录', id: 45, ts: Date.now() },
+    ]))
+    dispatchStorage(B_KEY)
+    dispatchStorage('unrelated-key')
+    dispatchStorage(A_KEY, sessionStorage)
+    await settle()
+
+    expect(wrapper.text()).toContain('账号 A 浏览')
+    expect(wrapper.text()).not.toContain('账号 A 新增')
+    expect(wrapper.text()).not.toContain('账号 B 更新')
+    expect(wrapper.text()).not.toContain('sessionStorage 记录')
+    expect(localStorage.getItem(A_KEY)).toBe(updated)
+
+    dispatchStorage(A_KEY)
+    await settle()
+
+    expect(wrapper.text()).toContain('账号 A 新增')
+    expect(wrapper.text()).not.toContain('账号 A 浏览')
+
+    localStorage.removeItem(A_KEY)
+    dispatchStorage(A_KEY)
+    await settle()
+
+    expect(wrapper.text()).not.toContain('账号 A 新增')
+    expect(localStorage.getItem(A_KEY)).toBeNull()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(vueErrors).toEqual([])
+
+    localStorage.clear()
+    dispatchStorage(null)
+    await settle()
+
+    expect(wrapper.text()).not.toContain('账号 A 新增')
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+  })
+
+  it('supports guest storage events while ignoring other accounts and sessionStorage', async () => {
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: '', user: null })
+    addVisit({ path: '/threads/guest', title: '访客浏览', id: 99 })
+    const vueErrors: unknown[] = []
+    const wrapper = await mountPanel(vueErrors)
+
+    const guestKey = 'recent_visits_v1:guest'
+    const updated = JSON.stringify([
+      { path: '/threads/guest-new', title: '访客新增', id: 100, ts: Date.now() },
+    ])
+    localStorage.setItem(guestKey, updated)
+    dispatchStorage(guestKey)
+    await settle()
+    expect(wrapper.text()).toContain('访客新增')
+    expect(localStorage.getItem(guestKey)).toBe(updated)
+
+    localStorage.setItem(B_KEY, JSON.stringify([
+      { path: '/threads/other', title: '账号 B 更新', id: 44, ts: Date.now() },
+    ]))
+    dispatchStorage(B_KEY)
+    dispatchStorage('unrelated-key')
+    sessionStorage.setItem(guestKey, JSON.stringify([
+      { path: '/threads/session', title: 'sessionStorage 记录', id: 45, ts: Date.now() },
+    ]))
+    dispatchStorage(guestKey, sessionStorage)
+    await settle()
+
+    expect(wrapper.text()).toContain('访客新增')
+    expect(wrapper.text()).not.toContain('账号 B 更新')
+    expect(wrapper.text()).not.toContain('sessionStorage 记录')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(vueErrors).toEqual([])
+
+    localStorage.clear()
+    dispatchStorage(null)
+    await settle()
+
+    expect(wrapper.text()).not.toContain('访客新增')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('ignores storage events without the localStorage area', async () => {
+    seedAccountHistory()
+    const vueErrors: unknown[] = []
+    const wrapper = await mountPanel(vueErrors)
+    expect(wrapper.text()).toContain('账号 A 浏览')
+
+    driftPersistedStorageToB()
+    dispatchStorage(B_KEY, null)
+    sessionStorage.setItem(B_KEY, JSON.stringify([
+      { path: '/threads/session-drift', title: 'sessionStorage 漂移', id: 49, ts: Date.now() },
+    ]))
+    dispatchStorage(B_KEY, sessionStorage)
+    await settle()
+
+    expect(wrapper.text()).toContain('账号 A 浏览')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(vueErrors).toEqual([])
+  })
+
+  it('clears the stale view before filtering when persisted identity drifts', async () => {
+    seedAccountHistory()
+    const vueErrors: unknown[] = []
+    const wrapper = await mountPanel(vueErrors)
+    expect(wrapper.text()).toContain('账号 A 浏览')
+
+    driftPersistedStorageToB()
+    localStorage.setItem(B_KEY, JSON.stringify([
+      { path: '/threads/drift', title: '账号 B 漂移事件', id: 46, ts: Date.now() },
+    ]))
+    const getItem = vi.spyOn(Storage.prototype, 'getItem')
+    window.dispatchEvent(new StorageEvent('storage', { key: B_KEY, newValue: null, storageArea: localStorage }))
+    await settle()
+
+    expect(wrapper.text()).not.toContain('账号 A 浏览')
+    expect(wrapper.text()).not.toContain('账号 B 漂移事件')
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+    expect(getItem.mock.calls.some(([key]) => key === B_KEY)).toBe(false)
+    expect(vueErrors).toEqual([])
+    getItem.mockRestore()
+  })
+
+  it('recovers the same account after its binding record is restored without reading B or writing', async () => {
+    seedAccountHistory()
+    const vueErrors: unknown[] = []
+    const wrapper = await mountPanel(vueErrors)
+    const bindingValue = localStorage.getItem(BINDING_KEY)
+    const beforeA = localStorage.getItem(A_KEY)
+    expect(bindingValue).toBeTruthy()
+
+    localStorage.removeItem(BINDING_KEY)
+    dispatchStorage(BINDING_KEY)
+    await settle()
+    expect(wrapper.text()).not.toContain('账号 A 浏览')
+    expect(wrapper.get('[role="alert"]').text()).toContain('账号状态已变化')
+
+    localStorage.setItem(BINDING_KEY, bindingValue!)
+    const getItem = vi.spyOn(Storage.prototype, 'getItem')
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    window.dispatchEvent(new StorageEvent('storage', { key: BINDING_KEY, newValue: bindingValue, storageArea: localStorage }))
+    await settle()
+
+    expect(wrapper.text()).toContain('账号 A 浏览')
+    expect(wrapper.text()).not.toContain('账号 B 浏览')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(localStorage.getItem(A_KEY)).toBe(beforeA)
+    expect(getItem.mock.calls.some(([key]) => key === B_KEY)).toBe(false)
+    expect(setItem.mock.calls.some(([key]) => key === A_KEY)).toBe(false)
+    expect(vueErrors).toEqual([])
+    getItem.mockRestore()
+    setItem.mockRestore()
+  })
+
+  it('removes storage and recent-visits listeners on unmount', async () => {
+    seedAccountHistory()
+    const vueErrors: unknown[] = []
+    const wrapper = await mountPanel(vueErrors)
+    const removeEventListener = vi.spyOn(window, 'removeEventListener')
+
+    wrapper.unmount()
+
+    expect(removeEventListener).toHaveBeenCalledWith('recent-visits-updated', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('auth-state-changed', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('storage', expect.any(Function))
+    expect(vueErrors).toEqual([])
+    removeEventListener.mockRestore()
   })
 })

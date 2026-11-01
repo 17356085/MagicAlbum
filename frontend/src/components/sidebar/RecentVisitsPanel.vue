@@ -62,10 +62,8 @@ function clearScopeView(showError: boolean): void {
   scopeError.value = showError
 }
 
-function refreshRecent(): void {
-  const expected = currentIdentity()
-  const scope = captureRecentVisitsScope(expected)
-  if (!scope) {
+function refreshReadOnly(scope: RecentVisitsScope): void {
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
     clearScopeView(true)
     return
   }
@@ -81,8 +79,41 @@ function refreshRecent(): void {
   scopeError.value = false
 }
 
+function refreshRecent(): void {
+  const expected = currentIdentity()
+  const scope = captureRecentVisitsScope(expected)
+  if (!scope) {
+    clearScopeView(true)
+    return
+  }
+  refreshReadOnly(scope)
+}
+
 function onRecentUpdated(): void {
   refreshRecent()
+}
+
+function onStorageChanged(event: StorageEvent): void {
+  if (event.storageArea !== localStorage) return
+
+  const scope = displayedScope.value
+  if (!scope) {
+    if (!scopeError.value) return
+    const recovered = captureRecentVisitsScope(currentIdentity())
+    if (!recovered) return
+    // 绑定记录恢复后仅按已确认的当前身份只读恢复，不读取事件中的其他账号 key。
+    refreshReadOnly(recovered)
+    return
+  }
+  // 检查身份漂移必须先于 key 过滤，避免其他账号的事件让旧列表继续可见。
+  if (!isRecentVisitsScopeCurrent(scope, currentIdentity())) {
+    clearScopeView(true)
+    return
+  }
+  if (event.key !== null && event.key !== scope.key) return
+
+  // storage 事件只读刷新已确认 scope，不执行写回。
+  refreshReadOnly(scope)
 }
 
 function clearRecent(): void {
@@ -115,9 +146,11 @@ watch([() => auth.token, () => auth.user?.id ?? auth.user?.userId], refreshRecen
 onMounted(() => {
   window.addEventListener('recent-visits-updated', onRecentUpdated)
   window.addEventListener('auth-state-changed', onAuthStateChanged)
+  window.addEventListener('storage', onStorageChanged)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('recent-visits-updated', onRecentUpdated)
   window.removeEventListener('auth-state-changed', onAuthStateChanged)
+  window.removeEventListener('storage', onStorageChanged)
 })
 </script>
