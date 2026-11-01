@@ -1709,3 +1709,9 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 现在检查脚本在主动停止 broker 后排除两个 RabbitMQ 端口并清除管理地址，同时刷新其他服务地址；重新启动后限时发现两项新端口，只对目标服务匹配的短暂退出信息重试，其他端口错误继续失败。错误详情经过运行时密钥脱敏；broker 地址未恢复前不会使用旧地址。原始模拟基线 `backend/target/media-runtime-port-race-regression-old.log` 为 1 项失败、1 项错误；最终 guard 共 19 项通过，见 `backend/target/media-runtime-port-race-reviewed-20261102.log`，Python 语法检查通过。它们是离线模拟，未启动 Docker；本提交仍需自身的远程媒体运行时验收。
 
 同一次远程运行的 M4B 摘要检查另在构建阶段遇到 `MediaRegistrationOnlyRecoveryIT.clearRegistry` 的 Mockito 未完成桩错误，只执行了 2/18 项；现有日志未能单独证明具体线程原因，也没有证明外部模型。此次 M3 脚本修正不等于该 M4B 失败已经解决。
+
+## 2026-11-02：媒体恢复测试的时间与调度隔离
+
+本轮后端默认测试 `backend/target/verified-unlink-backend-full-20261102.log` 的 747 项中有 1 项失败：恢复任务测试期待旧轮只尝试 21 个任务，实际观察到 22 个。日志另有后台调度线程，且测试依赖墙钟与 40 毫秒等待；但日志未记录完整 cutoff、测试对象标识和线程时序，不能断言失败根因已经确定。恢复批次逻辑现在允许测试注入时钟，生产仍使用系统 UTC 时钟；旧轮截止时间及数据库查询未改变。测试使用可推进时钟验证新到期租约在旧轮排除、新轮纳入，并在该测试上下文替换发布调度器以隔离自动执行，没有添加生产配置开关。目标测试类 22 项通过，见 `backend/target/media-maintenance-clock-class-mock-scheduler-final-20261102.log`。
+
+上节远程 M4B 构建中，`MediaRegistrationOnlyRecoveryIT.clearRegistry` 报 Mockito 未完成桩。测试原本在真实 50 毫秒调度器执行期间为对象存储 spy 设置桩，现改为测试专用记录对象，仍调用真实本地文件读取并逐对象核对 `scheduled-media-storage-` 线程；不使用 mock 代替调度或对象读取。三个真实调度测试通过，见 `backend/target/media-registration-real-scheduler-20261102.log`。现有远程日志不足以独立证明报错的具体线程原因；本地测试通过不等于此前远程失败已被复现或证明完全消失，仍需本提交自己的远程验收。

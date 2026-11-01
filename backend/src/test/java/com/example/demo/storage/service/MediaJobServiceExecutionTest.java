@@ -10,14 +10,21 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.aot.DisabledInAotMode;
+import org.springframework.test.context.bean.override.mockito.MockReset;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -27,6 +34,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 
 @SpringBootTest(classes = Demo1Application.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
@@ -57,6 +66,8 @@ class MediaJobServiceExecutionTest {
 
     @Autowired private MediaDeliveryTransactions deliveries;
     @Autowired private MediaUploadRegistrationService registry;
+    @MockitoBean(name = "mediaPublishScheduler", reset = MockReset.NONE)
+    private ThreadPoolTaskScheduler mediaPublishScheduler;
     @org.junit.jupiter.api.io.TempDir java.nio.file.Path objectsRoot;
 
     @BeforeEach
@@ -506,7 +517,9 @@ class MediaJobServiceExecutionTest {
 
     @Test
     void recoveryDefersNewlyExpiredLeaseUntilTheNextRound() throws Exception {
-        Instant old = Instant.now().minusSeconds(240);
+        MutableClock clock = new MutableClock(Instant.now().minusSeconds(300));
+        Instant t0 = clock.instant();
+        Instant old = t0.minusSeconds(240);
         var failed = new java.util.HashSet<String>();
         for (int index = 0; index < 21; index++) {
             Fixture item = fixture();
@@ -516,7 +529,7 @@ class MediaJobServiceExecutionTest {
         }
         Fixture later = fixture();
         jdbc.update("update media_processing_job set status='PROCESSING',lease_until=? where job_id=?",
-                java.sql.Timestamp.from(Instant.now().plusSeconds(60)), later.jobId());
+                java.sql.Timestamp.from(t0.plusSeconds(60)), later.jobId());
         jdbc.update("update media_request_outbox set status='PUBLISHED' where event_id=?", later.envelope().eventId());
         var attempts = new java.util.ArrayList<String>();
         MediaDeliveryTransactions unreliable = new MediaDeliveryTransactions(jdbc) {
@@ -529,16 +542,18 @@ class MediaJobServiceExecutionTest {
         };
         MediaMaintenance maintenance = new MediaMaintenance(jdbc, unreliable,
                 org.mockito.Mockito.mock(MediaObjectStore.class), org.mockito.Mockito.mock(MediaMaintenanceTransactions.class),
-                java.time.Duration.ofHours(24), true);
+                java.time.Duration.ofHours(24), true, clock);
 
+        verify(mediaPublishScheduler, atLeastOnce()).isAutoStartup();
         maintenance.recoverJobs();
-        Instant newlyExpired = Instant.now();
+        clock.advance(Duration.ofSeconds(1));
+        Instant newlyExpired = clock.instant();
         jdbc.update("update media_processing_job set lease_until=? where job_id=?",
                 java.sql.Timestamp.from(newlyExpired), later.jobId());
-        Thread.sleep(40);
         maintenance.recoverJobs();
         assertThat(attempts).hasSize(21).doesNotContain(later.jobId());
 
+        clock.advance(Duration.ofSeconds(1));
         maintenance.recoverJobs();
         maintenance.recoverJobs();
         assertThat(attempts).hasSize(43).endsWith(later.jobId());
@@ -728,5 +743,35 @@ class MediaJobServiceExecutionTest {
     }
 
     private record Fixture(String assetId, String jobId, MediaRequestEnvelope envelope) {
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant current;
+
+        private MutableClock(Instant current) {
+            this.current = current;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            if (!ZoneOffset.UTC.equals(zone)) {
+                throw new IllegalArgumentException("MutableClock supports UTC only");
+            }
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return current;
+        }
+
+        private void advance(Duration duration) {
+            current = current.plus(duration);
+        }
     }
 }

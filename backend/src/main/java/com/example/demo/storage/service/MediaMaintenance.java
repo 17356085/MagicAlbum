@@ -2,6 +2,7 @@ package com.example.demo.storage.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -10,9 +11,11 @@ import org.springframework.stereotype.Component;
 
 import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import static com.example.demo.storage.service.MediaDeliveryTransactions.PENDING_RECOVERY_GRACE_SECONDS;
 
@@ -26,15 +29,23 @@ public class MediaMaintenance {
     private final MediaObjectStore objects;
     private final MediaMaintenanceTransactions cleanup;
     private final Duration retention;
+    private final Clock recoveryClock;
     // The cutoff keeps a round finite; each cursor uses the time at which a job
     // first became eligible. Progress is per instance and resets on restart.
     private Instant recoveryCutoff;
     private RecoveryCursor recoveryCursor;
 
+    @Autowired
     public MediaMaintenance(JdbcTemplate jdbc, MediaDeliveryTransactions deliveries,
             MediaObjectStore objects, MediaMaintenanceTransactions cleanup,
             @Value("${app.media.orphan-retention:24h}") Duration retention,
             @Value("${app.media.registration-enabled:false}") boolean registrationEnabled) {
+        this(jdbc, deliveries, objects, cleanup, retention, registrationEnabled, Clock.systemUTC());
+    }
+
+    MediaMaintenance(JdbcTemplate jdbc, MediaDeliveryTransactions deliveries,
+            MediaObjectStore objects, MediaMaintenanceTransactions cleanup,
+            Duration retention, boolean registrationEnabled, Clock recoveryClock) {
         if (!registrationEnabled) throw new IllegalStateException("Media processing requires upload registration");
         if (retention.compareTo(Duration.ofMinutes(20)) < 0 || retention.compareTo(Duration.ofDays(90)) > 0) {
             throw new IllegalArgumentException("Media orphan retention must be between 20 minutes and 90 days");
@@ -44,6 +55,7 @@ public class MediaMaintenance {
         this.objects = objects;
         this.cleanup = cleanup;
         this.retention = retention;
+        this.recoveryClock = Objects.requireNonNull(recoveryClock, "recoveryClock");
     }
 
     @Scheduled(fixedDelayString = "${app.media.recovery-delay-ms:15000}", scheduler = "mediaPublishScheduler")
@@ -90,7 +102,7 @@ public class MediaMaintenance {
 
     private void beginRecoveryRoundIfNeeded() {
         if (recoveryCutoff == null) {
-            recoveryCutoff = Instant.now();
+            recoveryCutoff = recoveryClock.instant();
             recoveryCursor = null;
         }
     }

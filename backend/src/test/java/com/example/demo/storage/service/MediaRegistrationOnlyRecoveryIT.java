@@ -3,13 +3,19 @@ package com.example.demo.storage.service;
 import com.example.demo.Demo1Application;
 import com.example.demo.storage.dto.MediaUploadIntent;
 import com.example.demo.storage.entity.MediaAsset;
+import com.example.demo.storage.service.provider.s3.S3StorageService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,7 +25,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.aot.DisabledInAotMode;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,14 +39,12 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
 
 /**
  * Real scheduler baseline for registration-only media uploads.
@@ -72,6 +75,7 @@ import static org.mockito.Mockito.verify;
 @ActiveProfiles("test")
 @DisabledInAotMode
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@Import(MediaRegistrationOnlyRecoveryIT.RecordingMediaObjectStoreConfiguration.class)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @MockitoBean(types = StringRedisTemplate.class)
 class MediaRegistrationOnlyRecoveryIT {
@@ -95,10 +99,8 @@ class MediaRegistrationOnlyRecoveryIT {
     @Autowired
     private MediaUploadRegistrationService registry;
 
-    @MockitoSpyBean
-    private MediaObjectStore objects;
-
-    private final AtomicReference<String> readThread = new AtomicReference<>();
+    @Autowired
+    private RecordingMediaObjectStore objects;
 
     @DynamicPropertySource
     static void isolatedProperties(DynamicPropertyRegistry properties) {
@@ -117,10 +119,7 @@ class MediaRegistrationOnlyRecoveryIT {
         jdbc.update("DELETE FROM media_request_outbox");
         jdbc.update("DELETE FROM media_processing_job");
         jdbc.update("DELETE FROM media_asset");
-        doAnswer(invocation -> {
-            readThread.compareAndSet(null, Thread.currentThread().getName());
-            return invocation.callRealMethod();
-        }).when(objects).readOriginal(anyString(), anyString());
+        objects.clearReadObservations();
     }
 
     @Test
@@ -161,13 +160,14 @@ class MediaRegistrationOnlyRecoveryIT {
         assertThat(countJobs()).isEqualTo(2L);
         assertThat(countOutbox()).isEqualTo(2L);
         assertThat(applicationContext.getBeansOfType(MediaRequestPublisher.class)).isEmpty();
-        assertThat(readThread.get()).startsWith("scheduled-media-storage-");
+        awaitScheduledRead(jpegUpload.intent().objectKey());
+        awaitScheduledRead(pngUpload.intent().objectKey());
 
         // A new missing object proves another scheduled pass ran after both
         // originals were recovered, before checking for duplicate writes.
         RegisteredUpload missingLater = registerUpload("image/jpeg", "jpg", jpeg);
         ageUpload(missingLater.assetId());
-        verify(objects, timeout(5000).atLeastOnce()).readOriginal("local", missingLater.intent().objectKey());
+        awaitScheduledRead(missingLater.intent().objectKey());
         assertThat(statusOf(missingLater.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         assertThat(countJobs()).isEqualTo(2L);
         assertThat(countOutbox()).isEqualTo(2L);
@@ -187,14 +187,25 @@ class MediaRegistrationOnlyRecoveryIT {
 
         awaitUploading(List.of(missing.assetId(), mismatched.assetId()), Duration.ofMillis(750));
 
-        verify(objects, timeout(5000).atLeastOnce()).readOriginal("local", missing.intent().objectKey());
-        verify(objects, timeout(5000).atLeastOnce()).readOriginal("local", mismatched.intent().objectKey());
+        awaitScheduledRead(missing.intent().objectKey());
+        awaitScheduledRead(mismatched.intent().objectKey());
 
         assertThat(statusOf(missing.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         assertThat(statusOf(mismatched.assetId())).isEqualTo(MediaAsset.STATUS_UPLOADING);
         assertThat(countJobs()).isZero();
         assertThat(countOutbox()).isZero();
         assertThat(readOriginal(mismatched.intent().objectKey())).isEqualTo(different);
+    }
+
+    private void awaitScheduledRead(String objectKey) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(5);
+        while (Instant.now().isBefore(deadline)) {
+            if (objects.hasReadOnSchedulerThread(objectKey)) return;
+            Thread.sleep(25L);
+        }
+        assertThat(objects.readThreads(objectKey))
+                .as("read threads for %s", objectKey)
+                .anyMatch(thread -> thread.startsWith("scheduled-media-storage-"));
     }
 
     private RegisteredUpload registerUpload(String contentType, String extension, byte[] bytes) {
@@ -284,6 +295,46 @@ class MediaRegistrationOnlyRecoveryIT {
         assertThat(actualRoot.startsWith(temporaryRoot)).isTrue();
         assertThat(actualRoot).isNotEqualTo(temporaryRoot);
         return actualRoot;
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class RecordingMediaObjectStoreConfiguration {
+        @Bean
+        @Primary
+        RecordingMediaObjectStore recordingMediaObjectStore(
+                S3StorageService s3,
+                @Value("${app.storage.local.baseDir:uploads}") String root) {
+            return new RecordingMediaObjectStore(s3, root);
+        }
+    }
+
+    static final class RecordingMediaObjectStore extends MediaObjectStore {
+        private final ConcurrentMap<String, Set<String>> readThreadsByKey = new ConcurrentHashMap<>();
+
+        RecordingMediaObjectStore(S3StorageService s3, String root) {
+            super(s3, root);
+        }
+
+        @Override
+        public byte[] readOriginal(String provider, String objectKey) {
+            readThreadsByKey.computeIfAbsent(objectKey, ignored -> ConcurrentHashMap.newKeySet())
+                    .add(Thread.currentThread().getName());
+            return super.readOriginal(provider, objectKey);
+        }
+
+        void clearReadObservations() {
+            readThreadsByKey.clear();
+        }
+
+        Set<String> readThreads(String objectKey) {
+            Set<String> threads = readThreadsByKey.get(objectKey);
+            return threads == null ? Set.of() : Set.copyOf(threads);
+        }
+
+        boolean hasReadOnSchedulerThread(String objectKey) {
+            return readThreads(objectKey).stream()
+                    .anyMatch(thread -> thread.startsWith("scheduled-media-storage-"));
+        }
     }
 
     private record RegisteredUpload(String assetId, MediaUploadIntent intent) {
