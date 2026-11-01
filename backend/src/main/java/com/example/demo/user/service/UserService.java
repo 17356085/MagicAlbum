@@ -165,7 +165,7 @@ public class UserService {
         // 基本校验
         if (nextUsername.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "用户名不能为空");
         if (nextEmail.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "邮箱不能为空");
-        if (nextPhone.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "手机号不能为空");
+        if (nextPhone != null && nextPhone.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "手机号不能为空");
 
         boolean emailChanged = !Objects.equals(nextEmail, u.getEmail());
         boolean phoneChanged = !Objects.equals(nextPhone, u.getPhone());
@@ -177,9 +177,11 @@ public class UserService {
         userRepository.findByEmail(nextEmail).ifPresent(other -> {
             if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "邮箱已被使用");
         });
-        userRepository.findByPhone(nextPhone).ifPresent(other -> {
-            if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.CONFLICT, "该手机号已被占用");
-        });
+        if (nextPhone != null) {
+            userRepository.findByPhone(nextPhone).ifPresent(other -> {
+                if (!other.getId().equals(userId)) throw new ResponseStatusException(HttpStatus.CONFLICT, "该手机号已被占用");
+            });
+        }
 
         u.setUsername(nextUsername);
         u.setEmail(nextEmail);

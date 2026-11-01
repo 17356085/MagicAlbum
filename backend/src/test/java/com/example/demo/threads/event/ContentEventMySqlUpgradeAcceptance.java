@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261101.1";
+    private static final String LATEST_MIGRATION_VERSION = "20261101.2";
     private static final int LEGACY_MEDIA_ATTEMPTS = 7;
     private static final String LEGACY_MEDIA_AVAILABLE_AT = "2026-01-02 03:04:05.123456";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
@@ -82,6 +82,16 @@ class ContentEventMySqlUpgradeAcceptance {
                             connection, LEGACY_MEDIA_ATTEMPTS, LEGACY_MEDIA_AVAILABLE_AT);
             assertPublishedMediaRecovery(connection, mediaRecoveryFixture, false);
 
+            Flyway phoneBaseline = flyway(url, username, password).target("20261101.1").load();
+            phoneBaseline.migrate();
+            phoneBaseline.validate();
+            assertFlywayVersion(connection, "20261101.1");
+            assertThat(count(connection, "SELECT COUNT(*) FROM information_schema.columns "
+                    + "WHERE table_schema=DATABASE() AND table_name='users' "
+                    + "AND column_name='phone' AND is_nullable='NO'")).isEqualTo(1);
+            assertPublishedMediaRecovery(connection, mediaRecoveryFixture, true);
+            insertPhoneFixture(connection, "legacy-unverified-phone", "19821864416");
+
             Flyway complete = flyway(url, username, password).load();
             complete.migrate();
             complete.validate();
@@ -90,10 +100,15 @@ class ContentEventMySqlUpgradeAcceptance {
             assertVerifiedContactColumn(connection, "phone_verified");
             assertThat(count(connection,
                     "SELECT COUNT(*) FROM users WHERE username=? "
-                            + "AND email_verified=FALSE AND phone_verified=FALSE",
+                            + "AND phone='13900000101' AND email_verified=FALSE AND phone_verified=FALSE",
                     "legacy-content-author"))
                     .as("historical password user contacts remain unverified after upgrade")
                     .isEqualTo(1);
+            assertThat(count(connection, "SELECT COUNT(*) FROM users WHERE username=? "
+                    + "AND phone=? AND phone_verified=FALSE", "legacy-unverified-phone", "19821864416"))
+                    .as("ambiguous historical numbers are not automatically rewritten")
+                    .isEqualTo(1);
+            assertNullablePhoneUniqueness(connection);
             assertThat(longValue(connection,
                     "SELECT content_version FROM threads WHERE id=?", legacyThreadId))
                     .as("legacy thread content_version")
@@ -139,6 +154,41 @@ class ContentEventMySqlUpgradeAcceptance {
         return Flyway.configure()
                 .dataSource(url, username, password)
                 .locations(MIGRATION_LOCATION);
+    }
+
+    private static void assertNullablePhoneUniqueness(Connection connection) throws SQLException {
+        assertThat(count(connection, "SELECT COUNT(*) FROM information_schema.columns "
+                + "WHERE table_schema=DATABASE() AND table_name='users' "
+                + "AND column_name='phone' AND is_nullable='YES'"))
+                .as("missing phones are stored as NULL")
+                .isEqualTo(1);
+        boolean previousAutoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            String suffix = UUID.randomUUID().toString().replace("-", "");
+            insertPhoneFixture(connection, "phone-null-a-" + suffix, null);
+            insertPhoneFixture(connection, "phone-null-b-" + suffix, null);
+            assertThat(count(connection, "SELECT COUNT(*) FROM users "
+                    + "WHERE username IN (?,?) AND phone IS NULL",
+                    "phone-null-a-" + suffix, "phone-null-b-" + suffix)).isEqualTo(2);
+            assertThatThrownBy(() -> insertPhoneFixture(connection, "phone-duplicate-" + suffix, "13900000101"))
+                    .isInstanceOf(SQLException.class)
+                    .satisfies(error -> assertThat(((SQLException) error).getSQLState()).startsWith("23"));
+        } finally {
+            connection.rollback();
+            connection.setAutoCommit(previousAutoCommit);
+        }
+    }
+
+    private static void insertPhoneFixture(Connection connection, String username, String phone) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "INSERT INTO users (username,email,phone,password_hash) VALUES (?,?,?,?)")) {
+            statement.setString(1, username);
+            statement.setString(2, username + "@example.test");
+            statement.setString(3, phone);
+            statement.setString(4, "test-only-hash");
+            statement.executeUpdate();
+        }
     }
 
     private static String requiredEnvironment(String name) {

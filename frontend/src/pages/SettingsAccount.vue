@@ -138,7 +138,7 @@ function validateBasicInfoResponse(value: unknown): BasicInfoResponse {
   const { record, id } = parseBasicInfoResponseIdentity(value)
   const hasOwn = (field: string): boolean => Object.prototype.hasOwnProperty.call(record, field)
   if (!hasOwn('username') || typeof record.username !== 'string' || !record.username.trim()
-    || !hasOwn('phone') || typeof record.phone !== 'string' || !record.phone.trim()
+    || !hasOwn('phone') || (record.phone !== null && (typeof record.phone !== 'string' || !record.phone.trim()))
     || !hasOwn('email') || typeof record.email !== 'string' || !record.email.trim()) {
     throw new BasicInfoResponseError()
   }
@@ -218,6 +218,7 @@ function passwordHasValue(): boolean {
 }
 
 const accountDirty = computed(() => accountSnapshot(profile) !== profileBaseline.value || passwordHasValue())
+const baselineHasPhone = computed(() => Boolean((JSON.parse(profileBaseline.value) as AccountForm).phone.trim()))
 const contactChanged = computed(() => {
   if (!accountLoaded.value) return false
   const baseline = JSON.parse(profileBaseline.value) as AccountForm
@@ -394,9 +395,9 @@ async function reloadProfile(): Promise<void> {
     const response = validateBasicInfoResponse(data)
     confirmedOwnerKey = idKey(response.id)
     profile.username = response.username
-    profile.phone = response.phone
+    profile.phone = response.phone ?? ''
     profile.email = response.email
-    profileBaseline.value = accountSnapshot(response)
+    profileBaseline.value = accountSnapshot(normalizeAccount(response))
     accountLoaded.value = true
     clearErrors()
   } catch (error: unknown) {
@@ -419,8 +420,8 @@ function validateProfile(): boolean {
   if (!isValidUsername(profile.username)) { errors.username = '3-64 位字母、数字或下划线'; ok = false }
   const phone = String(profile.phone || '').trim()
   const email = String(profile.email || '').trim()
-  if (!phone) { errors.phone = '请输入手机号'; ok = false }
-  else if (!isValidPhone(phone)) { errors.phone = '请输入有效手机号（1 开头的 11 位）'; ok = false }
+  if (!phone && baselineHasPhone.value) { errors.phone = '请输入手机号'; ok = false }
+  else if (phone && !isValidPhone(phone)) { errors.phone = '请输入有效手机号（1 开头的 11 位）'; ok = false }
   if (!email) { errors.email = '请输入邮箱'; ok = false }
   else if (email.length > 255) { errors.email = '邮箱长度不能超过 255 个字符'; ok = false }
   else if (!isValidEmail(email)) { errors.email = '邮箱格式不正确'; ok = false }
@@ -446,16 +447,16 @@ async function onSaveProfile(): Promise<void> {
   profileMessage.value = ''
   profileMessageError.value = false
   try {
-    const data = await updateMyBasicInfo(submitted)
+    const data = await updateMyBasicInfo({ ...submitted, phone: submitted.phone || null })
     if (!isCurrentOperation(context, sequence, profileSaveSeq)) return
     assertResponseOwner(data)
     const server = validateBasicInfoResponse(data)
     confirmedOwnerKey = idKey(server.id)
     const current = normalizeAccount(profile)
     profile.username = current.username !== submitted.username ? current.username : server.username
-    profile.phone = current.phone !== submitted.phone ? current.phone : server.phone
+    profile.phone = current.phone !== submitted.phone ? current.phone : (server.phone ?? '')
     profile.email = current.email !== submitted.email ? current.email : server.email
-    profileBaseline.value = accountSnapshot(server)
+    profileBaseline.value = accountSnapshot(normalizeAccount(server))
     const confirmedOwnerId = currentOwnerId()
     const ownerId = confirmedOwnerId !== null
       && (context.ownerId === null || sameOwner(context.ownerId, confirmedOwnerId))
@@ -594,8 +595,8 @@ onBeforeUnmount(() => {
           <p v-if="errors.username" id="settings-account-username-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.username }}</p>
         </div>
         <div>
-          <label for="settings-account-phone" class="mb-1 block text-sm font-medium">手机号</label>
-          <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" required placeholder="1 开头的 11 位手机号"
+          <label for="settings-account-phone" class="mb-1 block text-sm font-medium">手机号{{ baselineHasPhone ? '' : '（可稍后添加）' }}</label>
+          <input id="settings-account-phone" v-model.trim="profile.phone" type="tel" :required="baselineHasPhone" placeholder="1 开头的 11 位手机号"
                  :aria-invalid="errors.phone ? 'true' : 'false'" :aria-describedby="errors.phone ? 'settings-account-phone-error' : undefined"
                  class="ui-field text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" />
           <p v-if="errors.phone" id="settings-account-phone-error" role="alert" aria-live="assertive" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ errors.phone }}</p>

@@ -21,6 +21,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -177,7 +178,6 @@ class CognitoOtpAuthServiceTest {
 
         when(userRepository.findByEmail("demo@example.com")).thenReturn(Optional.empty());
         when(userRepository.existsByUsername("demo")).thenReturn(false);
-        when(userRepository.existsByPhone(any())).thenReturn(false);
         when(passwordEncoder.encode(any())).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
             User user = invocation.getArgument(0);
@@ -217,42 +217,27 @@ class CognitoOtpAuthServiceTest {
         verify(userRepository).save(created.capture());
         assertTrue(created.getValue().isEmailVerified());
         assertFalse(created.getValue().isPhoneVerified());
+        assertNull(created.getValue().getPhone());
     }
 
     @Test
-    void emailFinishWithMinValueHashCreatesAnElevenDigitSyntheticPhone() {
+    void emailFinishWithMinValueHashLeavesPhoneUnassigned() {
         String email = "9iaplaw@example.com";
         EmailFinishFixture fixture = emailFinishFixture(email, "session-min", "9iaplaw", 801L);
-        when(fixture.users.existsByPhone(anyString())).thenReturn(false);
 
         LoginResponse response = fixture.service.finish(finishRequest(AuthCodeChannel.email, email, "session-min"));
 
-        assertProvisionedPhone(fixture.users, response, "19847483648");
+        assertUnassignedPhone(fixture.users, response);
     }
 
     @Test
-    void emailFinishWithNormalHashKeepsTheExistingSyntheticPhone() {
+    void emailFinishWithNormalHashLeavesPhoneUnassigned() {
         String email = "demo@example.com";
         EmailFinishFixture fixture = emailFinishFixture(email, "session-normal", "demo", 802L);
-        when(fixture.users.existsByPhone("19821864416")).thenReturn(false);
 
         LoginResponse response = fixture.service.finish(finishRequest(AuthCodeChannel.email, email, "session-normal"));
 
-        assertProvisionedPhone(fixture.users, response, "19821864416");
-    }
-
-    @Test
-    void emailFinishAdvancesSyntheticPhoneWhenThePreferredNumberIsOccupied() {
-        String email = "demo@example.com";
-        EmailFinishFixture fixture = emailFinishFixture(email, "session-collision", "demo", 803L);
-        when(fixture.users.existsByPhone("19821864416")).thenReturn(true);
-        when(fixture.users.existsByPhone("19821864417")).thenReturn(false);
-
-        LoginResponse response = fixture.service.finish(finishRequest(AuthCodeChannel.email, email, "session-collision"));
-
-        assertProvisionedPhone(fixture.users, response, "19821864417");
-        verify(fixture.users).existsByPhone("19821864416");
-        verify(fixture.users).existsByPhone("19821864417");
+        assertUnassignedPhone(fixture.users, response);
     }
 
     @Test
@@ -554,13 +539,12 @@ class CognitoOtpAuthServiceTest {
         return new EmailFinishFixture(service, users);
     }
 
-    private static void assertProvisionedPhone(UserRepository users, LoginResponse response, String expected) {
+    private static void assertUnassignedPhone(UserRepository users, LoginResponse response) {
         var created = org.mockito.ArgumentCaptor.forClass(User.class);
         verify(users).save(created.capture());
-        assertEquals(expected, created.getValue().getPhone());
-        assertTrue(created.getValue().getPhone().matches("^1\\d{10}$"));
-        assertEquals(created.getValue().getPhone(), response.getUser().getPhone());
-        assertTrue(response.getUser().getPhone().matches("^1\\d{10}$"));
+        assertNull(created.getValue().getPhone());
+        assertNull(response.getUser().getPhone());
+        verify(users, never()).existsByPhone(anyString());
     }
 
     private static final class EmailFinishFixture {

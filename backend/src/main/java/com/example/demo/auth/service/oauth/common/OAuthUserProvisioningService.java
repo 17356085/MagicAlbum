@@ -146,7 +146,6 @@ public class OAuthUserProvisioningService {
         user.setUsername(resolveUniqueUsername(githubUser));
         user.setEmail(createUniqueSyntheticOAuthEmail("github"));
         user.setEmailVerified(false);
-        user.setPhone(generateSyntheticPhone(githubUser.getId()));
         user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
         return userRepository.save(user);
@@ -159,7 +158,6 @@ public class OAuthUserProvisioningService {
                 ? normalizeProviderEmail(googleUser.getEmail())
                 : createUniqueSyntheticOAuthEmail("google"));
         user.setEmailVerified(emailVerified);
-        user.setPhone(generateSyntheticPhone(googleUser.getSub()));
         user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
         return userRepository.save(user);
@@ -172,7 +170,6 @@ public class OAuthUserProvisioningService {
                 ? normalizeProviderEmail(appleUser.getEmail())
                 : createUniqueSyntheticOAuthEmail("apple"));
         user.setEmailVerified(emailVerified);
-        user.setPhone(generateSyntheticPhone(appleUser.getSub()));
         user.setPhoneVerified(false);
         user.setPasswordHash(passwordEncoder.encode("oauth_" + UUID.randomUUID()));
         return userRepository.save(user);
@@ -331,28 +328,6 @@ public class OAuthUserProvisioningService {
             return email.substring(0, email.indexOf('@'));
         }
         return "Apple用户";
-    }
-
-    private String generateSyntheticPhone(Long githubId) {
-        long numeric = githubId == null ? Math.abs(UUID.randomUUID().hashCode()) : Math.abs(githubId);
-        return generateSyntheticPhone(numeric);
-    }
-
-    private String generateSyntheticPhone(String seed) {
-        long numeric = Math.abs(trimToEmpty(seed).hashCode());
-        return generateSyntheticPhone(numeric);
-    }
-
-    private String generateSyntheticPhone(long numericSeed) {
-        long numeric = Math.abs(numericSeed);
-        String suffix = String.format("%08d", numeric % 100_000_000L);
-        String candidate = "199" + suffix;
-        while (userRepository.existsByPhone(candidate)) {
-            numeric++;
-            suffix = String.format("%08d", numeric % 100_000_000L);
-            candidate = "199" + suffix;
-        }
-        return candidate;
     }
 
     private boolean isBlank(String value) {

@@ -117,6 +117,50 @@ describe('SettingsAccount', () => {
     expect((wrapper.find('#settings-account-username').element as HTMLInputElement).value).toBe('blue_user')
   })
 
+  it('loads an account without a phone and saves another field without inventing one', async () => {
+    const noPhone: BasicInfoResponse = { ...account, phone: null }
+    getMyBasicInfoMock.mockResolvedValueOnce(noPhone)
+    updateMyBasicInfoMock.mockResolvedValueOnce({ ...noPhone, username: 'renamed_user' })
+    const { wrapper, auth } = createWrapper()
+    await flushPromises()
+
+    expect((wrapper.get('#settings-account-phone').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#settings-account-phone').element as HTMLInputElement).required).toBe(false)
+    expect(wrapper.text()).toContain('手机号（可稍后添加）')
+    await wrapper.get('#settings-account-username').setValue('renamed_user')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: 'renamed_user', phone: null, email: account.email })
+    expect(wrapper.get('[role="status"]').text()).toContain('保存成功')
+    expect(auth.user?.phone).toBeNull()
+  })
+
+  it('can add a phone to an account that did not have one', async () => {
+    getMyBasicInfoMock.mockResolvedValueOnce({ ...account, phone: null })
+    updateMyBasicInfoMock.mockResolvedValueOnce({ ...account, phone: '13900139000' })
+    const { wrapper } = createWrapper()
+    await flushPromises()
+
+    await wrapper.get('#settings-account-phone').setValue('13900139000')
+    expect(wrapper.text()).toContain('新的邮箱或手机号暂不能用于验证码登录')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(updateMyBasicInfoMock).toHaveBeenCalledWith({ username: account.username, phone: '13900139000', email: account.email })
+    expect((wrapper.get('#settings-account-phone').element as HTMLInputElement).value).toBe('13900139000')
+  })
+
+  it('does not silently clear a previously supplied phone', async () => {
+    const { wrapper } = createWrapper()
+    await flushPromises()
+    await wrapper.get('#settings-account-phone').setValue('')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+
+    expect(updateMyBasicInfoMock).not.toHaveBeenCalled()
+    expect(wrapper.get('#settings-account-phone-error').text()).toContain('请输入手机号')
+  })
+
   it.each(malformedAccountResponses)('keeps the account unloaded for a malformed GET response (%s)', async (_label, response) => {
     getMyBasicInfoMock.mockResolvedValueOnce(response as BasicInfoResponse)
     const { wrapper } = createWrapper()

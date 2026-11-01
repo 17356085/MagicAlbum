@@ -130,6 +130,43 @@ class UserServicePhoneConflictTest {
         assertThat(current.isPhoneVerified()).isTrue();
     }
 
+    @Test
+    void basic_info_update_allows_an_existing_missing_phone_without_looking_up_null() {
+        User current = user(7L, "current_user", "current@example.test", null);
+        current.setEmailVerified(true);
+        BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
+        request.setUsername("renamed_user");
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var updated = service.updateBasicInfo(7L, request);
+
+        assertThat(updated.getUsername()).isEqualTo("renamed_user");
+        assertThat(updated.getPhone()).isNull();
+        assertThat(current.isEmailVerified()).isTrue();
+        assertThat(current.isPhoneVerified()).isFalse();
+        verify(userRepository, never()).findByPhone(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void basic_info_update_can_add_an_unverified_phone_to_an_account_without_one() {
+        User current = user(7L, "current_user", "current@example.test", null);
+        current.setEmailVerified(true);
+        BasicInfoUpdateRequest request = new BasicInfoUpdateRequest();
+        request.setPhone(PHONE);
+        when(userRepository.findByIdForAccountUpdate(7L)).thenReturn(Optional.of(current));
+        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var updated = service.updateBasicInfo(7L, request);
+
+        assertThat(updated.getPhone()).isEqualTo(PHONE);
+        assertThat(current.isEmailVerified()).isTrue();
+        assertThat(current.isPhoneVerified()).isFalse();
+        verify(userRepository).findByPhone(PHONE);
+    }
+
     private static User user(Long id, String username, String email, String phone) {
         User user = new User();
         user.setId(id);

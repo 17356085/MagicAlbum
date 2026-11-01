@@ -7,7 +7,7 @@ export interface PasswordUpdatePayload {
 
 export interface BasicInfoPayload {
   username: string
-  phone: string
+  phone: string | null
   email: string
 }
 

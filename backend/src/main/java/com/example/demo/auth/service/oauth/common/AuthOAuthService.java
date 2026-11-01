@@ -304,7 +304,7 @@ public class AuthOAuthService {
                 user.getId(),
                 trimToEmpty(user.getUsername()),
                 trimToEmpty(user.getEmail()),
-                trimToEmpty(user.getPhone()),
+                user.getPhone() == null ? null : user.getPhone().trim(),
                 user.getCreatedAt(),
                 codeChallenge,
                 OffsetDateTime.now(ZoneOffset.UTC).plusSeconds(authorizationCodeTtlSeconds)

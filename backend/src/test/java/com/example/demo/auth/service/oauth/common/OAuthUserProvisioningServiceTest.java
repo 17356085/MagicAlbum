@@ -43,7 +43,6 @@ class OAuthUserProvisioningServiceTest {
         when(passwords.encode(anyString())).thenReturn("encoded-oauth-password");
         when(users.existsByUsername(anyString())).thenReturn(false);
         when(users.existsByEmail(anyString())).thenReturn(false);
-        when(users.existsByPhone(anyString())).thenReturn(false);
         when(profiles.findById(anyLong())).thenReturn(Optional.empty());
         when(users.save(any(User.class))).thenAnswer(invocation -> {
             User saved = invocation.getArgument(0);
@@ -70,6 +69,8 @@ class OAuthUserProvisioningServiceTest {
         assertThat(provisioned.getEmail()).isNotEqualTo("victim@example.com");
         assertThat(provisioned.isEmailVerified()).isFalse();
         assertThat(provisioned.isPhoneVerified()).isFalse();
+        assertThat(provisioned.getPhone()).isNull();
+        verify(users, never()).existsByPhone(anyString());
         verify(users, never()).findByEmail("victim@example.com");
         verify(accounts).bindExternalAccount(org.mockito.ArgumentMatchers.eq(9001L),
                 org.mockito.ArgumentMatchers.eq("google"), org.mockito.ArgumentMatchers.eq("google-unverified"), any());
@@ -113,6 +114,8 @@ class OAuthUserProvisioningServiceTest {
         assertThat(provisioned.getEmail()).isNotEqualTo("github_12345@oauth.local");
         assertThat(provisioned.isEmailVerified()).isFalse();
         assertThat(provisioned.isPhoneVerified()).isFalse();
+        assertThat(provisioned.getPhone()).isNull();
+        verify(users, never()).existsByPhone(anyString());
         verify(users, never()).findByEmail(anyString());
         verify(accounts).bindExternalAccount(org.mockito.ArgumentMatchers.eq(9001L),
                 org.mockito.ArgumentMatchers.eq("github"), org.mockito.ArgumentMatchers.eq("12345"), any());
@@ -131,6 +134,7 @@ class OAuthUserProvisioningServiceTest {
         assertThat(provisioned.getEmail()).isEqualTo("verified@example.com");
         assertThat(provisioned.isEmailVerified()).isTrue();
         assertThat(provisioned.isPhoneVerified()).isFalse();
+        assertThat(provisioned.getPhone()).isNull();
     }
 
     @Test
@@ -144,6 +148,7 @@ class OAuthUserProvisioningServiceTest {
         assertThat(provisioned.getEmail()).endsWith("@oauth.invalid");
         assertThat(provisioned.isEmailVerified()).isFalse();
         assertThat(provisioned.isPhoneVerified()).isFalse();
+        assertThat(provisioned.getPhone()).isNull();
     }
 
     @Test
