@@ -6,7 +6,7 @@ import { normalizeImageUrl } from '@/utils/image'
 import { createBaseMarkdownRenderer, renderInlineMarkdown } from '@/utils/markdownBase'
 import { getSingleQueryValue } from '@/utils/router'
 import { formatAbsoluteTime } from '@/composables/time'
-import type { Id, Thread } from '@/types'
+import type { Id, PageResult, Thread } from '@/types'
 
 const loading = ref(false)
 const error = ref('')
@@ -79,27 +79,86 @@ function normalizeRoutePage(raw: Parameters<typeof getSingleQueryValue>[0]): num
   return Number.isSafeInteger(value) && value >= 1 ? value : 1
 }
 
+interface RouteSnapshot {
+  page: string
+  q: string
+  tag: string
+  sectionId: string
+}
+
+function captureRouteSnapshot(): RouteSnapshot {
+  return {
+    page: getSingleQueryValue(route.query.page),
+    q: getSingleQueryValue(route.query.q),
+    tag: getSingleQueryValue(route.query.tag),
+    sectionId: getSingleQueryValue(route.query.sectionId),
+  }
+}
+
+function isCurrentRouteSnapshot(snapshot: RouteSnapshot): boolean {
+  const current = captureRouteSnapshot()
+  return current.page === snapshot.page
+    && current.q === snapshot.q
+    && current.tag === snapshot.tag
+    && current.sectionId === snapshot.sectionId
+}
+
+function responseTotalPages(response: PageResult<Thread>): number {
+  const responseSize = Number(response.size)
+  const responseTotal = Number(response.total)
+  if (!Number.isFinite(responseSize) || responseSize <= 0 || !Number.isFinite(responseTotal) || responseTotal < 0) {
+    return 1
+  }
+  return Math.max(1, Math.ceil(responseTotal / responseSize))
+}
+
 async function load() {
   const requestSeq = ++loadRequestSeq
   loading.value = true
   error.value = ''
   try {
-    const sidRaw = route.query.sectionId ? getSingleQueryValue(route.query.sectionId) : ''
+    const routeSnapshot = captureRouteSnapshot()
+    const sidRaw = routeSnapshot.sectionId
     const sid = sidRaw ? Number(sidRaw) : undefined
-    const rp = normalizeRoutePage(route.query.page)
-    const rq = route.query.q ? getSingleQueryValue(route.query.q) : ''
-    const rt = route.query.tag ? getSingleQueryValue(route.query.tag) : ''
+    const rp = normalizeRoutePage(routeSnapshot.page)
+    const rq = routeSnapshot.q
+    const rt = routeSnapshot.tag
     page.value = rp
     inputPage.value = String(page.value || '')
     sectionId.value = sid || null
     q.value = rq
     tag.value = rt
     const data = await listThreads({ q: rq, tag: rt, page: page.value, size: size.value, sectionId: sid })
-    if (requestSeq !== loadRequestSeq) return
+    if (requestSeq !== loadRequestSeq || !isCurrentRouteSnapshot(routeSnapshot)) return
+
+    const lastValidPage = responseTotalPages(data)
+    if (data.items.length === 0 && lastValidPage < rp) {
+      let navigationFailed = false
+      try {
+        const navigationFailure = await router.replace({
+          name: 'discover',
+          query: { ...route.query, page: lastValidPage },
+        })
+        navigationFailed = Boolean(navigationFailure)
+      } catch (_) {
+        navigationFailed = true
+      }
+      if (navigationFailed && requestSeq === loadRequestSeq && isCurrentRouteSnapshot(routeSnapshot)) {
+        items.value = []
+        currentSectionName.value = ''
+        total.value = data.total
+        size.value = data.size
+        page.value = rp
+        error.value = '无法返回有效页，请重试'
+      }
+      return
+    }
+
+    if (requestSeq !== loadRequestSeq || !isCurrentRouteSnapshot(routeSnapshot)) return
     items.value = sortThreadsByCreatedAt(data.items)
     currentSectionName.value = data.items.length > 0 ? (data.items[0].sectionName || '') : ''
     total.value = data.total
-    page.value = data.page
+    page.value = rp
     size.value = data.size
   } catch (_) {
     if (requestSeq === loadRequestSeq) error.value = '加载帖子失败'

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   listThreads: vi.fn(),
   getUserProfile: vi.fn(),
   route: { query: {} as Record<string, unknown> },
-  router: { push: vi.fn() },
+  router: { push: vi.fn(), replace: vi.fn() },
 }))
 
 vi.mock('@/api/threads', () => ({ listThreads: mocks.listThreads }))
@@ -34,6 +34,7 @@ describe('Discover', () => {
     mocks.listThreads.mockReset()
     mocks.getUserProfile.mockReset()
     mocks.router.push.mockReset()
+    mocks.router.replace.mockReset()
     mocks.route = reactive({ query: { q: 'search', tag: 'tag', page: '2' } })
   })
 
@@ -207,6 +208,180 @@ describe('Discover', () => {
       size: 10,
       sectionId: 9,
     })
+    wrapper.unmount()
+  })
+
+  it('redirects an out-of-range empty page to the last valid route page', async () => {
+    mocks.route.query = { q: 'search', tag: 'tag', page: '3', sectionId: '7', keep: 'yes' }
+    mocks.listThreads
+      .mockResolvedValueOnce({ items: [], page: 3, size: 10, total: 11 })
+      .mockResolvedValueOnce({
+        items: [{ id: 12, title: 'Last valid page', createdAt: '2026-10-08T00:00:00Z' }],
+        page: 2,
+        size: 10,
+        total: 11,
+      })
+    mocks.router.replace.mockImplementation(async (location: { query: Record<string, unknown> }) => {
+      mocks.route.query = location.query
+    })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(mocks.router.replace).toHaveBeenCalledTimes(1)
+    expect(mocks.router.replace).toHaveBeenCalledWith({
+      name: 'discover',
+      query: { q: 'search', tag: 'tag', page: 2, sectionId: '7', keep: 'yes' },
+    })
+    expect(mocks.listThreads).toHaveBeenCalledTimes(2)
+    expect(mocks.listThreads).toHaveBeenLastCalledWith({
+      q: 'search',
+      tag: 'tag',
+      page: 2,
+      size: 10,
+      sectionId: 7,
+    })
+    expect(wrapper.text()).toContain('Last valid page')
+    wrapper.unmount()
+  })
+
+  it('returns to page one when an out-of-range empty response has no items', async () => {
+    mocks.route.query = { q: 'empty', tag: 'tag', page: '4', sectionId: '8' }
+    mocks.listThreads
+      .mockResolvedValueOnce({ items: [], page: 4, size: 10, total: 0 })
+      .mockResolvedValueOnce({ items: [], page: 1, size: 10, total: 0 })
+    mocks.router.replace.mockImplementation(async (location: { query: Record<string, unknown> }) => {
+      mocks.route.query = location.query
+    })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(mocks.router.replace).toHaveBeenCalledWith({
+      name: 'discover',
+      query: { q: 'empty', tag: 'tag', page: 1, sectionId: '8' },
+    })
+    expect(mocks.listThreads).toHaveBeenCalledTimes(2)
+    expect(mocks.listThreads).toHaveBeenLastCalledWith({
+      q: 'empty',
+      tag: 'tag',
+      page: 1,
+      size: 10,
+      sectionId: 8,
+    })
+    expect(wrapper.text()).toContain('暂无帖子')
+    wrapper.unmount()
+  })
+
+  it('keeps a legal empty last page without replacing the route', async () => {
+    mocks.route.query = { q: 'search', tag: 'tag', page: '2' }
+    mocks.listThreads.mockResolvedValueOnce({ items: [], page: 2, size: 10, total: 11 })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(mocks.router.replace).not.toHaveBeenCalled()
+    expect(mocks.listThreads).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('暂无帖子')
+    wrapper.unmount()
+  })
+
+  it('does not redirect from a stale out-of-range response after the filter changes', async () => {
+    mocks.route.query = { q: 'old', tag: '', page: '3' }
+    let resolveOld!: (result: PageResult<Thread>) => void
+    mocks.listThreads
+      .mockReturnValueOnce(new Promise<PageResult<Thread>>((resolve) => { resolveOld = resolve }))
+      .mockResolvedValueOnce({
+        items: [{ id: 14, title: 'New filter result', createdAt: '2026-10-09T00:00:00Z' }],
+        page: 1,
+        size: 10,
+        total: 1,
+      })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await nextTick()
+    mocks.route.query = { q: 'new', tag: '', page: '1' }
+    await flushPromises()
+
+    resolveOld({ items: [], page: 3, size: 10, total: 11 })
+    await flushPromises()
+
+    expect(mocks.router.replace).not.toHaveBeenCalled()
+    expect(mocks.listThreads).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('New filter result')
+    wrapper.unmount()
+  })
+
+  it('shows a retryable error when fallback navigation rejects without retrying the page', async () => {
+    mocks.route.query = { q: 'search', tag: 'tag', page: '3' }
+    mocks.listThreads.mockResolvedValueOnce({ items: [], page: 3, size: 10, total: 11 })
+    mocks.router.replace.mockRejectedValueOnce(new Error('navigation cancelled'))
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(mocks.router.replace).toHaveBeenCalledTimes(1)
+    expect(mocks.listThreads).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="alert"]').text()).toContain('无法返回有效页，请重试')
+    expect(wrapper.get('[role="alert"] button').text()).toContain('重试')
+    wrapper.unmount()
+  })
+
+  it('treats a resolved navigation failure as a retryable fallback error', async () => {
+    mocks.route.query = { q: 'search', tag: 'tag', page: '3' }
+    mocks.listThreads.mockResolvedValueOnce({ items: [], page: 3, size: 10, total: 11 })
+    mocks.router.replace.mockResolvedValueOnce({ type: 4 })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(mocks.router.replace).toHaveBeenCalledTimes(1)
+    expect(mocks.listThreads).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="alert"]').text()).toContain('无法返回有效页，请重试')
+    wrapper.unmount()
+  })
+
+  it('does not let a failed stale fallback navigation overwrite a newer route result', async () => {
+    mocks.route.query = { q: 'old', tag: '', page: '3' }
+    mocks.listThreads
+      .mockResolvedValueOnce({ items: [], page: 3, size: 10, total: 11 })
+      .mockResolvedValueOnce({
+        items: [{ id: 15, title: 'Newest filter result', createdAt: '2026-10-10T00:00:00Z' }],
+        page: 1,
+        size: 10,
+        total: 1,
+      })
+    let rejectReplace!: (reason?: unknown) => void
+    mocks.router.replace.mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectReplace = reject
+    }))
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    expect(mocks.router.replace).toHaveBeenCalledTimes(1)
+
+    mocks.route.query = { q: 'new', tag: '', page: '1' }
+    await flushPromises()
+    rejectReplace(new Error('navigation cancelled'))
+    await flushPromises()
+
+    expect(mocks.listThreads).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('Newest filter result')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
