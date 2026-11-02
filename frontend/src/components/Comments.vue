@@ -689,18 +689,15 @@ watch(page, () => {
 }, { flush: 'sync' })
 
 function goPrevPage() {
-  const max = Math.max(1, Math.ceil(Number(total.value || 0) / Math.max(1, Number(size.value || 15))))
-  page.value = Math.min(Math.max(1, Number(page.value || 1) - 1), max)
+  page.value = Math.min(Math.max(1, Number(page.value || 1) - 1), pageCount.value)
 }
 
 function goNextPage() {
-  const max = Math.max(1, Math.ceil(Number(total.value || 0) / Math.max(1, Number(size.value || 15))))
-  page.value = Math.min(max, Number(page.value || 1) + 1)
+  page.value = Math.min(pageCount.value, Number(page.value || 1) + 1)
 }
 
 function applyPageInput() {
-  const max = Math.max(1, Math.ceil(Number(total.value || 0) / Math.max(1, Number(size.value || 15))))
-  page.value = Math.min(Math.max(1, Number(page.value || 1)), max)
+  page.value = Math.min(Math.max(1, Number(page.value || 1)), pageCount.value)
 }
 
 watch([sortKey, sortOrder], () => {

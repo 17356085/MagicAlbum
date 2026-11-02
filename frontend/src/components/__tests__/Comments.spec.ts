@@ -263,6 +263,81 @@ describe('Comments empty submission feedback', () => {
   })
 })
 
+describe('Comments pagination bounds', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    useAuthStore().applyAuthState({ accessToken: 'real-token' })
+  })
+
+  it('navigates between two pages and clamps page input for 16 comments at size 15', async () => {
+    listPostsMock.mockImplementation(async (_threadId, query = {}) => {
+      const requestedPage = Number(query.page || 1)
+      return result(1, `第${requestedPage}页评论`, 1, requestedPage, 16)
+    })
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+
+      const vm = wrapper.vm as unknown as { page: number }
+      const pageInput = wrapper.get('input[aria-label="评论页码"]')
+      const previousButton = wrapper.findAll('button').find((button) => button.text() === '上一页')
+      const nextButton = wrapper.findAll('button').find((button) => button.text() === '下一页')
+      expect((pageInput.element as HTMLInputElement).value).toBe('1')
+      expect((previousButton!.element as HTMLButtonElement).disabled).toBe(true)
+      expect((nextButton!.element as HTMLButtonElement).disabled).toBe(false)
+
+      await nextButton!.trigger('click')
+      await flushPromises()
+      expect(vm.page).toBe(2)
+      const pageTwoPreviousButton = wrapper.findAll('button').find((button) => button.text() === '上一页')
+      const pageTwoNextButton = wrapper.findAll('button').find((button) => button.text() === '下一页')
+      expect((pageTwoPreviousButton!.element as HTMLButtonElement).disabled).toBe(false)
+      expect((pageTwoNextButton!.element as HTMLButtonElement).disabled).toBe(true)
+
+      await pageTwoPreviousButton!.trigger('click')
+      await flushPromises()
+      expect(vm.page).toBe(1)
+
+      await pageInput.setValue('999')
+      await pageInput.trigger('blur')
+      await flushPromises()
+      expect(vm.page).toBe(2)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the page at one when the total is zero', async () => {
+    listPostsMock.mockResolvedValue({ items: [], page: 1, size: 15, total: 0 })
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+
+      const vm = wrapper.vm as unknown as {
+        applyPageInput: () => void
+        goNextPage: () => void
+        goPrevPage: () => void
+        page: number
+      }
+      expect(wrapper.find('input[aria-label="评论页码"]').exists()).toBe(false)
+
+      vm.page = 999
+      vm.applyPageInput()
+      expect(vm.page).toBe(1)
+      vm.goPrevPage()
+      expect(vm.page).toBe(1)
+      vm.goNextPage()
+      expect(vm.page).toBe(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
 describe('Comments request ordering', () => {
   beforeEach(() => {
     listPostsMock.mockReset()
