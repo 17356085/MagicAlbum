@@ -1752,4 +1752,6 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 
 后端密码登录只要求现有密码非空，但登录界面和已验证解绑原先要求当前密码至少 8 位。隔离 H2 中使用测试账号 `old123` 的密码登录返回 200，随后的解绑验证却返回 400；前端旧实现的登录及解绑两个新回归也均未发送请求（`backend/target/legacy-password-backend-baseline-20261102.log`、`backend/target/legacy-password-frontend-baseline-20261102.log`）。这些是同一规则不一致的不同表现，不代表已证实真实用户使用短密码。
 
-现在登录和解绑验证接受非空的现有短密码，空白密码仍被拒绝，提交时不修剪有效密码前后空格；注册和修改新密码的强度政策未改变。前端认证、解绑及传输回归 105 项通过，后端安全链、解绑、密码修改和并发回归 29 项通过并打包；前端类型检查、定向 lint、构建及仓库结构和 Java 导入边界检查通过。日志为 `backend/target/legacy-password-frontend-reviewed-20261102.log` 和 `backend/target/legacy-password-backend-reviewed-20261102.log`。本次未检查真实用户密码或进行真实浏览器/第三方提供方验收。
+现在登录和解绑验证接受非空的现有短密码，后端继续拒绝空白密码，提交时不修剪密码；注册和修改新密码的强度政策未改变。前端认证、解绑及传输回归 105 项通过，后端安全链、解绑、密码修改和并发回归 29 项通过并打包；前端类型检查、定向 lint、构建及仓库结构和 Java 导入边界检查通过。日志为 `backend/target/legacy-password-frontend-reviewed-20261102.log` 和 `backend/target/legacy-password-backend-reviewed-20261102.log`。本次未检查真实用户密码或进行真实浏览器/第三方提供方验收。
+
+同日复审发现 Java 对 `String.isBlank()` 与浏览器 JavaScript `trim()` 的空白字符集合不同；例如不换行空格可被当前后端凭据校验接受，却会被上一版前端预先判为空。前端现只拦截空字符串，原样发送密码并由后端拒绝其认为为空白的输入。隔离 H2 已验证由 8 个不换行空格构成的现有密码可完成登录和解绑；前端测试覆盖登录和解绑时原样传递。前端相关回归 107 项、后端相关回归 30 项通过，类型检查、定向 lint、构建及结构检查通过；日志分别为 `backend/target/password-whitespace-frontend-reviewed-20261102.log` 和 `backend/target/password-whitespace-backend-20261102.log`。未查询真实用户是否拥有此类密码。

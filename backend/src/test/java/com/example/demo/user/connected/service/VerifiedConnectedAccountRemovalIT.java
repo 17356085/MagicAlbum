@@ -64,6 +64,21 @@ class VerifiedConnectedAccountRemovalIT {
     }
 
     @Test
+    void existing_nonbreaking_space_password_can_login_and_verify_unlink() throws Exception {
+        String password = "\u00a0".repeat(8);
+        User user = createUser("proof_nbsp", "proof_nbsp@example.test", null, password);
+        accounts.bindExternalAccount(user.getId(), "github", "proof-nbsp-gh", "GitHub");
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"proof_nbsp@example.test\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/users/me/connected-accounts/github/disconnect")
+                        .header("Authorization", bearer(user)).contentType(MediaType.APPLICATION_JSON)
+                        .content(proof(user, "proof_nbsp@example.test", password)))
+                .andExpect(status().isNoContent());
+        assertThat(accounts.findUserIdByExternalAccount("github", "proof-nbsp-gh")).isNull();
+    }
+
+    @Test
     void existing_short_password_can_login_and_verify_unlink() throws Exception {
         User user = createUser("proof_legacy", "proof_legacy@example.test", null, "old123");
         accounts.bindExternalAccount(user.getId(), "github", "proof-legacy-gh", "GitHub");

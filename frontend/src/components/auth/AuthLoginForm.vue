@@ -341,7 +341,7 @@ function validateEmail(email = form.email): boolean {
 }
 
 function validatePassword(): boolean {
-  if (!form.password.trim()) {
+  if (!form.password) {
     errors.password = '请输入密码'
     return false
   }

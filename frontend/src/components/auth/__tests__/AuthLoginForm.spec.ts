@@ -149,16 +149,27 @@ describe('AuthLoginForm async lifecycle', () => {
     wrapper.unmount()
   })
 
-  it('rejects a blank password while preserving surrounding spaces in a nonblank password', async () => {
+  it('rejects an empty password while preserving surrounding spaces in a nonempty password', async () => {
     const wrapper = mountLogin()
     await wrapper.get('#auth-login-phone').setValue('13800000000')
-    await wrapper.get('#auth-login-password').setValue('   ')
+    await wrapper.get('#auth-login-password').setValue('')
     await wrapper.get('form').trigger('submit')
     expect(authMocks.store.loginWithPhonePassword).not.toHaveBeenCalled()
     await wrapper.get('#auth-login-password').setValue(' x ')
     await wrapper.get('form').trigger('submit')
     await settle()
     expect(authMocks.store.loginWithPhonePassword).toHaveBeenCalledWith(expect.objectContaining({ password: ' x ' }))
+    wrapper.unmount()
+  })
+
+  it('does not discard an existing password containing nonbreaking spaces', async () => {
+    const wrapper = mountLogin()
+    const password = '\u00a0'.repeat(8)
+    await wrapper.get('#auth-login-phone').setValue('13800000000')
+    await wrapper.get('#auth-login-password').setValue(password)
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(authMocks.store.loginWithPhonePassword).toHaveBeenCalledWith(expect.objectContaining({ password }))
     wrapper.unmount()
   })
   beforeEach(() => {

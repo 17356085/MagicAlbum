@@ -63,6 +63,19 @@ describe('SettingsConnectedTab', () => {
     expect(disconnectAccountMock).toHaveBeenCalledWith('github',
       { identifier: 'alice@example.test', currentPassword: 'old123', bindingTag: 'a'.repeat(64) }, 'token-a')
   })
+
+  it('preserves nonbreaking spaces in the existing password during unlink verification', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('[aria-label="解绑 GitHub"]').trigger('click')
+    await wrapper.get('#connected-disconnect-identifier').setValue('alice@example.test')
+    const password = '\u00a0'.repeat(8)
+    await wrapper.get('#connected-disconnect-password').setValue(password)
+    await wrapper.get('#connected-disconnect-form').trigger('submit')
+    await flushPromises()
+    expect(disconnectAccountMock).toHaveBeenCalledWith('github',
+      { identifier: 'alice@example.test', currentPassword: password, bindingTag: 'a'.repeat(64) }, 'token-a')
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
