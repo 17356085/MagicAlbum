@@ -328,12 +328,29 @@ async function load(): Promise<void> {
       || sortKey.value !== requestedSortKey
       || sortOrder.value !== requestedSortOrder
     ) return
+    const responseItems = data.items as CommentItem[]
+    const responseSize = Math.max(1, Number(data.size))
+    const responseTotal = Math.max(0, Number(data.total))
+    const responseLastPage = Math.max(1, Math.ceil(responseTotal / responseSize))
+    const shouldRewindPage = responseItems.length === 0 && requestedPage > responseLastPage
+    const rewindPage = Math.min(requestedPage - 1, responseLastPage)
+
     applyingLoadResponse = true
-    items.value = data.items as CommentItem[]
+    items.value = responseItems
     total.value = data.total
-    page.value = data.page
+    if (!shouldRewindPage) page.value = data.page
     size.value = data.size
     applyingLoadResponse = false
+
+    // A successful empty response beyond the response's actual last page can
+    // happen after comments were removed. Let the existing page watcher issue
+    // one request for the strictly lower page; errors from that request still
+    // flow through the normal load error path.
+    if (shouldRewindPage) {
+      page.value = Math.max(1, rewindPage)
+      return
+    }
+
     tryScrollToId(props.scrollToPostId)
   } catch (_) {
     if (isCurrentLoad(requestSeq, threadId, session, queryKey, requestedRevision)) {

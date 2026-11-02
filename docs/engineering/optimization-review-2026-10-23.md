@@ -1825,3 +1825,7 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 ## 2026-11-02：发现页越界恢复
 
 当旧书签页或数据收缩使发现页请求超出当前结果范围时，原页面只显示空状态且没有上一页入口。现在仅当响应为空并且请求页超出按响应实际 size 计算的最后页时，用路由 replace 回退，保留筛选参数；旧响应不能改变新路由。回退导航失败时显示可重试错误，避免显示陈旧列表。旧实现组件基线 15 项中 3 项失败（`%TEMP%/bluealbum-discover-pre-fix.log`）；最终发现页 17 项通过（`%TEMP%/bluealbum-discover-post-fix-v2.log`），定向 lint 和类型检查通过。此为模拟路由与 API 测试，未进行真实浏览器验收。
+
+## 2026-11-02：评论页越界恢复
+
+评论被删除或筛选结果减少后，原有空的越界页会遮住返回入口。当前线程、会话和请求序列校验通过后，只有空响应且请求页超出按响应 size 计算的最后页时才降低页码，交给现有 watcher 发起后续请求。回归覆盖总数归零、实际 size、回退失败、切线程和切账号后的迟到响应；旧实现运行新增的 6 项中 4 项失败（另有 26 项未运行），见 `%TEMP%/bluealbum-comments-pagination-old-implementation.log`。最终评论、传输及分页相关 83 项通过，见 `%TEMP%/bluealbum-comments-transport-tests.log`；定向 lint、类型检查、前端构建和结构检查通过，构建日志见 `.tmp/pagination-recovery-build-20261102.log`。未进行真实浏览器和后端端到端验收。

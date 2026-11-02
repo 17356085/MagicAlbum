@@ -55,7 +55,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function result(id: number, content: string, threadId = 1, page = 1, total = 1): PageResult<Post> {
+function result(id: number, content: string, threadId = 1, page = 1, total = 1, size = 15): PageResult<Post> {
   return {
     items: [{
       id,
@@ -67,9 +67,13 @@ function result(id: number, content: string, threadId = 1, page = 1, total = 1):
       createdAt: '2026-10-07T00:00:00Z',
     }],
     page,
-    size: 15,
+    size,
     total,
   }
+}
+
+function emptyResult(page = 1, total = 0, size = 15): PageResult<Post> {
+  return { items: [], page, size, total }
 }
 
 function resultWithItems(items: Post[], page = 1, total = items.length): PageResult<Post> {
@@ -332,6 +336,167 @@ describe('Comments pagination bounds', () => {
       expect(vm.page).toBe(1)
       vm.goNextPage()
       expect(vm.page).toBe(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('Comments pagination recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listPostsMock.mockReset()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    localStorage.setItem('accessToken', 'real-token')
+    useAuthStore().token = 'real-token'
+  })
+
+  it('returns to the last valid page once a total shrink makes the current page empty', async () => {
+    listPostsMock
+      .mockResolvedValueOnce(result(1, '第1页评论', 1, 1, 30))
+      .mockResolvedValueOnce(emptyResult(2, 10, 15))
+      .mockResolvedValueOnce(result(2, '回退后的第1页', 1, 1, 10))
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { page: number }
+      vm.page = 2
+      await flushPromises()
+
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+      expect(listPostsMock.mock.calls.map(([, query]) => query?.page)).toEqual([1, 2, 1])
+      expect(vm.page).toBe(1)
+      expect(wrapper.text()).toContain('回退后的第1页')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('uses the response size when an empty page is still within the response bounds', async () => {
+    listPostsMock
+      .mockResolvedValueOnce(result(1, '第1页评论', 1, 1, 30))
+      .mockResolvedValueOnce(emptyResult(2, 11, 5))
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { page: number }
+      vm.page = 2
+      await flushPromises()
+
+      expect(listPostsMock).toHaveBeenCalledTimes(2)
+      expect(vm.page).toBe(2)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('returns to page one when a zero total makes a later page empty without issuing duplicate requests', async () => {
+    listPostsMock
+      .mockResolvedValueOnce(result(1, '第1页评论', 1, 1, 30))
+      .mockResolvedValueOnce(emptyResult(2, 0, 15))
+      .mockResolvedValueOnce(emptyResult(1, 0, 15))
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { page: number }
+      vm.page = 2
+      await flushPromises()
+
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+      expect(listPostsMock.mock.calls.map(([, query]) => query?.page)).toEqual([1, 2, 1])
+      expect(vm.page).toBe(1)
+      expect(wrapper.text()).toContain('暂无评论')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('surfaces a fallback request failure instead of treating it as an empty success', async () => {
+    listPostsMock
+      .mockResolvedValueOnce(result(1, '第1页评论', 1, 1, 30))
+      .mockResolvedValueOnce(emptyResult(2, 10, 15))
+      .mockRejectedValueOnce(new Error('fallback failed'))
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { loading: boolean; page: number }
+      vm.page = 2
+      await flushPromises()
+
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+      expect(vm.page).toBe(1)
+      expect(vm.loading).toBe(false)
+      expect(wrapper.find('[role="alert"]').text()).toContain('加载评论失败')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('ignores a late out-of-range response after switching threads', async () => {
+    const oldPageTwo = deferred<PageResult<Post>>()
+    const newThread = deferred<PageResult<Post>>()
+    listPostsMock
+      .mockResolvedValueOnce(result(1, '旧线程第一页', 1, 1, 30))
+      .mockReturnValueOnce(oldPageTwo.promise)
+      .mockReturnValueOnce(newThread.promise)
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { page: number }
+      vm.page = 2
+      await flushPromises()
+      await wrapper.setProps({ threadId: 2 })
+      await flushPromises()
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+
+      oldPageTwo.resolve(emptyResult(2, 10, 15))
+      await flushPromises()
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+      expect(vm.page).toBe(1)
+
+      newThread.resolve(result(20, '新线程第一页', 2, 1, 1))
+      await flushPromises()
+      expect(wrapper.text()).toContain('新线程第一页')
+      expect(wrapper.text()).not.toContain('加载评论失败')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('ignores a late out-of-range response after the account session changes', async () => {
+    const oldPageTwo = deferred<PageResult<Post>>()
+    const newSession = deferred<PageResult<Post>>()
+    listPostsMock
+      .mockResolvedValueOnce(result(1, '旧账号第一页', 1, 1, 30))
+      .mockReturnValueOnce(oldPageTwo.promise)
+      .mockReturnValueOnce(newSession.promise)
+
+    const wrapper = createWrapper()
+    try {
+      await flushPromises()
+      const vm = wrapper.vm as unknown as { page: number }
+      vm.page = 2
+      await flushPromises()
+      localStorage.setItem('accessToken', 'new-session-token')
+      useAuthStore().token = 'new-session-token'
+      await flushPromises()
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+
+      oldPageTwo.resolve(emptyResult(2, 10, 15))
+      await flushPromises()
+      expect(listPostsMock).toHaveBeenCalledTimes(3)
+      expect(vm.page).toBe(2)
+
+      newSession.resolve(result(20, '新账号第一页', 1, 1, 1))
+      await flushPromises()
+      expect(wrapper.text()).toContain('新账号第一页')
+      expect(wrapper.text()).not.toContain('加载评论失败')
     } finally {
       wrapper.unmount()
     }
