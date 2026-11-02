@@ -143,14 +143,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { isAuthOperationSuperseded, useAuthStore } from '@/stores/auth'
+import { isAuthOperationSuperseded, useAuthStore, type AuthOperationContext } from '@/stores/auth'
 import AuthLoginIdentityField from '@/components/auth/AuthLoginIdentityField.vue'
 import AuthVerifyBlock from '@/components/auth/AuthVerifyBlock.vue'
 import { isAuthVerifyEnabled, toVerifyPayload } from '@/services/authVerify'
 import { startEmailCodeLogin, startPhoneCodeLogin } from '@/api/auth'
 import type { ApiError } from '@/types'
 import type { AuthVerifyResult } from '@/services/authVerify'
-import { getStoredAccessToken } from '@/utils/authStorage'
 
 type LoginMode = 'phone-password' | 'email-password' | 'email-code' | 'phone-code'
 
@@ -197,11 +196,7 @@ type VerificationSubmission = Readonly<{
   result: AuthVerifyResult | null
 }>
 
-type AuthBoundary = Readonly<{
-  generation: number
-  memoryToken: string
-  persistedToken: string
-}>
+type AuthBoundary = AuthOperationContext
 
 type CodeSessionSnapshot = Readonly<{
   channel: 'email' | 'phone' | ''
@@ -427,17 +422,11 @@ function addressForMode(nextMode: LoginMode): { channel: 'email' | 'phone'; addr
 }
 
 function captureAuthBoundary(store: ReturnType<typeof useAuthStore>): AuthBoundary {
-  return {
-    generation: store.getAuthGeneration(),
-    memoryToken: store.token,
-    persistedToken: getStoredAccessToken(),
-  }
+  return store.captureAuthOperationContext()
 }
 
 function isAuthBoundaryCurrent(store: ReturnType<typeof useAuthStore>, boundary: AuthBoundary): boolean {
-  if (!store.isAuthGenerationCurrent(boundary.generation)) return false
-  if (store.token !== boundary.memoryToken) return false
-  return getStoredAccessToken() === boundary.persistedToken
+  return store.isAuthOperationContextCurrent(boundary)
 }
 
 function authBoundariesEqual(left: AuthBoundary | null | undefined, right: AuthBoundary | null | undefined): boolean {

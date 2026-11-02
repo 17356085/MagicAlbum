@@ -56,6 +56,8 @@ const authMocks = vi.hoisted(() => {
     token: '',
     getAuthGeneration: vi.fn(() => generation),
     isAuthGenerationCurrent: vi.fn((value: number) => value === generation),
+    captureAuthOperationContext: vi.fn(),
+    isAuthOperationContextCurrent: vi.fn(),
     invalidateAuthOperations: vi.fn(() => {
       generation += 1
       return generation
@@ -77,10 +79,26 @@ const authMocks = vi.hoisted(() => {
       return Promise.resolve()
     }),
   }
+  const resetContextMocks = () => {
+    store.captureAuthOperationContext.mockImplementation(() => Object.freeze({
+      generation,
+      memoryToken: store.token,
+      persistedToken: globalThis.localStorage?.getItem('accessToken') || '',
+    }))
+    store.isAuthOperationContextCurrent.mockImplementation((context: {
+      generation: number
+      memoryToken: string
+      persistedToken: string
+    }) => context.generation === generation
+      && context.memoryToken === store.token
+      && context.persistedToken === (globalThis.localStorage?.getItem('accessToken') || ''))
+  }
+  resetContextMocks()
   return {
     store,
     resetGeneration: () => { generation = 0 },
     advanceGeneration: () => { generation += 1 },
+    resetContextMocks,
   }
 })
 
@@ -175,6 +193,7 @@ describe('AuthLoginForm async lifecycle', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     authMocks.resetGeneration()
+    authMocks.resetContextMocks()
     localStorage.clear()
     sessionStorage.clear()
     verifyMocks.isAuthVerifyEnabled.mockReturnValue(true)
