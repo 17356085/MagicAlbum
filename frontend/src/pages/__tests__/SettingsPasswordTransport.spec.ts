@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import SettingsAccount from '../SettingsAccount.vue'
@@ -18,6 +18,7 @@ describe('password update transport outcomes', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     api.defaults.adapter = originalAdapter
     localStorage.clear()
     sessionStorage.clear()
@@ -43,12 +44,18 @@ describe('password update transport outcomes', () => {
         await wrapper.get('#settings-account-current-password').setValue('CurrentPassword1')
         await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
         await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
         await wrapper.findAll('button').find(button => button.text().includes('修改密码'))!.trigger('click')
         await flushPromises()
         expect(writes).toBe(1)
         expect(wrapper.text()).toContain('密码修改结果未确认')
         expect(wrapper.text()).not.toContain('密码已修改')
         expect((wrapper.get('#settings-account-current-password').element as HTMLInputElement).value).toBe('CurrentPassword1')
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(wrapper.text()).toContain('密码修改结果未确认')
+        useAuthStore().applyAuthState({ accessToken: 'token-b', user: { id: 2, username: 'bob' } })
+        await flushPromises()
+        expect(wrapper.text()).not.toContain('密码修改结果未确认')
       } finally { wrapper.unmount() }
     },
   )

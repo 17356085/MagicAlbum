@@ -273,10 +273,11 @@ function setProfileMessage(message: string, isError = false): void {
   }, isError ? 4000 : 3000)
 }
 
-function setPasswordMessage(message: string, isError = false): void {
+function setPasswordMessage(message: string, isError = false, persistent = false): void {
   passwordMessage.value = message
   passwordMessageError.value = isError
   clearPasswordMessageTimer()
+  if (persistent) return
   const version = ++passwordMessageVersion
   const messageEpoch = sessionEpoch
   passwordMessageTimer = setTimeout(() => {
@@ -535,7 +536,8 @@ async function onChangePassword(): Promise<void> {
     if (!isCurrentOperation(context, sequence, passwordSeq)) return
     const msg = getApiErrorMessage(error)
     if (/当前密码/.test(msg) || /不正确/.test(msg)) { errors.currentPassword = '当前密码不正确' }
-    setPasswordMessage(msg || '修改失败', true)
+    const unconfirmed = error instanceof Error && error.name === 'PasswordUpdateUnconfirmedError'
+    setPasswordMessage(msg || '修改失败', true, unconfirmed)
   } finally {
     clearStateOnSessionDrift(context, sequence, passwordSeq)
     if (isCurrentOperation(context, sequence, passwordSeq)) savingPassword.value = false
