@@ -32,9 +32,16 @@ public final class RedisKeys {
         return "auth:qr:" + qrId;
     }
 
-    public static String sectionsList(String q, int page, int size) {
+    public static String sectionsListGeneration() {
+        return "cache:sections:list:generation";
+    }
+
+    public static String sectionsList(String generation, String q, int page, int size) {
+        if (generation == null || generation.isBlank()) {
+            throw new IllegalArgumentException("generation must not be blank");
+        }
         String normalizedQ = q == null ? "" : q.trim();
-        return "cache:sections:list:" + normalizedQ + ":" + page + ":" + size;
+        return "cache:sections:list:" + generation + ":" + normalizedQ + ":" + page + ":" + size;
     }
 
     public static String threadsList(String q, Long sectionId, int page, int limit) {

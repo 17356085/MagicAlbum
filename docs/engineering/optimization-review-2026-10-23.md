@@ -1809,3 +1809,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 ## 2026-11-02：评论分页页数计算收敛
 
 评论组件的上一页、下一页和手动输入分别重复计算与 `pageCount` 相同的页数上限。现直接复用已有响应式计算值，保留分页显示判断及请求生命周期。新增两页边界、上一页、下一页、输入越界和零总数测试；原实现的等价基线 26 项通过，修改后评论相关 69 项通过，见 `%TEMP%/bluealbum-comments-baseline.log` 和 `%TEMP%/bluealbum-comments-associated.log`。定向 lint 和类型检查通过；这是局部可维护性改进，不代表性能或真实浏览器体验已得到量化验证。
+
+## 2026-11-02：分区缓存旧读取回填保护
+
+原 cache-aside 分区列表存在竞态：旧数据库查询尚未返回时，管理操作提交并清理缓存；旧查询随后仍能把旧列表写回。受控 mock 测试将这一顺序固定，清理后的下一次读取错误得到 Old，见 `backend/target/section-cache-race-old-implementation.log`；测试模拟 Redis、仓储和清理，不是真实基础设施复现。
+
+现在列表缓存采用 UUID 版本命名空间。读取前获取版本；版本缺失时用 SETNX 初始化并重新读取实际值，获取失败或值异常则绕过缓存。管理操作提交后的回调写入新版本，迟到的旧查询只会写入旧命名空间，旧键依靠原有五分钟 TTL 过期。损坏 JSON 仍会删除并从数据库重建。受控测试覆盖旧读取迟到、新旧缓存隔离、初始化竞争、提交回调、回滚及 Redis 读取故障；相关定向测试 26 项通过，见 `backend/target/section-cache-generation-reviewed-20261102.log`。完整后端 package 773 项通过，见 `backend/target/section-cache-generation-full-20261102.log`；随后补充损坏 JSON 恢复测试，缓存相关 16 项再次通过，见 `backend/target/section-cache-generation-malformed-20261102.log`。仓库及 Java 导入结构检查通过。
+
+此机制不能撤回已经开始的旧读取，也不保证 Redis 版本更新失败时的跨系统一致性；失败时旧缓存仍可能持续至 TTL。混合版本实例、使用既有旧数据库快照的外层事务和真实 Redis/数据库并发均未在此验收。旧实例仍可能使用旧缓存键，不能把本地 mock 结果当作滚动部署或生产环境证明。

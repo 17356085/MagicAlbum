@@ -1,6 +1,6 @@
 package com.example.demo.governance.service;
 
-import com.example.demo.common.RedisCacheEvictor;
+import com.example.demo.common.RedisKeys;
 import com.example.demo.governance.dto.AuditView;
 import com.example.demo.governance.dto.SectionRequest;
 import com.example.demo.governance.dto.SectionView;
@@ -356,7 +356,7 @@ public class GovernanceService {
         Section saved = sectionRepository.save(section);
         sectionRepository.flush();
         auditInternal(actor, "SECTION_CREATED", "SECTION", saved.getId(), values.reason());
-        evictSectionsCacheAfterCommit();
+        invalidateSectionsCacheAfterCommit();
         return toSectionView(saved);
     }
 
@@ -373,7 +373,7 @@ public class GovernanceService {
         Section saved = sectionRepository.save(section);
         sectionRepository.flush();
         auditInternal(actor, "SECTION_UPDATED", "SECTION", saved.getId(), values.reason());
-        evictSectionsCacheAfterCommit();
+        invalidateSectionsCacheAfterCommit();
         return toSectionView(saved);
     }
 
@@ -571,13 +571,14 @@ public class GovernanceService {
         section.setArchived(archived);
     }
 
-    private void evictSectionsCacheAfterCommit() {
+    private void invalidateSectionsCacheAfterCommit() {
         if (redisTemplate == null) {
             return;
         }
-        Runnable evict = () -> {
+        Runnable invalidate = () -> {
             try {
-                RedisCacheEvictor.evictMatching(redisTemplate, "cache:sections:list:*");
+                redisTemplate.opsForValue().set(
+                        RedisKeys.sectionsListGeneration(), UUID.randomUUID().toString());
             } catch (RuntimeException ignored) {
                 // Cache is an optimization; a Redis outage must not roll back DB governance.
             }
@@ -586,11 +587,11 @@ public class GovernanceService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    evict.run();
+                    invalidate.run();
                 }
             });
         } else {
-            evict.run();
+            invalidate.run();
         }
     }
 

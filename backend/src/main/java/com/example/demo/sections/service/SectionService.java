@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class SectionService {
@@ -45,38 +46,67 @@ public class SectionService {
     public Page<Section> list(String q, int page, int size) {
         String normalizedQ = normalizeQuery(q);
         PageRequest pr = PageRequest.of(Math.max(page, 1) - 1, Math.min(Math.max(size, 1), 100));
-        String key = cacheKey(normalizedQ, pr.getPageNumber() + 1, pr.getPageSize());
-        CachedSectionPage cached = readCache(key);
-        if (cached != null) {
-            return new PageImpl<>(cached.items(), pr, cached.total());
+        String generation = readGeneration();
+        String key = generation == null
+                ? null
+                : cacheKey(generation, normalizedQ, pr.getPageNumber() + 1, pr.getPageSize());
+        boolean cacheAvailable = generation != null;
+        if (key != null) {
+            CacheRead cached = readCache(key);
+            cacheAvailable = cached.redisAvailable();
+            if (cached.payload() != null) {
+                return new PageImpl<>(cached.payload().items(), pr, cached.payload().total());
+            }
         }
         Page<Section> result = sectionRepository.search(normalizedQ, pr);
-        writeCache(key, new CachedSectionPage(result.getContent(), result.getTotalElements()));
+        if (cacheAvailable) {
+            writeCache(key, new CachedSectionPage(result.getContent(), result.getTotalElements()));
+        }
         return result;
     }
 
-    private CachedSectionPage readCache(String key) {
+    private String readGeneration() {
         if (redisTemplate == null) {
             return null;
         }
         try {
-            String json = redisTemplate.opsForValue().get(key);
-            if (json == null) {
+            String generation = redisTemplate.opsForValue().get(RedisKeys.sectionsListGeneration());
+            if (isValidGeneration(generation)) {
+                return generation;
+            }
+            if (generation != null) {
                 return null;
             }
-            if (json.isBlank()) {
-                deleteQuietly(key);
-                return null;
-            }
+            String candidate = UUID.randomUUID().toString();
+            redisTemplate.opsForValue().setIfAbsent(RedisKeys.sectionsListGeneration(), candidate);
+            generation = redisTemplate.opsForValue().get(RedisKeys.sectionsListGeneration());
+            return isValidGeneration(generation) ? generation : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private CacheRead readCache(String key) {
+        String json;
+        try {
+            json = redisTemplate.opsForValue().get(key);
+        } catch (Exception ignored) {
+            return new CacheRead(null, false);
+        }
+        if (json == null) {
+            return new CacheRead(null, true);
+        }
+        if (json.isBlank()) {
+            return new CacheRead(null, deleteQuietly(key));
+        }
+        try {
             CachedSectionPage payload = objectMapper.readValue(json, CachedSectionPage.class);
             if (!isValid(payload)) {
-                deleteQuietly(key);
-                return null;
+                return new CacheRead(null, deleteQuietly(key));
             }
-            return payload;
+            return new CacheRead(payload, true);
         } catch (Exception ignored) {
-            deleteQuietly(key);
-            return null;
+            return new CacheRead(null, deleteQuietly(key));
         }
     }
 
@@ -90,8 +120,19 @@ public class SectionService {
         }
     }
 
-    private String cacheKey(String q, int page, int size) {
-        return RedisKeys.sectionsList(q, page, size);
+    private String cacheKey(String generation, String q, int page, int size) {
+        return RedisKeys.sectionsList(generation, q, page, size);
+    }
+
+    private boolean isValidGeneration(String generation) {
+        if (generation == null || generation.isBlank()) {
+            return false;
+        }
+        try {
+            return UUID.fromString(generation).toString().equals(generation);
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
     }
 
     private String normalizeQuery(String q) {
@@ -115,13 +156,12 @@ public class SectionService {
                 && !section.getSlug().isBlank();
     }
 
-    private void deleteQuietly(String key) {
-        if (redisTemplate == null || key == null) {
-            return;
-        }
+    private boolean deleteQuietly(String key) {
         try {
             redisTemplate.delete(key);
+            return true;
         } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -135,5 +175,8 @@ public class SectionService {
     }
 
     private record CachedSectionPage(List<Section> items, long total) {
+    }
+
+    private record CacheRead(CachedSectionPage payload, boolean redisAvailable) {
     }
 }
