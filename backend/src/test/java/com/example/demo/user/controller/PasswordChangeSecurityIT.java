@@ -76,6 +76,30 @@ class PasswordChangeSecurityIT {
     }
 
     @Test
+    void legacy_short_password_can_be_upgraded_without_allowing_a_weak_new_password() throws Exception {
+        String legacy = "old123";
+        User user = userRepository.findById(userId).orElseThrow();
+        user.setPasswordHash(passwordEncoder.encode(legacy));
+        String legacyHash = userRepository.saveAndFlush(user).getPasswordHash();
+
+        mockMvc.perform(post("/api/v1/users/me/password")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(passwordChangeJson(legacy, "weakpassword")))
+                .andExpect(status().isBadRequest());
+        assertThat(userRepository.findById(userId).orElseThrow().getPasswordHash()).isEqualTo(legacyHash);
+
+        mockMvc.perform(post("/api/v1/users/me/password")
+                        .header("Authorization", "Bearer " + validToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(passwordChangeJson(legacy, NEW_PASSWORD)))
+                .andExpect(status().isNoContent());
+        User stored = userRepository.findById(userId).orElseThrow();
+        assertThat(passwordEncoder.matches(NEW_PASSWORD, stored.getPasswordHash())).isTrue();
+        assertThat(passwordEncoder.matches(legacy, stored.getPasswordHash())).isFalse();
+    }
+
+    @Test
     void wrong_current_password_is_bad_request_and_does_not_change_persisted_hash() throws Exception {
         mockMvc.perform(post("/api/v1/users/me/password")
                         .header("Authorization", "Bearer " + validToken)
