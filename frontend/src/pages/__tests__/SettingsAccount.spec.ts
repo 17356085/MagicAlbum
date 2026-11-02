@@ -101,6 +101,22 @@ describe('SettingsAccount', () => {
     sessionStorage.clear()
   })
 
+  it('allows a legacy current password while still requiring a strong new password', async () => {
+    const { wrapper } = createWrapper()
+    await flushPromises()
+    await wrapper.get('#settings-account-current-password').setValue('old123')
+    await wrapper.get('#settings-account-new-password').setValue('weakpassword')
+    await wrapper.get('#settings-account-confirm-password').setValue('weakpassword')
+    await wrapper.findAll('button').find(button => button.text().includes('修改密码'))!.trigger('click')
+    expect(updateMyPasswordMock).not.toHaveBeenCalled()
+
+    await wrapper.get('#settings-account-new-password').setValue('NewPassword1')
+    await wrapper.get('#settings-account-confirm-password').setValue('NewPassword1')
+    await wrapper.findAll('button').find(button => button.text().includes('修改密码'))!.trigger('click')
+    await flushPromises()
+    expect(updateMyPasswordMock).toHaveBeenCalledWith({ currentPassword: 'old123', newPassword: 'NewPassword1' })
+  })
+
   it('shows a retryable load error and disables risky saves after a load failure', async () => {
     getMyBasicInfoMock.mockRejectedValueOnce(new Error('账户服务不可用'))
     const { wrapper } = createWrapper()
