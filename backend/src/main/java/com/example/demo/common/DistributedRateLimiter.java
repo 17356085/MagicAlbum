@@ -108,10 +108,10 @@ public class DistributedRateLimiter {
             Window expired = localExpiry.poll();
             localWindows.remove(expired.key, expired);
         }
-        // A request may enter fallback after its original bucket has ended.
-        // Reject it rather than recreate an already-evicted bucket repeatedly.
+        // Do not create a past or future bucket if the clock crossed a bucket
+        // boundary between key selection and entering this fallback.
+        if (nowSecond / windowSeconds != bucket) return false;
         long expiresAt = (bucket + 1) * (long) windowSeconds;
-        if (expiresAt <= nowSecond) return false;
         Window window = localWindows.get(key);
         if (window == null) {
             window = new Window(key, expiresAt);

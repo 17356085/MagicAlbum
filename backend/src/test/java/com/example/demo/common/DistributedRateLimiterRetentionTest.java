@@ -67,6 +67,14 @@ class DistributedRateLimiterRetentionTest {
     }
 
     @Test
+    void clock_rollback_between_bucket_selection_and_fallback_is_rejected() {
+        Clock clock = mock(Clock.class);
+        when(clock.instant()).thenReturn(Instant.ofEpochSecond(121), Instant.ofEpochSecond(120));
+        DistributedRateLimiter limiter = new DistributedRateLimiter(null, false, clock);
+        assertThat(limiter.allow("rollback", "user", 1, 1)).isFalse();
+    }
+
+    @Test
     void concurrent_requests_share_the_same_local_limit() throws Exception {
         Clock clock = Clock.fixed(Instant.ofEpochSecond(120), java.time.ZoneOffset.UTC);
         DistributedRateLimiter limiter = new DistributedRateLimiter(null, false, clock);

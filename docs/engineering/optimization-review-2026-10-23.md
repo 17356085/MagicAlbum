@@ -1775,3 +1775,5 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 现在本地回退在后续请求时按时间桶到期顺序清理过期记录；未到期桶继续保留原有计数。若本地时钟回拨到已处理时间之前，或请求进入回退时原时间桶已经结束，则保守拒绝，防止清理后重新打开旧桶。清理没有后台定时器：空闲时旧对象会等下一次本地回退请求才回收；同一活跃窗口内的不同键数量仍未设硬上限。优先队列避免每次遍历全部键，但本轮没有进行实际吞吐或内存基准，不能声称量化性能提升。
 
 针对中间版本新增的延迟跨桶测试先失败，见 `backend/target/local-limiter-delayed-baseline-20261102.log`；最终回归覆盖过期清理、不同窗口、回拨、跨桶延迟及并发计数。定向安全和限流测试 17 项通过并完成打包，后端默认测试集 760 项通过，测试前后 555 个源码路径哈希一致；日志为 `backend/target/local-limiter-retention-reviewed-20261102.log` 和 `backend/target/local-limiter-backend-full-20261102.log`。仓库及 Java 导入边界检查通过；未对真实 Redis 故障、生产流量或时钟调整做运行环境验收。
+
+独立复审补充了两次时钟读取之间回拨的边界：如果选键时已进入下一桶，而进入本地回退时钟又回到上一桶，上一版可能创建未来桶。可控时钟基线 `backend/target/local-limiter-cross-read-rollback-baseline-20261102.log` 复现请求被错误允许；现在两次读取分属不同桶时保守拒绝，原有延迟跨桶保护也继续生效。限流和 API 安全定向测试 18 项通过并完成打包，见 `backend/target/local-limiter-cross-read-rollback-reviewed-20261102.log`；此结果未替代真实系统时钟回拨验收。
