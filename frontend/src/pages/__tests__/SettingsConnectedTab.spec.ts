@@ -52,6 +52,17 @@ async function runPendingReloads(): Promise<void> {
 }
 
 describe('SettingsConnectedTab', () => {
+  it('allows an existing short password to verify account unlinking', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.get('[aria-label="解绑 GitHub"]').trigger('click')
+    await wrapper.get('#connected-disconnect-identifier').setValue('alice@example.test')
+    await wrapper.get('#connected-disconnect-password').setValue('old123')
+    await wrapper.get('#connected-disconnect-form').trigger('submit')
+    await flushPromises()
+    expect(disconnectAccountMock).toHaveBeenCalledWith('github',
+      { identifier: 'alice@example.test', currentPassword: 'old123', bindingTag: 'a'.repeat(64) }, 'token-a')
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()

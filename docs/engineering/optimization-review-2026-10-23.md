@@ -1747,3 +1747,9 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 登录组件和真实 API 客户端适配器相关测试共 75 项通过，覆盖空格、输入法组合、change、模式切换和错误关联，见 `backend/target/auth-identity-field-reviewed-20261102.log`；类型检查、定向 ESLint、前端构建通过。本次未做浏览器端到端或真实认证提供方验证；认证异步状态机没有抽取。
 
 2026-11-02 远程复核：账号安全解绑提交 `c5fbb65` 的 [GitHub Actions 41331991936](https://github.com/17356085/MagicAlbum/actions/runs/41331991936) 和登录输入组件提交 `38b6a9d` 的 [41333390772](https://github.com/17356085/MagicAlbum/actions/runs/41333390772) 均已完成，两个工作流各 13 个作业全部通过。这些结果仅证明对应提交的远程 CI 检查结果，不代表真实 OAuth 提供方或生产环境已验收。
+
+## 2026-11-02：现有短密码的登录和解绑兼容
+
+后端密码登录只要求现有密码非空，但登录界面和已验证解绑原先要求当前密码至少 8 位。隔离 H2 中使用测试账号 `old123` 的密码登录返回 200，随后的解绑验证却返回 400；前端旧实现的登录及解绑两个新回归也均未发送请求（`backend/target/legacy-password-backend-baseline-20261102.log`、`backend/target/legacy-password-frontend-baseline-20261102.log`）。这些是同一规则不一致的不同表现，不代表已证实真实用户使用短密码。
+
+现在登录和解绑验证接受非空的现有短密码，空白密码仍被拒绝，提交时不修剪有效密码前后空格；注册和修改新密码的强度政策未改变。前端认证、解绑及传输回归 105 项通过，后端安全链、解绑、密码修改和并发回归 29 项通过并打包；前端类型检查、定向 lint、构建及仓库结构和 Java 导入边界检查通过。日志为 `backend/target/legacy-password-frontend-reviewed-20261102.log` 和 `backend/target/legacy-password-backend-reviewed-20261102.log`。本次未检查真实用户密码或进行真实浏览器/第三方提供方验收。

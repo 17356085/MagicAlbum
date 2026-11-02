@@ -341,12 +341,8 @@ function validateEmail(email = form.email): boolean {
 }
 
 function validatePassword(): boolean {
-  if (!form.password) {
+  if (!form.password.trim()) {
     errors.password = '请输入密码'
-    return false
-  }
-  if (form.password.length < 8) {
-    errors.password = '密码不少于 8 位'
     return false
   }
   errors.password = ''

@@ -29,7 +29,7 @@ function submit(): void {
     validationError.value = '请输入用于密码登录的邮箱或手机号。'
     return
   }
-  if (password.value.length < 8) {
+  if (!password.value.trim()) {
     validationError.value = '请输入用于登录的当前密码。'
     return
   }

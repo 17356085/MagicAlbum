@@ -64,6 +64,25 @@ class VerifiedConnectedAccountRemovalIT {
     }
 
     @Test
+    void existing_short_password_can_login_and_verify_unlink() throws Exception {
+        User user = createUser("proof_legacy", "proof_legacy@example.test", null, "old123");
+        accounts.bindExternalAccount(user.getId(), "github", "proof-legacy-gh", "GitHub");
+        mockMvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"proof_legacy@example.test\",\"password\":\"old123\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/users/me/connected-accounts/github/disconnect")
+                        .header("Authorization", bearer(user)).contentType(MediaType.APPLICATION_JSON)
+                        .content(proof(user, "proof_legacy@example.test", "   ")))
+                .andExpect(status().isBadRequest());
+        assertThat(accounts.findUserIdByExternalAccount("github", "proof-legacy-gh")).isEqualTo(user.getId());
+        mockMvc.perform(post("/api/v1/users/me/connected-accounts/github/disconnect")
+                        .header("Authorization", bearer(user)).contentType(MediaType.APPLICATION_JSON)
+                        .content(proof(user, "proof_legacy@example.test", "old123")))
+                .andExpect(status().isNoContent());
+        assertThat(accounts.findUserIdByExternalAccount("github", "proof-legacy-gh")).isNull();
+    }
+
+    @Test
     void valid_email_password_removes_only_the_selected_binding_and_can_log_in() throws Exception {
         User user = createUser("proof_email", "proof_email@example.test", null, PASSWORD);
         accounts.bindExternalAccount(user.getId(), "github", "proof-email-gh", "GitHub");

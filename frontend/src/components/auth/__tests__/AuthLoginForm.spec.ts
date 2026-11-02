@@ -139,6 +139,28 @@ async function usePhoneCodeMode(wrapper: ReturnType<typeof mountLogin>): Promise
 }
 
 describe('AuthLoginForm async lifecycle', () => {
+  it('accepts an existing short password for password login', async () => {
+    const wrapper = mountLogin()
+    await wrapper.get('#auth-login-phone').setValue('13800000000')
+    await wrapper.get('#auth-login-password').setValue('old123')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(authMocks.store.loginWithPhonePassword).toHaveBeenCalledWith(expect.objectContaining({ phone: '13800000000', password: 'old123' }))
+    wrapper.unmount()
+  })
+
+  it('rejects a blank password while preserving surrounding spaces in a nonblank password', async () => {
+    const wrapper = mountLogin()
+    await wrapper.get('#auth-login-phone').setValue('13800000000')
+    await wrapper.get('#auth-login-password').setValue('   ')
+    await wrapper.get('form').trigger('submit')
+    expect(authMocks.store.loginWithPhonePassword).not.toHaveBeenCalled()
+    await wrapper.get('#auth-login-password').setValue(' x ')
+    await wrapper.get('form').trigger('submit')
+    await settle()
+    expect(authMocks.store.loginWithPhonePassword).toHaveBeenCalledWith(expect.objectContaining({ password: ' x ' }))
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.resetAllMocks()
     authMocks.resetGeneration()

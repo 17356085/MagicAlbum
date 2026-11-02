@@ -45,7 +45,7 @@ public class VerifiedConnectedAccountRemovalService {
         String normalizedProvider = provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT);
         String address = identifier == null ? "" : identifier.trim();
         if (normalizedProvider.isBlank() || normalizedProvider.length() > 32 || address.length() > 255
-                || currentPassword == null || currentPassword.length() < 8 || currentPassword.length() > 1024) {
+                || currentPassword == null || currentPassword.isBlank() || currentPassword.length() > 1024) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, INVALID_CREDENTIALS);
         }
         boolean isEmail = address.contains("@");
