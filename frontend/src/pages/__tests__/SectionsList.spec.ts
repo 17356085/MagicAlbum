@@ -40,8 +40,8 @@ function section(id: number | string, name = `分区${id}`): Section {
   return { id, name, slug: `section-${id}`, description: `${name}简介` }
 }
 
-function page<T>(items: T[], total = items.length) {
-  return { items, page: 1, size: 20, total }
+function page<T>(items: T[], total = items.length, currentPage = 1, size = 20) {
+  return { items, page: currentPage, size, total }
 }
 
 function item(id: number | string = '101', title = `帖子${id}`, overrides: Record<string, unknown> = {}) {
@@ -107,6 +107,91 @@ describe('SectionsList preview states', () => {
     expect(mocks.listSections).toHaveBeenCalledTimes(1)
     expect(mocks.listSectionPreviews).toHaveBeenCalledTimes(1)
     expect(mocks.listSectionPreviews).toHaveBeenCalledWith(Array.from({ length: 20 }, (_, index) => index + 1))
+    wrapper.unmount()
+  })
+
+  it('loads the second section page and its previews when the total exceeds one page', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
+    const secondPage = [section(21)]
+    mocks.listSections
+      .mockResolvedValueOnce(page(firstPage, 21, 1))
+      .mockResolvedValueOnce(page(secondPage, 21, 2))
+    mocks.listSectionPreviews
+      .mockResolvedValueOnce(firstPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce([preview(21, [item(2101)])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(1, { page: 1, size: 20 })
+    expect(rows(wrapper)).toHaveLength(20)
+    expect(wrapper.find('input[aria-label="页码"]').element).toHaveProperty('value', '1')
+    expect(wrapper.text()).toContain('/ 2 页')
+    expect(mocks.listSectionPreviews).toHaveBeenNthCalledWith(1, firstPage.map((entry) => entry.id))
+
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(2, { page: 2, size: 20 })
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('分区21')
+    expect(wrapper.text()).toContain('帖子2101')
+    expect(wrapper.find('input[aria-label="页码"]').element).toHaveProperty('value', '2')
+    expect(mocks.listSectionPreviews).toHaveBeenNthCalledWith(2, [21])
+    wrapper.unmount()
+  })
+
+  it('ignores a late preview response from the previous page after switching pages', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
+    const secondPage = [section(21)]
+    const oldPreview = deferred<ReturnType<typeof preview>[]>()
+    mocks.listSections
+      .mockResolvedValueOnce(page(firstPage, 21, 1))
+      .mockResolvedValueOnce(page(secondPage, 21, 2))
+    mocks.listSectionPreviews
+      .mockReturnValueOnce(oldPreview.promise)
+      .mockResolvedValueOnce([preview(21, [item(2101, '第二页帖子')])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('分区21')
+    expect(wrapper.text()).toContain('第二页帖子')
+    oldPreview.resolve([preview(1, [item(1101, '迟到的第一页帖子')])])
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('迟到的第一页帖子')
+    expect(wrapper.text()).toContain('第二页帖子')
+    wrapper.unmount()
+  })
+
+  it('retries a failed page load using the current page and then loads its previews', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
+    const secondPage = [section(21)]
+    mocks.listSections
+      .mockResolvedValueOnce(page(firstPage, 21, 1))
+      .mockRejectedValueOnce(new Error('page two failed'))
+      .mockResolvedValueOnce(page(secondPage, 21, 2))
+    mocks.listSectionPreviews
+      .mockResolvedValueOnce(firstPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce([preview(21, [item(2101, '重试后的第二页帖子')])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('加载分区失败')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(2, { page: 2, size: 20 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(3, { page: 2, size: 20 })
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('重试后的第二页帖子')
+    expect(mocks.listSectionPreviews).toHaveBeenLastCalledWith([21])
     wrapper.unmount()
   })
 

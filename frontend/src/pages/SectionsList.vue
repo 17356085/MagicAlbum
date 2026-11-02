@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { listSections } from '@/api/sections'
 import { listSectionPreviews } from '@/api/sectionPreviews'
 import type { SectionPreviewItem } from '@/api/sectionPreviews'
+import Pagination from '@/components/Pagination.vue'
 import { renderInlineMarkdown, createBaseMarkdownRenderer } from '@/utils/markdownBase'
 import { normalizeImageUrl } from '@/utils/image'
 import type { Section } from '@/types'
 
+const SECTION_PAGE_SIZE = 20
 const loading = ref(false)
 const error = ref('')
 const sections = ref<Section[]>([])
+const page = ref(1)
+const total = ref(0)
 const previews = ref<Record<string, SectionPreviewItem[]>>({})
 const totals = ref<Record<string, number>>({})
 const previewErrors = ref<Record<string, string>>({})
@@ -18,6 +22,7 @@ const previewRequestSequence = new Map<string, number>()
 let loadRequestSequence = 0
 let disposed = false
 const titleRenderer = createBaseMarkdownRenderer({ html: false, breaks: false })
+const totalPages = computed(() => Math.max(1, Math.ceil((Number(total.value) || 0) / SECTION_PAGE_SIZE)))
 const sectionEmojiMap: Record<string, string> = {
   reading: '📚',
   tech: '💻',
@@ -140,25 +145,37 @@ async function loadPreviews(sectionsToLoad: Section[], loadRequestId: number): P
   }
 }
 
-async function load(): Promise<void> {
+async function load(nextPage = page.value): Promise<void> {
+  if (disposed) return
   const requestId = ++loadRequestSequence
+  page.value = nextPage
   loading.value = true
   error.value = ''
+  sections.value = []
   previews.value = {}
   totals.value = {}
   previewErrors.value = {}
   previewLoading.value = {}
   previewRequestSequence.clear()
   try {
-    const data = await listSections({})
+    const data = await listSections({ page: nextPage, size: SECTION_PAGE_SIZE })
     if (!isCurrentLoad(requestId)) return
     sections.value = data.items
+    page.value = data.page
+    total.value = data.total
     void loadPreviews(data.items, requestId)
   } catch (_) {
     if (isCurrentLoad(requestId)) error.value = '加载分区失败'
   } finally {
     if (isCurrentLoad(requestId)) loading.value = false
   }
+}
+
+function setPage(nextPage: number): void {
+  if (disposed || loading.value || !Number.isSafeInteger(nextPage) || nextPage <= 0) return
+  const targetPage = Math.min(Math.max(1, nextPage), totalPages.value)
+  if (targetPage === page.value) return
+  void load(targetPage)
 }
 
 onMounted(load)
@@ -181,14 +198,14 @@ onUnmounted(() => {
     <div v-if="loading" class="ui-panel ui-empty" role="status">正在加载...</div>
     <div v-else-if="error" class="ui-error" role="alert">
       <p>{{ error }}</p>
-      <button type="button" class="ui-button mt-3" @click="load">重试</button>
+      <button type="button" class="ui-button mt-3" @click="load()">重试</button>
     </div>
     <div v-else-if="sections.length === 0" class="ui-panel ui-empty" role="status">
       <h2>暂无分区</h2>
       <p>稍后再来看看新的讨论空间。</p>
     </div>
 
-    <ul v-else class="ui-panel overflow-hidden">
+    <ul v-else-if="sections.length" class="ui-panel overflow-hidden">
       <li
         v-for="section in sections"
         :key="section.id"
@@ -268,5 +285,9 @@ onUnmounted(() => {
         </div>
       </li>
     </ul>
+
+    <div v-if="!loading && !error && (sections.length > 0 || page > 1)" class="mt-6">
+      <Pagination :page="page" :size="SECTION_PAGE_SIZE" :total="total" @update:page="setPage" />
+    </div>
   </section>
 </template>
