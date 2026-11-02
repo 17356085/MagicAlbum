@@ -1817,3 +1817,7 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 现在列表缓存采用 UUID 版本命名空间。读取前获取版本；版本缺失时用 SETNX 初始化并重新读取实际值，获取失败或值异常则绕过缓存。管理操作提交后的回调写入新版本，迟到的旧查询只会写入旧命名空间，旧键依靠原有五分钟 TTL 过期。损坏 JSON 仍会删除并从数据库重建。受控测试覆盖旧读取迟到、新旧缓存隔离、初始化竞争、提交回调、回滚及 Redis 读取故障；相关定向测试 26 项通过，见 `backend/target/section-cache-generation-reviewed-20261102.log`。完整后端 package 773 项通过，见 `backend/target/section-cache-generation-full-20261102.log`；随后补充损坏 JSON 恢复测试，缓存相关 16 项再次通过，见 `backend/target/section-cache-generation-malformed-20261102.log`。仓库及 Java 导入结构检查通过。
 
 此机制不能撤回已经开始的旧读取，也不保证 Redis 版本更新失败时的跨系统一致性；失败时旧缓存仍可能持续至 TTL。混合版本实例、使用既有旧数据库快照的外层事务和真实 Redis/数据库并发均未在此验收。旧实例仍可能使用旧缓存键，不能把本地 mock 结果当作滚动部署或生产环境证明。
+
+## 2026-11-02：分区缓存真实事务补充验证
+
+新增隔离随机 H2 与真实 Spring/JPA 事务测试：管理分区创建及修改实际提交后，缓存版本改变，列表可读到已提交数据库状态；创建及修改回滚时版本不变且数据库改动回滚。四项测试通过，日志为 `%TEMP%/bluealbum-section-cache-transaction-h2-20261102-final.log`。Redis 使用 Mockito 和内存映射，未证明真实 Redis、MySQL 或数据库快照并发时序；此前受控旧读取竞态测试仍是独立证据。
