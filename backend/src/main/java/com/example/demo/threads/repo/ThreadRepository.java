@@ -94,7 +94,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
               ))
               AND (:sectionId IS NULL OR t.sectionId = :sectionId)
               AND t.status = 'NORMAL'
-            ORDER BY t.createdAt DESC
+            ORDER BY t.createdAt DESC, t.id DESC
             """,
             countQuery = """
             SELECT COUNT(t)

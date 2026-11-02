@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,12 +122,18 @@ class ThreadSearchProjectionServiceTest {
         when(view.getStatus()).thenReturn("NORMAL");
         when(threadRepository.searchNewestView(eq("blue"), eq("java"), eq(4L), any(PageRequest.class)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(1, 10), 1));
-        when(tagService.getNamesByThreadId(11L)).thenReturn(List.of());
+        when(tagService.getNamesByThreadIds(List.of(11L)))
+                .thenReturn(Map.of(11L, List.of("java")));
 
         var result = service.databaseSearch("  blue ", " java ", 4L, 2, 20);
 
         assertThat(result.getContent()).singleElement().extracting(ThreadDto::getId).isEqualTo(11L);
+        assertThat(result.getContent()).singleElement().extracting(ThreadDto::getTags)
+                .isEqualTo(List.of("java"));
         verify(threadRepository).searchNewestView(eq("blue"), eq("java"), eq(4L), eq(PageRequest.of(1, 10)));
+        verify(tagService).getNamesByThreadIds(List.of(11L));
+        verify(tagService, never()).getNamesByThreadId(11L);
+        verify(threadLikeRepository).findLikeCountsByThreadIds(List.of(11L));
     }
 
     private Thread thread(Long id, long version, String title, String content, String status) {

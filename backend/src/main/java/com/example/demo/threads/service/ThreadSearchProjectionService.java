@@ -91,7 +91,7 @@ public class ThreadSearchProjectionService {
                 normalizedTag,
                 sectionId,
                 PageRequest.of(pageIndex, limit));
-        List<ThreadDto> items = result.getContent().stream().map(dtoMapper::toDto).toList();
+        List<ThreadDto> items = dtoMapper.toDtos(result.getContent());
         return new PageImpl<>(items, result.getPageable(), result.getTotalElements());
     }
 

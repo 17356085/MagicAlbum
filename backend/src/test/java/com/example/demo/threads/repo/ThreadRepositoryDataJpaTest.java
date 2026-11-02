@@ -24,6 +24,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -160,6 +161,47 @@ class ThreadRepositoryDataJpaTest {
 
         assertThat(page.getTotalElements()).isEqualTo(1);
         assertThat(page.getContent().get(0).getTitle()).isEqualTo("Hello Java");
+    }
+
+    @Test
+    void searchNewestView_should_page_same_timestamp_by_id_desc_without_hidden_or_nonmatching_rows() {
+        Section section = new Section();
+        section.setName("Stable Search");
+        section.setSlug("stable-search");
+        section = sectionRepository.save(section);
+
+        User user = new User();
+        user.setUsername("stable-search-user");
+        user.setEmail("stable-search@example.com");
+        user.setPhone("13000000004");
+        user.setPasswordHash("hash");
+        user = userRepository.save(user);
+
+        String createdAt = "2025-01-01T00:00:00Z";
+        Thread oldestMatch = thread(section.getId(), user.getId(), "Needle oldest", "needle", "NORMAL", createdAt);
+        oldestMatch = threadRepository.save(oldestMatch);
+        Thread middleMatch = thread(section.getId(), user.getId(), "Needle middle", "needle", "NORMAL", createdAt);
+        middleMatch = threadRepository.save(middleMatch);
+        Thread newestMatch = thread(section.getId(), user.getId(), "Needle newest", "needle", "NORMAL", createdAt);
+        newestMatch = threadRepository.save(newestMatch);
+        threadRepository.save(thread(section.getId(), user.getId(), "Needle hidden", "needle", "DELETED", createdAt));
+        threadRepository.save(thread(section.getId(), user.getId(), "Other visible", "unrelated", "NORMAL", createdAt));
+        entityManager.flush();
+
+        Page<ThreadQueryView> firstPage = threadRepository.searchNewestView("needle", null, PageRequest.of(0, 2));
+        Page<ThreadQueryView> secondPage = threadRepository.searchNewestView("needle", null, PageRequest.of(1, 2));
+
+        assertThat(firstPage.getTotalElements()).isEqualTo(3);
+        assertThat(secondPage.getTotalElements()).isEqualTo(3);
+        assertThat(firstPage.getContent()).extracting(ThreadQueryView::getId)
+                .containsExactly(newestMatch.getId(), middleMatch.getId());
+        assertThat(secondPage.getContent()).extracting(ThreadQueryView::getId)
+                .containsExactly(oldestMatch.getId());
+        assertThat(List.of(
+                firstPage.getContent().get(0).getId(),
+                firstPage.getContent().get(1).getId(),
+                secondPage.getContent().get(0).getId()))
+                .containsExactly(newestMatch.getId(), middleMatch.getId(), oldestMatch.getId());
     }
 
     @Test
