@@ -74,6 +74,11 @@ function sortThreadsByCreatedAt(list: Thread[]): Thread[] {
 
 let loadRequestSeq = 0
 
+function normalizeRoutePage(raw: Parameters<typeof getSingleQueryValue>[0]): number {
+  const value = raw ? Number(getSingleQueryValue(raw)) : 1
+  return Number.isSafeInteger(value) && value >= 1 ? value : 1
+}
+
 async function load() {
   const requestSeq = ++loadRequestSeq
   loading.value = true
@@ -81,10 +86,10 @@ async function load() {
   try {
     const sidRaw = route.query.sectionId ? getSingleQueryValue(route.query.sectionId) : ''
     const sid = sidRaw ? Number(sidRaw) : undefined
-    const rp = route.query.page ? Number(getSingleQueryValue(route.query.page)) : 1
+    const rp = normalizeRoutePage(route.query.page)
     const rq = route.query.q ? getSingleQueryValue(route.query.q) : ''
     const rt = route.query.tag ? getSingleQueryValue(route.query.tag) : ''
-    page.value = isNaN(rp) ? 1 : rp
+    page.value = rp
     inputPage.value = String(page.value || '')
     sectionId.value = sid || null
     q.value = rq
@@ -111,21 +116,15 @@ onMounted(load)
 watch(page, (val) => {
   inputPage.value = String(val || '')
 })
-watch(() => route.query.sectionId, () => {
-  page.value = 1
-  load()
-})
-watch(() => route.query.page, () => {
-  load()
-})
-watch(() => route.query.q, () => {
-  page.value = 1
-  load()
-})
-watch(() => route.query.tag, () => {
-  page.value = 1
-  load()
-})
+watch(
+  [
+    () => route.query.q,
+    () => route.query.page,
+    () => route.query.tag,
+    () => route.query.sectionId,
+  ],
+  () => { void load() },
+)
 
 function firstImageUrl(mdText: string | undefined): string | undefined {
   if (!mdText) return undefined

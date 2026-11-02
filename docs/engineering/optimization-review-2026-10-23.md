@@ -1777,3 +1777,9 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 针对中间版本新增的延迟跨桶测试先失败，见 `backend/target/local-limiter-delayed-baseline-20261102.log`；最终回归覆盖过期清理、不同窗口、回拨、跨桶延迟及并发计数。定向安全和限流测试 17 项通过并完成打包，后端默认测试集 760 项通过，测试前后 555 个源码路径哈希一致；日志为 `backend/target/local-limiter-retention-reviewed-20261102.log` 和 `backend/target/local-limiter-backend-full-20261102.log`。仓库及 Java 导入边界检查通过；未对真实 Redis 故障、生产流量或时钟调整做运行环境验收。
 
 独立复审补充了两次时钟读取之间回拨的边界：如果选键时已进入下一桶，而进入本地回退时钟又回到上一桶，上一版可能创建未来桶。可控时钟基线 `backend/target/local-limiter-cross-read-rollback-baseline-20261102.log` 复现请求被错误允许；现在两次读取分属不同桶时保守拒绝，原有延迟跨桶保护也继续生效。限流和 API 安全定向测试 18 项通过并完成打包，见 `backend/target/local-limiter-cross-read-rollback-reviewed-20261102.log`；此结果未替代真实系统时钟回拨验收。
+
+## 2026-11-02：发现页路由分页及请求合并
+
+发现页之前把路由页码直接转为数字，0、负数、小数、Infinity 和超安全整数会传给分页 API；同时搜索词、页码、标签或分区在一次导航中共同改变时，各自的 watcher 会分别发起请求。现在不合法页码按第一页请求，四项路由值由同一个多源 watcher 监听；一次同步导航只加载一次，而仅替换无关 query 参数不会触发加载。旧响应序号保护、失败重试和路由作为筛选来源的行为保持。
+
+从当前提交导出原始 `Discover.vue` 到隔离的临时文件，并以当前相同测试（仅改变组件导入路径）运行：10 项中 6 项失败、4 项通过，五种非法页码均未归一化，同时变更四项 query 从初始一次增加到五次请求，见 `backend/target/discover-route-original-baseline-20261102.log`；原始组件与临时测试在运行前后核对并删除。失败数是两类问题的多项观察。最终发现页、搜索入口及分页回归 33 项通过，见 `backend/target/discover-route-integrated-20261102.log`；类型检查、定向 lint、前端构建及仓库结构检查通过。本次为组件及模拟 API 测试，没有真实浏览器或后端搜索验收；排序稳定性和搜索数据库查询成本仍需单独处理。
