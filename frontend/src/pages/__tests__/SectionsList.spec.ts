@@ -141,6 +141,154 @@ describe('SectionsList preview states', () => {
     wrapper.unmount()
   })
 
+  it('returns from an emptied third page to the last page after the total shrinks', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
+    const secondPage = Array.from({ length: 20 }, (_, index) => section(index + 21))
+    const thirdPage = [section(41)]
+    const shrunkSecondPage = [section(21, '缩减后的第二页')]
+    mocks.listSections
+      .mockResolvedValueOnce(page(firstPage, 41, 1))
+      .mockResolvedValueOnce(page(secondPage, 41, 2))
+      .mockResolvedValueOnce(page(thirdPage, 41, 3))
+      .mockResolvedValueOnce(page([], 21, 3))
+      .mockResolvedValueOnce(page(shrunkSecondPage, 21, 2))
+    mocks.listSectionPreviews
+      .mockResolvedValueOnce(firstPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce(secondPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce([preview(41, [item(4101)])])
+      .mockResolvedValueOnce([preview(21, [item(2101, '缩减后的第二页帖子')])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('分区41')
+    await (wrapper.vm as unknown as { load: (nextPage?: number) => Promise<void> }).load(3)
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(4, { page: 3, size: 20 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(5, { page: 2, size: 20 })
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('缩减后的第二页')
+    expect(wrapper.text()).toContain('缩减后的第二页帖子')
+    expect(wrapper.find('input[aria-label="页码"]').element).toHaveProperty('value', '2')
+    wrapper.unmount()
+  })
+
+  it('returns to page one when a later page becomes empty and the total reaches zero', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
+    const secondPage = [section(21)]
+    mocks.listSections
+      .mockResolvedValueOnce(page(firstPage, 21, 1))
+      .mockResolvedValueOnce(page(secondPage, 21, 2))
+      .mockResolvedValueOnce(page([], 0, 2))
+      .mockResolvedValueOnce(page([], 0, 1))
+    mocks.listSectionPreviews
+      .mockResolvedValueOnce(firstPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce([preview(21, [item(2101)])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    await (wrapper.vm as unknown as { load: (nextPage?: number) => Promise<void> }).load(2)
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(3, { page: 2, size: 20 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(4, { page: 1, size: 20 })
+    expect(wrapper.text()).toContain('暂无分区')
+    expect(wrapper.text()).not.toContain('分区21')
+    expect(wrapper.text()).not.toContain('/ 2 页')
+    wrapper.unmount()
+  })
+
+  it('keeps the fallback page retryable when the fallback request fails', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
+    const secondPage = Array.from({ length: 20 }, (_, index) => section(index + 21))
+    const thirdPage = [section(41)]
+    const fallbackPage = [section(21, '重试后的第二页')]
+    mocks.listSections
+      .mockResolvedValueOnce(page(firstPage, 41, 1))
+      .mockResolvedValueOnce(page(secondPage, 41, 2))
+      .mockResolvedValueOnce(page(thirdPage, 41, 3))
+      .mockResolvedValueOnce(page([], 21, 3))
+      .mockRejectedValueOnce(new Error('fallback failed'))
+      .mockResolvedValueOnce(page(fallbackPage, 21, 2))
+    mocks.listSectionPreviews
+      .mockResolvedValueOnce(firstPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce(secondPage.map((entry) => preview(entry.id)))
+      .mockResolvedValueOnce([preview(41)])
+      .mockResolvedValueOnce([preview(21, [item(2101, '重试后的第二页帖子')])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    await (wrapper.vm as unknown as { load: (nextPage?: number) => Promise<void> }).load(3)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('加载分区失败')
+    expect(mocks.listSections).toHaveBeenNthCalledWith(5, { page: 2, size: 20 })
+
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(6, { page: 2, size: 20 })
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('重试后的第二页')
+    expect(wrapper.text()).toContain('重试后的第二页帖子')
+    wrapper.unmount()
+  })
+
+  it('strictly decreases fallback pages and ignores a late response from an older shrink request', async () => {
+    const latePage = deferred<ReturnType<typeof page>>()
+    const initialPage = [section(1)]
+    const originalLastPage = [section(61)]
+    const finalPage = [section(21, '多次缩减后的第二页')]
+    mocks.listSections
+      .mockResolvedValueOnce(page(initialPage, 61, 1))
+      .mockResolvedValueOnce(page(originalLastPage, 61, 4))
+      .mockReturnValueOnce(latePage.promise)
+      .mockResolvedValueOnce(page([], 41, 4))
+      .mockResolvedValueOnce(page([], 21, 3))
+      .mockResolvedValueOnce(page(finalPage, 21, 2))
+    mocks.listSectionPreviews
+      .mockResolvedValueOnce([preview(1)])
+      .mockResolvedValueOnce([preview(61)])
+      .mockResolvedValueOnce([preview(21, [item(2101, '多次缩减后的帖子')])])
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { load: (nextPage?: number) => Promise<void> }
+    await vm.load(4)
+    await flushPromises()
+
+    const oldLoad = vm.load(4)
+    await vm.load(4)
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(4, { page: 4, size: 20 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(5, { page: 3, size: 20 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(6, { page: 2, size: 20 })
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).toContain('多次缩减后的第二页')
+    expect(wrapper.text()).toContain('多次缩减后的帖子')
+
+    latePage.resolve(page([], 0, 4))
+    await flushPromises()
+    await oldLoad
+    await flushPromises()
+    expect(mocks.listSections).toHaveBeenCalledTimes(6)
+    expect(wrapper.text()).not.toContain('暂无分区')
+    wrapper.unmount()
+  })
+
   it('ignores a late preview response from the previous page after switching pages', async () => {
     const firstPage = Array.from({ length: 20 }, (_, index) => section(index + 1))
     const secondPage = [section(21)]

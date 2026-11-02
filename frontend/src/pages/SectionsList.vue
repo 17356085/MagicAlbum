@@ -22,7 +22,14 @@ const previewRequestSequence = new Map<string, number>()
 let loadRequestSequence = 0
 let disposed = false
 const titleRenderer = createBaseMarkdownRenderer({ html: false, breaks: false })
-const totalPages = computed(() => Math.max(1, Math.ceil((Number(total.value) || 0) / SECTION_PAGE_SIZE)))
+
+function totalPageCount(rawTotal: unknown): number {
+  const numericTotal = Number(rawTotal)
+  if (!Number.isFinite(numericTotal) || numericTotal <= 0) return 1
+  return Math.max(1, Math.ceil(numericTotal / SECTION_PAGE_SIZE))
+}
+
+const totalPages = computed(() => totalPageCount(total.value))
 const sectionEmojiMap: Record<string, string> = {
   reading: '📚',
   tech: '💻',
@@ -160,6 +167,10 @@ async function load(nextPage = page.value): Promise<void> {
   try {
     const data = await listSections({ page: nextPage, size: SECTION_PAGE_SIZE })
     if (!isCurrentLoad(requestId)) return
+    const responseTotalPages = totalPageCount(data.total)
+    if (data.items.length === 0 && nextPage > responseTotalPages) {
+      return load(responseTotalPages)
+    }
     sections.value = data.items
     page.value = data.page
     total.value = data.total
