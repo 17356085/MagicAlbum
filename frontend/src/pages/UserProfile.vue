@@ -68,7 +68,10 @@
         <h2 class="mb-2 text-sm font-semibold text-[var(--ui-muted)]">Ta的帖子</h2>
         <div v-if="threadsLoading" class="ui-empty" role="status">正在加载...</div>
         <template v-else>
-          <div v-if="threadsError" class="ui-error mb-3" role="alert">{{ threadsError }}</div>
+          <div v-if="threadsError" class="ui-error mb-3 flex items-center justify-between gap-3" role="alert">
+            <span>{{ threadsError }}</span>
+            <button type="button" class="ui-button shrink-0" :disabled="threadsLoading" @click="retryThreads">重试</button>
+          </div>
           <template v-if="threads.items && threads.items.length">
             <ul>
               <li v-for="t in threads.items" :key="t.id" class="ui-list-row">
@@ -172,6 +175,15 @@ const totalPages = computed(() => {
   return Math.max(1, Math.ceil(total / s))
 })
 
+function responseTotalPages(response: PageResult<Thread>): number {
+  const responseSize = Number(response.size)
+  const responseTotal = Number(response.total)
+  if (!Number.isSafeInteger(responseSize) || responseSize <= 0 || !Number.isSafeInteger(responseTotal) || responseTotal < 0) {
+    return 1
+  }
+  return Math.max(1, Math.ceil(responseTotal / responseSize))
+}
+
 function readRelationship(value: unknown): boolean | null {
   if (typeof value !== 'object' || value === null) return null
   const record = value as { followedByMe?: unknown; following?: unknown }
@@ -268,6 +280,7 @@ interface ThreadsRequestContext extends ViewerContext {
   userId: string
   page: number
   size: number
+  epoch: number
 }
 
 interface FollowRequestContext extends ViewerContext {
@@ -431,6 +444,7 @@ async function loadThreads(): Promise<void> {
     userId: userId.value,
     page: page.value,
     size: size.value,
+    epoch: viewerEpoch,
   }
   const requestedUserId = context.userId
   const requestedPage = context.page
@@ -444,10 +458,18 @@ async function loadThreads(): Promise<void> {
   try {
     const data = await listUserThreads(requestedUserId, { page: requestedPage, size: requestedSize })
     if (!currentThreadsContext(context, requestSeq)) return
+    const lastValidPage = responseTotalPages(data)
+    if (data.items.length === 0 && requestedPage > lastValidPage) {
+      page.value = lastValidPage
+      inputPage.value = String(lastValidPage)
+      return loadThreads()
+    }
     threads.value = data
   } catch (e: unknown) {
     if (currentThreadsContext(context, requestSeq)) {
-      threadsError.value = e instanceof Error ? e.message : '加载帖子失败'
+      if (context.epoch === viewerEpoch && sameViewerContext(context, captureViewerContext())) {
+        threadsError.value = e instanceof Error ? e.message : '加载帖子失败'
+      }
     }
   } finally {
     if (currentThreadsContext(context, requestSeq)) threadsLoading.value = false
@@ -622,6 +644,9 @@ function queueContextRefresh(options: { resetThreads?: boolean; preserveProfile?
     page.value = 1
     inputPage.value = '1'
     refreshThreadsQueued = true
+  } else if (relationChanged) {
+    threadsError.value = ''
+    threadsLoading.value = false
   }
   if (refreshQueued) return
   refreshQueued = true
@@ -640,6 +665,11 @@ function queueContextRefresh(options: { resetThreads?: boolean; preserveProfile?
 function retryProfile(): void {
   if (disposed || profileReadPending.value) return
   void loadProfile({ preserveView: profileLoaded.value })
+}
+
+function retryThreads(): void {
+  if (disposed || threadsLoading.value) return
+  void loadThreads()
 }
 
 function onAuthContextChanged(): void {

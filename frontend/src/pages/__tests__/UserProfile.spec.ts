@@ -76,6 +76,10 @@ function threads(id: number, title: string, page = 1, total = 1): PageResult<Thr
   }
 }
 
+function emptyThreads(page = 1, total = 0, size = 10): PageResult<Thread> {
+  return { items: [], page, size, total }
+}
+
 const mountedWrappers: VueWrapper[] = []
 
 function loginAs(id: number, token = `account-${id}`) {
@@ -202,6 +206,105 @@ describe('UserProfile request ordering', () => {
 
     expect(wrapper.text()).toContain('第3页帖子')
     expect(wrapper.text()).not.toContain('第2页帖子')
+    expect(wrapper.text()).not.toContain('正在加载...')
+  })
+
+  it('backs off an out-of-range empty page to the response last page', async () => {
+    mocks.listUserThreads
+      .mockResolvedValueOnce(threads(11, '第1页帖子', 1, 30))
+      .mockResolvedValueOnce(threads(22, '第2页帖子', 2, 30))
+      .mockResolvedValueOnce(emptyThreads(3, 11))
+      .mockResolvedValueOnce(threads(23, '回退页帖子', 2, 11))
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.listUserThreads).toHaveBeenLastCalledWith('1', { page: 2, size: 10 })
+    expect(wrapper.text()).toContain('回退页帖子')
+    expect((wrapper.get('input[aria-label="页码"]').element as HTMLInputElement).value).toBe('2')
+    expect(wrapper.text()).not.toContain('正在加载...')
+  })
+
+  it('backs off an out-of-range empty page to page one when the response total is zero', async () => {
+    mocks.listUserThreads
+      .mockResolvedValueOnce(threads(11, '第1页帖子', 1, 40))
+      .mockResolvedValueOnce(threads(22, '第2页帖子', 2, 40))
+      .mockResolvedValueOnce(threads(33, '第3页帖子', 3, 40))
+      .mockResolvedValueOnce(emptyThreads(4, 0))
+      .mockResolvedValueOnce(emptyThreads(1, 0))
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.listUserThreads).toHaveBeenLastCalledWith('1', { page: 1, size: 10 })
+    expect(wrapper.text()).toContain('暂无帖子')
+    expect((wrapper.get('input[aria-label="页码"]').element as HTMLInputElement).value).toBe('1')
+    expect(wrapper.text()).not.toContain('正在加载...')
+  })
+
+  it('keeps a legal empty last page without re-requesting it', async () => {
+    mocks.listUserThreads
+      .mockResolvedValueOnce(threads(11, '第1页帖子', 1, 11))
+      .mockResolvedValueOnce(emptyThreads(2, 11))
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.listUserThreads).toHaveBeenCalledTimes(2)
+    expect(mocks.listUserThreads).toHaveBeenLastCalledWith('1', { page: 2, size: 10 })
+    expect(wrapper.text()).toContain('暂无帖子')
+    expect((wrapper.get('input[aria-label="页码"]').element as HTMLInputElement).value).toBe('2')
+  })
+
+  it('retries only a failed thread read and leaves profile and follow state intact', async () => {
+    mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), followedByMe: true })
+    mocks.listUserThreads.mockRejectedValueOnce(new Error('帖子暂不可用')).mockResolvedValueOnce(threads(11, '重试后的帖子'))
+
+    const wrapper = createWrapper(10)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已关注')
+    expect(wrapper.text()).toContain('帖子暂不可用')
+
+    const threadAlert = wrapper.find('section.border-t [role="alert"]')
+    expect(threadAlert.exists()).toBe(true)
+    await threadAlert.get('button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.getUserProfile).toHaveBeenCalledTimes(1)
+    expect(mocks.listUserThreads).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('重试后的帖子')
+    expect(wrapper.text()).toContain('已关注')
+    expect(wrapper.text()).not.toContain('帖子暂不可用')
+    expect(wrapper.text()).not.toContain('正在加载...')
+  })
+
+  it('does not show an old thread error after account switches or leave loading stuck', async () => {
+    const pendingThreads = deferred<PageResult<Thread>>()
+    mocks.listUserThreads.mockReturnValueOnce(pendingThreads.promise)
+
+    const wrapper = createWrapper(10)
+    await nextTick()
+    loginAs(20)
+    await flushPromises()
+    loginAs(10)
+    await flushPromises()
+
+    pendingThreads.reject(new Error('旧账号帖子失败'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('旧账号帖子失败')
     expect(wrapper.text()).not.toContain('正在加载...')
   })
 
