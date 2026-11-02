@@ -32,6 +32,11 @@ const selectedUser = computed(() => {
   return followingUsers.value.find((u) => String(u.id) === selectedUserId.value) || null
 })
 const emptyText = computed(() => selectedUserId.value === 'all' ? '暂无动态，关注一些用户后这里会显示他们发布的帖子。' : '该用户暂未发布帖子')
+const emptyTitle = computed(() => {
+  if (page.value > 1) return selectedUserId.value === 'all' ? '当前页暂无关注动态' : '该用户当前页暂无帖子'
+  return '暂无关注动态'
+})
+const emptyDescription = computed(() => page.value > 1 ? '可以返回上一页查看其他动态。' : emptyText.value)
 interface FeedRequestContext {
   token: string
   epoch: number
@@ -163,6 +168,21 @@ function resetFeedState(): void {
   feed.value = { items: [], page: 1, size: size.value, total: 0 }
 }
 
+function fallbackPageForEmptyResponse(
+  response: PageResult<FollowingFeedItem>,
+  requestedPage: number,
+): number | null {
+  if (!Array.isArray(response.items) || response.items.length !== 0) return null
+
+  const responseSize = Number(response.size)
+  const responseTotal = Number(response.total)
+  if (!Number.isSafeInteger(responseSize) || responseSize <= 0) return null
+  if (!Number.isSafeInteger(responseTotal) || responseTotal < 0) return null
+
+  const lastPage = Math.max(1, Math.ceil(responseTotal / responseSize))
+  return requestedPage > lastPage ? lastPage : null
+}
+
 async function load(): Promise<void> {
   const request = createRequestContext()
   if (!isCurrentRequest(request)) {
@@ -206,15 +226,21 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
     return
   }
   request.accountId = userId
+  const requestedPage = page.value
   if (selectedUserId.value === 'all') {
     if (!isCurrentRequest(request)) return
     const nextFeed = await listFollowingFeed({
       page: page.value,
       size: size.value,
     })
-    if (isCurrentRequest(request)) {
-      feed.value = nextFeed
+    if (!isCurrentRequest(request)) return
+    const fallbackPage = fallbackPageForEmptyResponse(nextFeed, requestedPage)
+    if (fallbackPage !== null) {
+      page.value = fallbackPage
+      await loadFeed(request)
+      return
     }
+    feed.value = nextFeed
     return
   }
 
@@ -226,7 +252,7 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
   if (!isCurrentRequest(request)) return
   const data = await listUserThreads(target.id, { page: page.value, size: size.value })
   if (!isCurrentRequest(request)) return
-  feed.value = {
+  const nextFeed: PageResult<FollowingFeedItem> = {
     items: data.items.map((thread) => ({
       ...thread,
       authorId: thread.authorId || target.id,
@@ -238,6 +264,13 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
     size: data.size,
     total: data.total,
   }
+  const fallbackPage = fallbackPageForEmptyResponse(nextFeed, requestedPage)
+  if (fallbackPage !== null) {
+    page.value = fallbackPage
+    await loadFeed(request)
+    return
+  }
+  feed.value = nextFeed
 }
 
 async function selectUser(id: 'all' | string): Promise<void> {
@@ -414,8 +447,8 @@ onBeforeUnmount(() => {
       <button type="button" class="ui-button min-h-11" :disabled="loading" @click="load">重试</button>
     </div>
     <div v-else-if="visibleItems.length === 0" class="ui-panel ui-empty" role="status">
-      <h2>暂无关注动态</h2>
-      <p>{{ emptyText }}</p>
+      <h2>{{ emptyTitle }}</h2>
+      <p>{{ emptyDescription }}</p>
     </div>
 
     <div v-else class="ui-panel overflow-hidden">
@@ -472,7 +505,7 @@ onBeforeUnmount(() => {
       </ul>
     </div>
 
-    <div v-if="visibleItems.length > 0" class="ui-panel mt-3 flex flex-col items-start gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+    <div v-if="!loading && !error && (page > 1 || visibleItems.length > 0)" class="ui-panel mt-3 flex flex-col items-start gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div class="text-xs text-[var(--ui-muted)]">共 {{ feed.total || 0 }} 条 · 每页 {{ size }} 条</div>
       <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
         <button type="button" class="ui-button" :disabled="loading || page <= 1" @click="setPage(page - 1)">上一页</button>

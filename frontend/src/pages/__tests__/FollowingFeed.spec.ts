@@ -55,6 +55,10 @@ function feedPage(title: string, page = 1, total = 1) {
   }
 }
 
+function emptyFeedPage(page: number, total: number, size = 10) {
+  return { items: [], page, size, total }
+}
+
 function panelFeedPage(title: string) {
   return { items: [{ id: 90, title, authorUsername: 'alice' }], page: 1, size: 4, total: 1 }
 }
@@ -278,6 +282,154 @@ describe('FollowingFeed session ownership', () => {
       await flushPromises()
       expect(mocks.listUserThreads).toHaveBeenCalledWith(2, { page: 1, size: 10 })
       expect(wrapper.text()).toContain('Alice 的帖子')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('automatically returns to the last page when the feed total shrinks', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(feedPage('第一页', 1, 20))
+      .mockResolvedValueOnce(emptyFeedPage(2, 10))
+      .mockResolvedValueOnce(feedPage('回退后的第一页', 1, 10))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(2, { page: 2, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, { page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(3)
+      expect(wrapper.text()).toContain('回退后的第一页')
+      expect(wrapper.text()).not.toContain('当前页暂无关注动态')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('returns to the first page once the feed becomes empty without duplicating requests', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(feedPage('最后的第一页', 1, 20))
+      .mockResolvedValueOnce(emptyFeedPage(2, 0))
+      .mockResolvedValueOnce(emptyFeedPage(1, 0))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(2, { page: 2, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, { page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(3)
+      expect(wrapper.text()).toContain('暂无关注动态')
+      expect(wrapper.findAll('button').some((button) => button.text() === '上一页')).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the pager and a current-page empty prompt for a valid empty later page', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(feedPage('第一页', 1, 21))
+      .mockResolvedValueOnce(emptyFeedPage(2, 21))
+      .mockResolvedValueOnce(feedPage('返回第一页', 1, 21))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(2)
+      expect(wrapper.text()).toContain('当前页暂无关注动态')
+      expect(wrapper.findAll('button').some((button) => button.text() === '上一页')).toBe(true)
+      await wrapper.findAll('button').find((button) => button.text() === '上一页')!.trigger('click')
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenLastCalledWith({ page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(3)
+      expect(wrapper.text()).toContain('返回第一页')
+      expect(wrapper.text()).not.toContain('当前页暂无关注动态')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the fallback page retryable when the automatic retry fails', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(feedPage('第一页', 1, 20))
+      .mockResolvedValueOnce(emptyFeedPage(2, 10))
+      .mockRejectedValueOnce(new Error('fallback failed'))
+      .mockResolvedValueOnce(feedPage('重试恢复', 1, 10))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[role="alert"]').text()).toContain('加载动态失败')
+      expect(wrapper.text()).not.toContain('当前页暂无关注动态')
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, { page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(4, { page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(4)
+      expect(wrapper.text()).toContain('重试恢复')
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('does not retry an empty page response that belongs to an old session', async () => {
+    const stalePage = deferred<ReturnType<typeof emptyFeedPage>>()
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(feedPage('账号 A 首页', 1, 20))
+      .mockReturnValueOnce(stalePage.promise)
+      .mockResolvedValueOnce(feedPage('账号 B 首页', 1, 1))
+    mocks.listUserFollowing.mockReset().mockResolvedValue(followingPage())
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore(pinia)
+    auth.applyAuthState({ accessToken: 'token-a', user: { id: 1, username: 'owner-a' } })
+    const wrapper = mountPage(pinia)
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(2)
+
+      auth.applyAuthState({ accessToken: 'token-b', user: { id: 2, username: 'owner-b' } })
+      await flushPromises()
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(3)
+      expect(wrapper.text()).toContain('账号 B 首页')
+
+      stalePage.resolve(emptyFeedPage(2, 0))
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(3)
+      expect(wrapper.text()).toContain('账号 B 首页')
     } finally {
       wrapper.unmount()
     }
