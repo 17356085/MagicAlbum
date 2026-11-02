@@ -31,8 +31,21 @@ const totalPages = computed(() => {
 
 function setPage(p: number) {
   const next = Math.min(Math.max(1, p), totalPages.value)
-  page.value = next
-  router.push({ name: 'discover', query: { ...route.query, page: next, sectionId: route.query.sectionId } })
+  const navigationSeq = ++pageNavigationSeq
+  const routeSnapshot = captureRouteSnapshot()
+  void (async () => {
+    try {
+      const navigationFailure = await router.push({
+        name: 'discover',
+        query: { ...route.query, page: next, sectionId: route.query.sectionId },
+      })
+      if (navigationSeq !== pageNavigationSeq || !isCurrentRouteSnapshot(routeSnapshot)) return
+      if (navigationFailure) restoreInputToCurrentRoute()
+    } catch (_) {
+      if (navigationSeq !== pageNavigationSeq || !isCurrentRouteSnapshot(routeSnapshot)) return
+      restoreInputToCurrentRoute()
+    }
+  })()
 }
 
 function prevPage() {
@@ -73,6 +86,7 @@ function sortThreadsByCreatedAt(list: Thread[]): Thread[] {
 }
 
 let loadRequestSeq = 0
+let pageNavigationSeq = 0
 
 function normalizeRoutePage(raw: Parameters<typeof getSingleQueryValue>[0]): number {
   const value = raw ? Number(getSingleQueryValue(raw)) : 1
@@ -101,6 +115,10 @@ function isCurrentRouteSnapshot(snapshot: RouteSnapshot): boolean {
     && current.q === snapshot.q
     && current.tag === snapshot.tag
     && current.sectionId === snapshot.sectionId
+}
+
+function restoreInputToCurrentRoute(): void {
+  inputPage.value = String(normalizeRoutePage(route.query.page))
 }
 
 function responseTotalPages(response: PageResult<Thread>): number {
@@ -182,7 +200,10 @@ watch(
     () => route.query.tag,
     () => route.query.sectionId,
   ],
-  () => { void load() },
+  () => {
+    pageNavigationSeq += 1
+    void load()
+  },
 )
 
 function firstImageUrl(mdText: string | undefined): string | undefined {

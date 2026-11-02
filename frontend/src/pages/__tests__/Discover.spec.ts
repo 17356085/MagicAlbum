@@ -384,4 +384,124 @@ describe('Discover', () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it('keeps the route page after next-page navigation is rejected', async () => {
+    mocks.route = reactive({ query: { q: '', tag: '', page: '1' } })
+    mocks.listThreads.mockResolvedValue({
+      items: [{ id: 21, title: 'Current page', createdAt: '2026-10-10T00:00:00Z' }],
+      page: 1,
+      size: 10,
+      total: 21,
+    })
+    mocks.router.push.mockRejectedValueOnce(new Error('navigation cancelled'))
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.router.push).toHaveBeenCalledTimes(1)
+    expect(mocks.listThreads).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('1 / 3')
+    expect((wrapper.get('input[aria-label="页码"]').element as HTMLInputElement).value).toBe('1')
+    wrapper.unmount()
+  })
+
+  it('restores manual page input when navigation resolves with a failure', async () => {
+    mocks.route = reactive({ query: { q: '', tag: '', page: '1' } })
+    mocks.listThreads.mockResolvedValue({
+      items: [{ id: 22, title: 'Current page', createdAt: '2026-10-10T00:00:00Z' }],
+      page: 1,
+      size: 10,
+      total: 21,
+    })
+    mocks.router.push.mockResolvedValueOnce({ type: 4 })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    const input = wrapper.get('input[aria-label="页码"]')
+    await input.setValue('2')
+    await input.trigger('blur')
+    await flushPromises()
+
+    expect(mocks.router.push).toHaveBeenCalledTimes(1)
+    expect(mocks.listThreads).toHaveBeenCalledTimes(1)
+    expect((input.element as HTMLInputElement).value).toBe('1')
+    expect(wrapper.text()).toContain('1 / 3')
+    wrapper.unmount()
+  })
+
+  it('fetches exactly once after a successful next-page navigation updates the route', async () => {
+    mocks.route = reactive({ query: { q: '', tag: '', page: '1' } })
+    mocks.listThreads.mockImplementation(({ page }: { page: number }) => Promise.resolve({
+      items: [{ id: page, title: `Page ${page}`, createdAt: '2026-10-10T00:00:00Z' }],
+      page,
+      size: 10,
+      total: 21,
+    }))
+    mocks.router.push.mockImplementation(async (location: { query: Record<string, unknown> }) => {
+      mocks.route.query = location.query
+    })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.router.push).toHaveBeenCalledTimes(1)
+    expect(mocks.listThreads).toHaveBeenCalledTimes(2)
+    expect(mocks.listThreads).toHaveBeenLastCalledWith({
+      q: '',
+      tag: '',
+      page: 2,
+      size: 10,
+      sectionId: undefined,
+    })
+    expect(wrapper.text()).toContain('2 / 3')
+    wrapper.unmount()
+  })
+
+  it('ignores late failures from older concurrent page navigations', async () => {
+    mocks.route = reactive({ query: { q: '', tag: '', page: '1' } })
+    mocks.listThreads.mockResolvedValue({
+      items: [{ id: 23, title: 'Current page', createdAt: '2026-10-10T00:00:00Z' }],
+      page: 1,
+      size: 10,
+      total: 31,
+    })
+    let rejectFirst!: (reason?: unknown) => void
+    let rejectSecond!: (reason?: unknown) => void
+    mocks.router.push
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFirst = reject }))
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSecond = reject }))
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    const nextButton = wrapper.findAll('button').find((button) => button.text() === '下一页')!
+    await nextButton.trigger('click')
+    await nextButton.trigger('click')
+    expect(mocks.router.push).toHaveBeenCalledTimes(2)
+
+    rejectSecond(new Error('second navigation cancelled'))
+    await flushPromises()
+    rejectFirst(new Error('first navigation cancelled'))
+    await flushPromises()
+
+    expect(mocks.listThreads).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('1 / 4')
+    expect((wrapper.get('input[aria-label="页码"]').element as HTMLInputElement).value).toBe('1')
+    wrapper.unmount()
+  })
 })
