@@ -99,6 +99,8 @@ describe('MyBookmarks', () => {
 
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('暂无收藏')
+    expect(wrapper.get('h2').text()).toBe('暂无收藏')
+    expect(wrapper.find('button').exists()).toBe(false)
     expect(listBookmarksMock).toHaveBeenCalledWith({ page: 1, size: 10 })
   })
 
@@ -134,6 +136,57 @@ describe('MyBookmarks', () => {
 
     expect(listBookmarksMock).toHaveBeenLastCalledWith({ page: 2, size: 10 })
     expect(wrapper.get('a[href="/threads/43"]').text()).toContain('第二页帖子')
+  })
+
+  it('keeps a known-total empty page local and lets the user return to the previous page', async () => {
+    listBookmarksMock
+      .mockResolvedValueOnce(result([bookmark(42, '第一页帖子')], 1, 21))
+      .mockResolvedValueOnce(result([], 2, 21))
+      .mockResolvedValueOnce(result([bookmark(42, '第一页帖子')], 1, 21))
+    const wrapper = createWrapper()
+    await settle()
+
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await settle()
+
+    expect(listBookmarksMock).toHaveBeenNthCalledWith(2, { page: 2, size: 10 })
+    expect(wrapper.get('h2').text()).toBe('本页暂无收藏')
+    expect(wrapper.text()).toContain('可以返回上一页')
+    const previous = wrapper.findAll('button').find((button) => button.text() === '上一页')
+    expect(previous).toBeDefined()
+    expect(previous!.element.disabled).toBe(false)
+
+    await previous!.trigger('click')
+    await settle()
+
+    expect(listBookmarksMock).toHaveBeenNthCalledWith(3, { page: 1, size: 10 })
+    expect(wrapper.text()).toContain('第一页帖子')
+  })
+
+  it('keeps an unknown-total page local and preserves its previous-page navigation', async () => {
+    const firstPage = Array.from({ length: 10 }, (_, index) => bookmark(index + 1, `第一页-${index + 1}`))
+    listBookmarksMock
+      .mockResolvedValueOnce({ ...result(firstPage, 1, 10), totalKnown: false })
+      .mockResolvedValueOnce({ ...result([], 2, 0), totalKnown: false })
+      .mockResolvedValueOnce({ ...result(firstPage, 1, 10), totalKnown: false })
+    const wrapper = createWrapper()
+    await settle()
+
+    await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+    await settle()
+
+    expect(listBookmarksMock).toHaveBeenNthCalledWith(2, { page: 2, size: 10 })
+    expect(wrapper.get('h2').text()).toBe('本页暂无收藏')
+    expect(wrapper.text()).toContain('可以返回上一页')
+    const previous = wrapper.findAll('button').find((button) => button.text() === '上一页')
+    expect(previous).toBeDefined()
+    expect(previous!.element.disabled).toBe(false)
+
+    await previous!.trigger('click')
+    await settle()
+
+    expect(listBookmarksMock).toHaveBeenNthCalledWith(3, { page: 1, size: 10 })
+    expect(wrapper.text()).toContain('第一页-1')
   })
 
   it('ignores a pending response after unmount', async () => {

@@ -328,7 +328,7 @@ onUnmounted(() => {
       </div>
 
       <div v-else-if="bookmarks.items.length === 0" class="ui-empty">
-        <template v-if="!hasKnownTotal && page > 1">
+        <template v-if="page > 1">
           <h2>本页暂无收藏</h2>
           <p>可以返回上一页继续查看。</p>
         </template>
@@ -352,7 +352,7 @@ onUnmounted(() => {
         </li>
       </ul>
 
-      <div v-if="!loading && !error && hasKnownTotal && bookmarks.items.length > 0" class="border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
+      <div v-if="!loading && !error && hasKnownTotal && (bookmarks.items.length > 0 || page > 1)" class="border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
         <Pagination :page="page" :size="bookmarks.size || size" :total="bookmarks.total" @update:page="setPage" />
       </div>
 
