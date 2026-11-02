@@ -150,7 +150,7 @@ describe('Discover', () => {
     wrapper.unmount()
   })
 
-  it.each(['0', '-3', '1.5', 'Infinity', '9007199254740992'])('normalizes invalid route page %s to the first page', async (routePage) => {
+  it.each(['0', '-3', '1.5', 'Infinity', '2147483648', '9007199254740991', '9007199254740992'])('normalizes invalid route page %s to the first page', async (routePage) => {
     mocks.route.query = { q: '', tag: '', page: routePage }
     mocks.listThreads.mockResolvedValue({ items: [], page: 1, size: 10, total: 0 })
 
@@ -166,6 +166,34 @@ describe('Discover', () => {
       size: 10,
       sectionId: undefined,
     })
+    expect(mocks.router.replace).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('forwards the largest Java int page without imposing a product page cap or canonicalizing the route', async () => {
+    const largestJavaIntPage = 2147483647
+    mocks.route.query = { q: '', tag: '', page: String(largestJavaIntPage) }
+    mocks.listThreads.mockResolvedValueOnce({
+      items: [{ id: 10, title: 'Largest int page', createdAt: '2026-10-08T00:00:00Z' }],
+      page: largestJavaIntPage,
+      size: 10,
+      total: largestJavaIntPage * 10,
+    })
+
+    const wrapper = mount(Discover, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+
+    expect(mocks.listThreads).toHaveBeenCalledWith({
+      q: '',
+      tag: '',
+      page: largestJavaIntPage,
+      size: 10,
+      sectionId: undefined,
+    })
+    expect(mocks.router.replace).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Largest int page')
     wrapper.unmount()
   })
 

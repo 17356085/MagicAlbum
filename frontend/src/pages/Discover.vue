@@ -87,10 +87,12 @@ function sortThreadsByCreatedAt(list: Thread[]): Thread[] {
 
 let loadRequestSeq = 0
 let pageNavigationSeq = 0
+// 仅保证页码落在后端 Java int 可解析范围内，不代表极大 offset 查询一定成功。
+const JAVA_INT_MAX = 2_147_483_647
 
 function normalizeRoutePage(raw: Parameters<typeof getSingleQueryValue>[0]): number {
   const value = raw ? Number(getSingleQueryValue(raw)) : 1
-  return Number.isSafeInteger(value) && value >= 1 ? value : 1
+  return Number.isSafeInteger(value) && value >= 1 && value <= JAVA_INT_MAX ? value : 1
 }
 
 interface RouteSnapshot {
