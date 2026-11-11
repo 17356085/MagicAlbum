@@ -5,8 +5,9 @@ import { listThreads } from '@/api/threads'
 import { normalizeImageUrl } from '@/utils/image'
 import { createBaseMarkdownRenderer, renderInlineMarkdown } from '@/utils/markdownBase'
 import { getSingleQueryValue } from '@/utils/router'
+import { getEmptyPageFallback } from '@/utils/pagination'
 import { formatAbsoluteTime } from '@/composables/time'
-import type { Id, PageResult, Thread } from '@/types'
+import type { Id, Thread } from '@/types'
 
 const loading = ref(false)
 const error = ref('')
@@ -123,15 +124,6 @@ function restoreInputToCurrentRoute(): void {
   inputPage.value = String(normalizeRoutePage(route.query.page))
 }
 
-function responseTotalPages(response: PageResult<Thread>): number {
-  const responseSize = Number(response.size)
-  const responseTotal = Number(response.total)
-  if (!Number.isFinite(responseSize) || responseSize <= 0 || !Number.isFinite(responseTotal) || responseTotal < 0) {
-    return 1
-  }
-  return Math.max(1, Math.ceil(responseTotal / responseSize))
-}
-
 async function load() {
   const requestSeq = ++loadRequestSeq
   loading.value = true
@@ -151,13 +143,13 @@ async function load() {
     const data = await listThreads({ q: rq, tag: rt, page: page.value, size: size.value, sectionId: sid })
     if (requestSeq !== loadRequestSeq || !isCurrentRouteSnapshot(routeSnapshot)) return
 
-    const lastValidPage = responseTotalPages(data)
-    if (data.items.length === 0 && lastValidPage < rp) {
+    const fallbackPage = getEmptyPageFallback(rp, data)
+    if (fallbackPage !== null) {
       let navigationFailed = false
       try {
         const navigationFailure = await router.replace({
           name: 'discover',
-          query: { ...route.query, page: lastValidPage },
+          query: { ...route.query, page: fallbackPage },
         })
         navigationFailed = Boolean(navigationFailure)
       } catch (_) {

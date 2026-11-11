@@ -6,6 +6,7 @@ import { listFollowingFeed } from '@/api/followingFeed'
 import { listUserFollowing, listUserThreads } from '@/api/users'
 import { getStoredAccessToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
+import { getEmptyPageFallback } from '@/utils/pagination'
 import type { FollowingFeedItem } from '@/api/followingFeed'
 import type { Id, PageResult, User } from '@/types'
 
@@ -168,21 +169,6 @@ function resetFeedState(): void {
   feed.value = { items: [], page: 1, size: size.value, total: 0 }
 }
 
-function fallbackPageForEmptyResponse(
-  response: PageResult<FollowingFeedItem>,
-  requestedPage: number,
-): number | null {
-  if (!Array.isArray(response.items) || response.items.length !== 0) return null
-
-  const responseSize = Number(response.size)
-  const responseTotal = Number(response.total)
-  if (!Number.isSafeInteger(responseSize) || responseSize <= 0) return null
-  if (!Number.isSafeInteger(responseTotal) || responseTotal < 0) return null
-
-  const lastPage = Math.max(1, Math.ceil(responseTotal / responseSize))
-  return requestedPage > lastPage ? lastPage : null
-}
-
 async function load(): Promise<void> {
   const request = createRequestContext()
   if (!isCurrentRequest(request)) {
@@ -234,7 +220,7 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
       size: size.value,
     })
     if (!isCurrentRequest(request)) return
-    const fallbackPage = fallbackPageForEmptyResponse(nextFeed, requestedPage)
+    const fallbackPage = getEmptyPageFallback(requestedPage, nextFeed)
     if (fallbackPage !== null) {
       page.value = fallbackPage
       await loadFeed(request)
@@ -264,7 +250,7 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
     size: data.size,
     total: data.total,
   }
-  const fallbackPage = fallbackPageForEmptyResponse(nextFeed, requestedPage)
+  const fallbackPage = getEmptyPageFallback(requestedPage, data)
   if (fallbackPage !== null) {
     page.value = fallbackPage
     await loadFeed(request)

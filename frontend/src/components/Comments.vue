@@ -11,6 +11,7 @@ import { storeToRefs } from 'pinia'
 import { normalizeImageUrl } from '@/utils/image'
 import { createMarkdownImage } from '@/utils/markdownEditor'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
+import { getEmptyPageFallback } from '@/utils/pagination'
 import { InteractionResponseError } from '@/api/interactionState'
 import { isPostCreationUnconfirmedError } from '@/api/postCreationResponse'
 import { isUploadResponseUnconfirmedError } from '@/api/uploadResponse'
@@ -329,11 +330,8 @@ async function load(): Promise<void> {
       || sortOrder.value !== requestedSortOrder
     ) return
     const responseItems = data.items as CommentItem[]
-    const responseSize = Math.max(1, Number(data.size))
-    const responseTotal = Math.max(0, Number(data.total))
-    const responseLastPage = Math.max(1, Math.ceil(responseTotal / responseSize))
-    const shouldRewindPage = responseItems.length === 0 && requestedPage > responseLastPage
-    const rewindPage = Math.min(requestedPage - 1, responseLastPage)
+    const fallbackPage = getEmptyPageFallback(requestedPage, data)
+    const shouldRewindPage = fallbackPage !== null
 
     applyingLoadResponse = true
     items.value = responseItems
@@ -347,7 +345,7 @@ async function load(): Promise<void> {
     // one request for the strictly lower page; errors from that request still
     // flow through the normal load error path.
     if (shouldRewindPage) {
-      page.value = Math.max(1, rewindPage)
+      page.value = fallbackPage
       return
     }
 

@@ -112,6 +112,7 @@ import { safeBack as navigateBackSafely } from '@/utils/router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
+import { getEmptyPageFallback } from '@/utils/pagination'
 import { formatRelativeTime } from '@/composables/time'
 import { InteractionResponseError } from '@/api/interactionState'
 import type { PageResult, Thread, User, UserProfile as UserProfileModel } from '@/types'
@@ -174,15 +175,6 @@ const totalPages = computed(() => {
   const total = Number(threads.value.total || 0)
   return Math.max(1, Math.ceil(total / s))
 })
-
-function responseTotalPages(response: PageResult<Thread>): number {
-  const responseSize = Number(response.size)
-  const responseTotal = Number(response.total)
-  if (!Number.isSafeInteger(responseSize) || responseSize <= 0 || !Number.isSafeInteger(responseTotal) || responseTotal < 0) {
-    return 1
-  }
-  return Math.max(1, Math.ceil(responseTotal / responseSize))
-}
 
 function readRelationship(value: unknown): boolean | null {
   if (typeof value !== 'object' || value === null) return null
@@ -458,10 +450,10 @@ async function loadThreads(): Promise<void> {
   try {
     const data = await listUserThreads(requestedUserId, { page: requestedPage, size: requestedSize })
     if (!currentThreadsContext(context, requestSeq)) return
-    const lastValidPage = responseTotalPages(data)
-    if (data.items.length === 0 && requestedPage > lastValidPage) {
-      page.value = lastValidPage
-      inputPage.value = String(lastValidPage)
+    const fallbackPage = getEmptyPageFallback(requestedPage, data)
+    if (fallbackPage !== null) {
+      page.value = fallbackPage
+      inputPage.value = String(fallbackPage)
       return loadThreads()
     }
     threads.value = data
