@@ -1,13 +1,17 @@
 package com.example.demo.threads.service;
 
+import com.example.demo.search.port.ContentSearchIndex;
+import com.example.demo.search.service.ThreadSearchService;
 import com.example.demo.sections.entity.Section;
 import com.example.demo.tags.entity.Tag;
 import com.example.demo.tags.entity.ThreadTag;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.entity.ThreadLike;
+import com.example.demo.threads.maintenance.service.ContentWriteGateService;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserProfile;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.persistence.EntityManager;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -27,8 +31,10 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("test")
@@ -43,15 +49,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 class ThreadSearchDatabaseQueryCostIntegrationTest {
     private static final int VISIBLE_THREAD_COUNT = 10;
+    private static final List<Integer> INDEX_ORDER = List.of(4, 9, 1, 7, 2, 8, 0, 6, 3, 5);
 
     @Autowired
     private ThreadSearchProjectionService projections;
+
+    @Autowired
+    private ThreadSearchService searchService;
+
+    @Autowired
+    private MeterRegistry metrics;
 
     @Autowired
     private EntityManager entityManager;
 
     @MockitoBean
     private StringRedisTemplate redisTemplate;
+
+    @MockitoBean
+    private ContentSearchIndex index;
+
+    @MockitoBean
+    private ContentWriteGateService control;
 
     @Autowired
     private SqlStatementCountingConfiguration.PreparedStatementCounter preparedStatementCounter;
@@ -130,6 +149,10 @@ class ThreadSearchDatabaseQueryCostIntegrationTest {
         entityManager.clear();
         statistics = entityManager.getEntityManagerFactory().unwrap(SessionFactory.class).getStatistics();
         statistics.clear();
+
+        when(control.snapshot()).thenReturn(new ContentWriteGateService.Snapshot(
+                "tongpin-threads-vtest", true, false, null));
+        when(index.activeIndex()).thenReturn(Optional.of("tongpin-threads-vtest"));
     }
 
     @Test
@@ -171,6 +194,46 @@ class ThreadSearchDatabaseQueryCostIntegrationTest {
                 .findFirst()
                 .orElseThrow();
         assertThat(newest.getLikeCount()).isEqualTo(fixture.likeCount());
+    }
+
+    @Test
+    void indexedSearch_returns_visible_rows_and_logs_query_cost() {
+        for (int size : List.of(1, VISIBLE_THREAD_COUNT)) {
+            List<ThreadFixture> indexed = INDEX_ORDER.stream().limit(size).map(fixtures::get).toList();
+            List<ContentSearchIndex.SearchHit> hits = indexed.stream()
+                    .map(fixture -> new ContentSearchIndex.SearchHit(fixture.id(), 0L))
+                    .toList();
+            when(index.search(ContentSearchIndex.ALIAS, "batch", null, sectionId, 1, size))
+                    .thenReturn(new ContentSearchIndex.SearchPage(hits, VISIBLE_THREAD_COUNT));
+            var indexedRequests = metrics.counter("content.search.requests", "source", "elasticsearch");
+            double requestCountBefore = indexedRequests.count();
+
+            QueryCounts counts = measure(() -> {
+                var result = searchService.list(" batch ", null, sectionId, 1, size);
+                assertThat(result.getTotalElements()).isEqualTo(VISIBLE_THREAD_COUNT);
+                assertThat(result.getContent()).hasSize(size);
+                assertThat(result.getContent()).extracting(ThreadDto::getId)
+                        .containsExactlyElementsOf(indexed.stream().map(ThreadFixture::id).toList());
+                assertThat(result.getContent()).extracting(ThreadDto::getLikeCount)
+                        .containsExactlyElementsOf(indexed.stream().map(ThreadFixture::likeCount).toList());
+                assertThat(result.getContent()).allSatisfy(dto -> {
+                    assertThat(dto.getAuthorId()).isEqualTo(authorId);
+                    assertThat(dto.getAuthorUsername()).isEqualTo("thread-search-author");
+                    assertThat(dto.getAuthorNickname()).isEqualTo("搜索作者");
+                    assertThat(dto.getSectionId()).isEqualTo(sectionId);
+                    assertThat(dto.getStatus()).isEqualTo("NORMAL");
+                    assertThat(dto.getLikeCount()).isPositive();
+                    assertThat(dto.getTags()).containsExactly("alpha", "beta");
+                });
+            });
+
+            System.out.println("THREAD_SEARCH_QUERY_COUNTS implementation=indexedSearch size=" + size
+                    + " hibernate=" + counts.hibernate()
+                    + " jdbcTags=" + counts.jdbcTags()
+                    + " total=" + counts.total());
+            assertThat(counts).isEqualTo(new QueryCounts(3L, 1L, 4L));
+            assertThat(indexedRequests.count()).isEqualTo(requestCountBefore + 1);
+        }
     }
 
     private List<String> expectedTitles(int size) {

@@ -21,8 +21,9 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
     List<com.example.demo.threads.entity.Thread> findByIdGreaterThanOrderByIdAsc(Long id, Pageable pageable);
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_READ)
-    @Query("SELECT t FROM Thread t WHERE t.id = :id")
-    Optional<com.example.demo.threads.entity.Thread> findByIdForSearchProjection(@Param("id") Long id);
+    @Query("SELECT t FROM Thread t WHERE t.id IN :ids ORDER BY t.id ASC")
+    List<com.example.demo.threads.entity.Thread> findAllByIdForSearchProjection(
+            @Param("ids") Collection<Long> ids);
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM Thread t WHERE t.id = :id")

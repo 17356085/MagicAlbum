@@ -16,11 +16,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.SequencedMap;
 
 /** Builds the durable search owner projection directly from the SQL source of truth. */
 @Service
@@ -63,20 +65,45 @@ public class ThreadSearchProjectionService {
     }
 
     /**
-     * Revalidates an indexed hit against the locked SQL row and maps the current
-     * query projection. This intentionally bypasses the thread cache.
+     * Revalidates an indexed page against locked SQL rows and returns all results
+     * in index order. An empty Optional requires the caller to use the database search.
      */
     @Transactional(readOnly = true)
-    public Optional<ThreadDto> visibleResult(long id, long expectedVersion) {
-        if (id <= 0 || expectedVersion < 0) {
+    public Optional<List<ThreadDto>> visibleResults(SequencedMap<Long, Long> expectedVersions) {
+        if (expectedVersions == null) {
             return Optional.empty();
         }
-        Thread thread = threadRepository.findByIdForSearchProjection(id).orElse(null);
-        if (thread == null || !"NORMAL".equals(thread.getStatus())
-                || thread.getContentVersion() != expectedVersion) {
+        if (expectedVersions.isEmpty()) {
+            return Optional.of(List.of());
+        }
+        for (Map.Entry<Long, Long> expected : expectedVersions.entrySet()) {
+            if (expected.getKey() == null || expected.getKey() <= 0
+                    || expected.getValue() == null || expected.getValue() < 0) {
+                return Optional.empty();
+            }
+        }
+
+        List<Thread> lockedRows = threadRepository.findAllByIdForSearchProjection(expectedVersions.keySet());
+        if (lockedRows.size() != expectedVersions.size()) {
             return Optional.empty();
         }
-        return threadRepository.findViewById(id).map(dtoMapper::toDto);
+
+        Map<Long, Thread> rowsById = new HashMap<>();
+        for (Thread thread : lockedRows) {
+            if (thread == null) {
+                return Optional.empty();
+            }
+            Long expectedVersion = expectedVersions.get(thread.getId());
+            if (expectedVersion == null || !"NORMAL".equals(thread.getStatus())
+                    || thread.getContentVersion() != expectedVersion
+                    || rowsById.put(thread.getId(), thread) != null) {
+                return Optional.empty();
+            }
+        }
+
+        List<Thread> orderedRows = expectedVersions.keySet().stream().map(rowsById::get).toList();
+        List<ThreadDto> results = dtoMapper.toDtosFromEntities(orderedRows);
+        return results.size() == orderedRows.size() ? Optional.of(results) : Optional.empty();
     }
 
     /** Reads the authoritative JPA query projection without Redis or MyBatis caches. */

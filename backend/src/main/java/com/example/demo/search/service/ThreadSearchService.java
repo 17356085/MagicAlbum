@@ -12,10 +12,10 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 @Service
 public class ThreadSearchService {
@@ -55,24 +55,10 @@ public class ThreadSearchService {
                 fallbackReason = "not_ready";
             } else {
                 var result = index.search(ContentSearchIndex.ALIAS, query, normalizedTag, sectionId, pageNumber, limit);
-                List<ThreadDto> items = new ArrayList<>();
-                HashSet<Long> seen = new HashSet<>();
-                boolean fresh = result.hits().size() <= limit && result.total() >= result.hits().size();
-                for (var hit : result.hits()) {
-                    if (!fresh || hit.id() <= 0 || hit.version() < 0 || !seen.add(hit.id())) {
-                        fresh = false;
-                        break;
-                    }
-                    var current = projections.visibleResult(hit.id(), hit.version());
-                    if (current.isEmpty()) {
-                        fresh = false;
-                        break;
-                    }
-                    items.add(current.orElseThrow());
-                }
-                if (fresh) {
+                Optional<List<ThreadDto>> current = revalidatePage(result, limit);
+                if (current.isPresent()) {
                     metrics.counter("content.search.requests", "source", "elasticsearch").increment();
-                    return new PageImpl<>(items, PageRequest.of(pageNumber - 1, limit), result.total());
+                    return new PageImpl<>(current.orElseThrow(), PageRequest.of(pageNumber - 1, limit), result.total());
                 }
                 fallbackReason = "stale_projection";
             }
@@ -82,5 +68,23 @@ public class ThreadSearchService {
         }
         metrics.counter("content.search.fallback", "reason", fallbackReason).increment();
         return projections.databaseSearch(q, tag, sectionId, page, size);
+    }
+
+    private Optional<List<ThreadDto>> revalidatePage(ContentSearchIndex.SearchPage page, int limit) {
+        if (page.hits().size() > limit || page.total() < page.hits().size()) {
+            return Optional.empty();
+        }
+        if (page.hits().isEmpty()) {
+            return Optional.of(List.of());
+        }
+
+        LinkedHashMap<Long, Long> expectedVersions = new LinkedHashMap<>();
+        for (var hit : page.hits()) {
+            if (hit.id() <= 0 || hit.version() < 0
+                    || expectedVersions.putIfAbsent(hit.id(), hit.version()) != null) {
+                return Optional.empty();
+            }
+        }
+        return projections.visibleResults(expectedVersions);
     }
 }

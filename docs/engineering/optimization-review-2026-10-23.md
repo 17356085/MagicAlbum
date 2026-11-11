@@ -1863,3 +1863,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 隔离 H2 使用实际缓存 JSON 和模拟 Redis 验证命中路径。10 条帖子列表的完整实体加载数从 10 降为 0，单条详情从 1 降为 0，两种路径各执行 1 条 SQL。模拟 Redis 保留旧缓存时，数据库将帖子改为隐藏后，详情返回 404，列表排除该帖子。
 
 原始基线与定向结果为 `test-artifacts/thread-cache-read-state-baseline-20261111-210933452.log` 和 `test-artifacts/thread-cache-read-state-final-20261111-211515337.log`。复核后完整后端测试 779 项通过并完成打包，日志为 `test-artifacts/thread-cache-read-state-full-20261111.log`。仓库和 Java 结构检查通过。实测指标覆盖 H2 的 SQL 和实体加载数，线上数据库及 Redis 的时延待测。
+
+## 2026-11-11 索引搜索结果批量校验与补全
+
+搜索先校验索引命中的数量、ID、版本与重复项。内容服务在一个只读事务中批量读取并共享锁定帖子行，核对可见性与版本，再按索引顺序批量加载视图、点赞和标签。任一命中失配或视图不完整时整页走数据库搜索，合法空页跳过回填。
+
+隔离 H2 模拟索引与控制状态，使用实际 SQL 和数据库夹具验证原索引顺序及返回字段。索引命中 10 条的查询由 40 条降为 4 条，命中 1 条仍为 4 条。旧版有效基线为 `backend/target/thread-search-query-cost-baseline-old-v2-20261111.log`，复核后完整后端 787 项通过并打包，日志为 `test-artifacts/thread-search-index-batch-full-20261111.log`。仓库结构、Java 模块依赖和 Git Bash 下的搜索验收脚本护栏通过。
+
+在现有 GitHub MySQL、RabbitMQ 与 Elasticsearch 验收中加入双命中顺序和隐藏一条后整页回退的读回检查。H2 查询计数覆盖数据库回填，生产时延与实际并发锁等待需要运行环境测量。

@@ -271,6 +271,8 @@ class ContentSearchRuntimeAcceptance {
         threads.delete(actor.user(), id);
         assertThat(events.count()).isEqualTo(count);
 
+        verifyMultipleIndexedHits(actor);
+
         // A committed publisher send followed by a process crash leaves a recoverable lease.
         long crashId = create(actor, "M2CrashNeedle", "M2CrashNeedle body");
         var leased = outbox.claimOne().orElseThrow();
@@ -288,7 +290,39 @@ class ContentSearchRuntimeAcceptance {
         verifyLateCommitRebuild(actor);
         evidence("pipeline", Map.of("threadId", id, "tombstoneVersion", 4,
                 "crashRecoveredThreadId", crashId, "activeIndex", index.activeIndex().orElseThrow(),
-                "published", outbox.count(ContentEventStatus.PUBLISHED)));
+                "published", outbox.count(ContentEventStatus.PUBLISHED),
+                "indexedBatchSize", 2, "staleBatchFellBack", true));
+    }
+
+    private void verifyMultipleIndexedHits(Actor actor) throws Exception {
+        String query = "M2BatchProjectionNeedle";
+        long first = create(actor, query + " first", "First body");
+        long second = create(actor, query + " second", "Second body");
+        publishPending();
+        consumeAll();
+        index.refresh(ContentSearchIndex.ALIAS);
+
+        var indexedRequests = metrics.counter("content.search.requests", "source", "elasticsearch");
+        double previousIndexedRequests = indexedRequests.count();
+        var page = search.list(query, null, actor.section(), 1, 10);
+        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getContent()).extracting(dto -> dto.getId()).containsExactly(second, first);
+        assertThat(indexedRequests.count()).isEqualTo(previousIndexedRequests + 1);
+
+        threads.hideForModeration(second);
+        // Keep both index hits visible until the owner revalidates the page.
+        assertThat(index.search(ContentSearchIndex.ALIAS, query, null, actor.section(), 1, 10).hits())
+                .extracting(ContentSearchIndex.SearchHit::id).containsExactly(second, first);
+        var staleFallbacks = metrics.counter("content.search.fallback", "reason", "stale_projection");
+        double previousFallbacks = staleFallbacks.count();
+        var current = search.list(query, null, actor.section(), 1, 10);
+        assertThat(current.getTotalElements()).isEqualTo(1);
+        assertThat(current.getContent()).extracting(dto -> dto.getId()).containsExactly(first);
+        assertThat(staleFallbacks.count()).isEqualTo(previousFallbacks + 1);
+
+        publishPending();
+        consumeAll();
+        index.refresh(ContentSearchIndex.ALIAS);
     }
 
     @Test

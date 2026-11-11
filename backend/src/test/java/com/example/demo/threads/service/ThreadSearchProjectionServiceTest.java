@@ -19,6 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -105,12 +106,80 @@ class ThreadSearchProjectionServiceTest {
     }
 
     @Test
-    void staleVisibleResultIsRejectedBeforeQueryProjectionMapping() {
+    void staleVisibleResultsAreRejectedBeforeQueryProjectionMapping() {
         Thread current = thread(10L, 3L, "Current", "Updated", "NORMAL");
-        when(threadRepository.findByIdForSearchProjection(10L)).thenReturn(Optional.of(current));
+        LinkedHashMap<Long, Long> expected = new LinkedHashMap<>();
+        expected.put(10L, 2L);
+        when(threadRepository.findAllByIdForSearchProjection(expected.keySet()))
+                .thenReturn(List.of(current));
 
-        assertThat(service.visibleResult(10L, 2L)).isEmpty();
-        verify(threadRepository, never()).findViewById(any());
+        assertThat(service.visibleResults(expected)).isEmpty();
+        verify(threadRepository, never()).findViewsByIdIn(any());
+    }
+
+    @Test
+    void hiddenVisibleResultIsRejectedBeforeQueryProjectionMapping() {
+        Thread hidden = thread(10L, 3L, "Hidden", "Private", "HIDDEN");
+        LinkedHashMap<Long, Long> expected = new LinkedHashMap<>();
+        expected.put(10L, 3L);
+        when(threadRepository.findAllByIdForSearchProjection(expected.keySet()))
+                .thenReturn(List.of(hidden));
+
+        assertThat(service.visibleResults(expected)).isEmpty();
+        verify(threadRepository, never()).findViewsByIdIn(any());
+    }
+
+    @Test
+    void visibleResultsBatchMapsInIndexOrderAndEnrichesOnce() {
+        Thread first = thread(10L, 3L, "First", "Body 1", "NORMAL");
+        Thread second = thread(7L, 4L, "Second", "Body 2", "NORMAL");
+        LinkedHashMap<Long, Long> expected = new LinkedHashMap<>();
+        expected.put(10L, 3L);
+        expected.put(7L, 4L);
+        when(threadRepository.findAllByIdForSearchProjection(expected.keySet()))
+                .thenReturn(List.of(second, first));
+
+        ThreadQueryView firstView = view(10L, "First", "Body 1");
+        ThreadQueryView secondView = view(7L, "Second", "Body 2");
+        when(threadRepository.findViewsByIdIn(List.of(10L, 7L)))
+                .thenReturn(List.of(secondView, firstView));
+        var firstLikeCount = likeCount(10L, 4L);
+        var secondLikeCount = likeCount(7L, 2L);
+        when(threadLikeRepository.findLikeCountsByThreadIds(List.of(10L, 7L)))
+                .thenReturn(List.of(firstLikeCount, secondLikeCount));
+        when(tagService.getNamesByThreadIds(List.of(10L, 7L)))
+                .thenReturn(Map.of(10L, List.of("first"), 7L, List.of("second")));
+
+        List<ThreadDto> result = service.visibleResults(expected).orElseThrow();
+
+        assertThat(result).extracting(ThreadDto::getId).containsExactly(10L, 7L);
+        assertThat(result).extracting(ThreadDto::getLikeCount).containsExactly(4L, 2L);
+        assertThat(result).extracting(ThreadDto::getTags)
+                .containsExactly(List.of("first"), List.of("second"));
+        verify(threadRepository).findViewsByIdIn(List.of(10L, 7L));
+        verify(threadLikeRepository).findLikeCountsByThreadIds(List.of(10L, 7L));
+        verify(tagService).getNamesByThreadIds(List.of(10L, 7L));
+    }
+
+    @Test
+    void incompleteQueryViewsCauseTheWholeVisibleBatchToBeRejected() {
+        Thread first = thread(10L, 3L, "First", "Body 1", "NORMAL");
+        Thread second = thread(7L, 4L, "Second", "Body 2", "NORMAL");
+        LinkedHashMap<Long, Long> expected = new LinkedHashMap<>();
+        expected.put(10L, 3L);
+        expected.put(7L, 4L);
+        when(threadRepository.findAllByIdForSearchProjection(expected.keySet()))
+                .thenReturn(List.of(second, first));
+        ThreadQueryView firstView = view(10L, "First", "Body 1");
+        when(threadRepository.findViewsByIdIn(List.of(10L, 7L)))
+                .thenReturn(List.of(firstView));
+        var firstLikeCount = likeCount(10L, 1L);
+        when(threadLikeRepository.findLikeCountsByThreadIds(List.of(10L)))
+                .thenReturn(List.of(firstLikeCount));
+        when(tagService.getNamesByThreadIds(List.of(10L)))
+                .thenReturn(Map.of(10L, List.of("first")));
+
+        assertThat(service.visibleResults(expected)).isEmpty();
     }
 
     @Test
@@ -147,5 +216,25 @@ class ThreadSearchProjectionServiceTest {
         thread.setContentVersion(version);
         thread.setCreatedAt(Instant.parse("2026-10-19T00:00:00Z"));
         return thread;
+    }
+
+    private ThreadQueryView view(Long id, String title, String content) {
+        ThreadQueryView view = org.mockito.Mockito.mock(ThreadQueryView.class);
+        when(view.getId()).thenReturn(id);
+        when(view.getSectionId()).thenReturn(4L);
+        when(view.getAuthorId()).thenReturn(5L);
+        when(view.getTitle()).thenReturn(title);
+        when(view.getContent()).thenReturn(content);
+        when(view.getStatus()).thenReturn("NORMAL");
+        when(view.getCreatedAt()).thenReturn(Instant.parse("2026-10-19T00:00:00Z"));
+        return view;
+    }
+
+    private com.example.demo.threads.dto.ThreadLikeCountView likeCount(Long threadId, Long count) {
+        com.example.demo.threads.dto.ThreadLikeCountView view =
+                org.mockito.Mockito.mock(com.example.demo.threads.dto.ThreadLikeCountView.class);
+        when(view.getThreadId()).thenReturn(threadId);
+        when(view.getLikeCount()).thenReturn(count);
+        return view;
     }
 }
