@@ -3,6 +3,7 @@ package com.example.demo.threads.repo;
 import com.example.demo.threads.dto.ThreadQueryView;
 import com.example.demo.threads.dto.ThreadRankingView;
 import com.example.demo.threads.dto.ThreadFeedView;
+import com.example.demo.threads.dto.ThreadReadState;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -324,4 +325,18 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             WHERE t.id IN :ids
             """)
     List<ThreadQueryView> findViewsByIdIn(Collection<Long> ids);
+
+    @Query("""
+            SELECT new com.example.demo.threads.dto.ThreadReadState(t.id, t.status, t.updatedAt)
+            FROM Thread t
+            WHERE t.id = :id
+            """)
+    Optional<ThreadReadState> findReadStateById(@Param("id") Long id);
+
+    @Query("""
+            SELECT new com.example.demo.threads.dto.ThreadReadState(t.id, t.status, t.updatedAt)
+            FROM Thread t
+            WHERE t.id IN :ids
+            """)
+    List<ThreadReadState> findReadStatesByIdIn(@Param("ids") Collection<Long> ids);
 }

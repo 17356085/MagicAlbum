@@ -5,6 +5,7 @@ import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.event.service.ContentEventRecorder;
@@ -55,7 +56,8 @@ class ThreadServiceTest {
         thread.setId(8L);
         thread.setStatus("NORMAL");
         when(threadRepository.findByIdForInteraction(8L)).thenReturn(Optional.of(thread));
-        when(threadRepository.findById(8L)).thenReturn(Optional.of(thread));
+        when(threadRepository.findReadStateById(8L)).thenAnswer(invocation ->
+                Optional.of(new ThreadReadState(8L, thread.getStatus(), thread.getUpdatedAt())));
 
         service.hideForModeration(8L);
 

@@ -1855,3 +1855,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 发现页、关注动态、个人主页和评论共用 `getEmptyPageFallback`。函数按接口实际页大小和总数计算末页，仅对空结果返回严格更小的页码。路由、会话归属、请求顺序和错误重试由各调用点处理。四个调用文件连同新增函数净减少 17 行。
 
 改动前后运行同一组组件与分页 API 测试，各 115 项通过。定向 lint、类型检查、生产构建及仓库结构检查通过。原始日志位于 `frontend/outputs/pagination-empty-page-20261111-210953/`，行为验证范围为组件与模拟 API。
+
+## 2026-11-11 帖子缓存校验减少数据库读取字段
+
+列表和详情校验现用帖子 ID、状态、更新时间的 JPQL 投影。列表按一批 ID 校验，详情和点赞状态复用单 ID 读取。写入继续使用原有实体与事务边界。
+
+隔离 H2 使用实际缓存 JSON 和模拟 Redis 验证命中路径。10 条帖子列表的完整实体加载数从 10 降为 0，单条详情从 1 降为 0，两种路径各执行 1 条 SQL。模拟 Redis 保留旧缓存时，数据库将帖子改为隐藏后，详情返回 404，列表排除该帖子。
+
+原始基线与定向结果为 `test-artifacts/thread-cache-read-state-baseline-20261111-210933452.log` 和 `test-artifacts/thread-cache-read-state-final-20261111-211515337.log`。复核后完整后端测试 779 项通过并完成打包，日志为 `test-artifacts/thread-cache-read-state-full-20261111.log`。仓库和 Java 结构检查通过。实测指标覆盖 H2 的 SQL 和实体加载数，线上数据库及 Redis 的时延待测。

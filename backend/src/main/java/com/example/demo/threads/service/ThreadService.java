@@ -11,6 +11,7 @@ import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.ThreadQueryView;
 import com.example.demo.threads.dto.ThreadRankingView;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.entity.Thread;
@@ -322,7 +323,7 @@ public class ThreadService {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
         }
-        findNormalThread(threadId);
+        requireNormalReadState(threadId);
         return new ThreadLikeResponse(
                 threadId,
                 threadLikeRepository.existsByThreadIdAndUserId(threadId, userId),
@@ -332,10 +333,10 @@ public class ThreadService {
 
     public ThreadDto getById(Long id) {
         // A moderation decision must take effect even if a detail response was cached earlier.
-        Thread t = findNormalThread(id);
+        ThreadReadState state = requireNormalReadState(id);
         ThreadDto cached = cache.readDetail(id);
-        if (cached != null && t.getUpdatedAt() != null
-                && Objects.equals(t.getUpdatedAt(), cached.getUpdatedAt())) {
+        if (cached != null && state.updatedAt() != null
+                && Objects.equals(state.updatedAt(), cached.getUpdatedAt())) {
             return cached;
         }
         if (cached != null) {
@@ -354,13 +355,13 @@ public class ThreadService {
         return dto;
     }
 
-    private Thread findNormalThread(Long threadId) {
-        Thread thread = threadRepository.findById(threadId)
+    private ThreadReadState requireNormalReadState(Long threadId) {
+        ThreadReadState state = threadRepository.findReadStateById(threadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
-        if (thread.getStatus() == null || !"NORMAL".equals(thread.getStatus())) {
+        if (!"NORMAL".equals(state.status())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
-        return thread;
+        return state;
     }
 
     private Thread findNormalThreadForInteraction(Long threadId) {
@@ -387,24 +388,24 @@ public class ThreadService {
         if (ids.stream().distinct().count() != ids.size()) {
             return false;
         }
-        List<Thread> authoritative = threadRepository.findAllById(ids);
+        List<ThreadReadState> authoritative = threadRepository.findReadStatesByIdIn(ids);
         if (authoritative == null || authoritative.size() != ids.size()) {
             return false;
         }
-        Map<Long, Thread> byId = new HashMap<>();
-        for (Thread thread : authoritative) {
-            if (thread == null || thread.getId() == null || byId.put(thread.getId(), thread) != null) {
+        Map<Long, ThreadReadState> byId = new HashMap<>();
+        for (ThreadReadState state : authoritative) {
+            if (state == null || state.id() == null || byId.put(state.id(), state) != null) {
                 return false;
             }
         }
         return items.stream().allMatch(dto -> {
-            Thread thread = dto == null ? null : byId.get(dto.getId());
-            return thread != null
-                    && "NORMAL".equals(thread.getStatus())
+            ThreadReadState state = dto == null ? null : byId.get(dto.getId());
+            return state != null
+                    && "NORMAL".equals(state.status())
                     && "NORMAL".equals(dto.getStatus())
-                    && thread.getUpdatedAt() != null
+                    && state.updatedAt() != null
                     && dto.getUpdatedAt() != null
-                    && Objects.equals(thread.getUpdatedAt(), dto.getUpdatedAt());
+                    && Objects.equals(state.updatedAt(), dto.getUpdatedAt());
         });
     }
 

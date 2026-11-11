@@ -4,6 +4,7 @@ import com.example.demo.common.RedisKeys;
 import com.example.demo.sections.repo.SectionRepository;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.event.service.ContentEventRecorder;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.threads.service.mp.ThreadReadServiceMp;
@@ -127,7 +128,8 @@ class ThreadServiceCacheTest {
         dto.setUpdatedAt(updatedAt);
         com.example.demo.threads.entity.Thread authoritative = normalThread(9L);
         authoritative.setUpdatedAt(updatedAt);
-        when(threadRepository.findAllById(List.of(9L))).thenReturn(List.of(authoritative));
+        when(threadRepository.findReadStatesByIdIn(List.of(9L)))
+                .thenReturn(List.of(new ThreadReadState(9L, authoritative.getStatus(), authoritative.getUpdatedAt())));
         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
         String json = mapper.writeValueAsString(new Object() {
             public final List<ThreadDto> items = List.of(dto);
@@ -166,7 +168,8 @@ class ThreadServiceCacheTest {
         com.example.demo.threads.entity.Thread hidden = normalThread(9L);
         hidden.setStatus("HIDDEN");
         hidden.setUpdatedAt(updatedAt);
-        when(threadRepository.findAllById(List.of(9L))).thenReturn(List.of(hidden));
+        when(threadRepository.findReadStatesByIdIn(List.of(9L)))
+                .thenReturn(List.of(new ThreadReadState(9L, hidden.getStatus(), hidden.getUpdatedAt())));
         when(threadRepository.searchNewestView(any(), any(), any(), any(PageRequest.class)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 10), 0));
 
@@ -196,7 +199,7 @@ class ThreadServiceCacheTest {
             public final long total = 1L;
         }));
         IllegalStateException failure = new IllegalStateException("database unavailable");
-        when(threadRepository.findAllById(List.of(9L))).thenThrow(failure);
+        when(threadRepository.findReadStatesByIdIn(List.of(9L))).thenThrow(failure);
 
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         when(mpProvider.getIfAvailable()).thenReturn(null);
@@ -456,7 +459,8 @@ class ThreadServiceCacheTest {
 
         ThreadRepository threadRepository = mock(ThreadRepository.class);
         com.example.demo.threads.entity.Thread entity = normalThread(9L);
-        when(threadRepository.findById(9L)).thenReturn(java.util.Optional.of(entity));
+        when(threadRepository.findReadStateById(9L))
+                .thenReturn(Optional.of(new ThreadReadState(9L, entity.getStatus(), entity.getUpdatedAt())));
         ThreadQueryView view = mock(ThreadQueryView.class);
         when(view.getId()).thenReturn(9L);
         when(view.getSectionId()).thenReturn(7L);
@@ -498,7 +502,8 @@ class ThreadServiceCacheTest {
         com.example.demo.threads.entity.Thread entity = normalThread(9L);
         entity.setUpdatedAt(Instant.parse("2026-10-18T00:00:01Z"));
         entity.setContentMd("Entity body");
-        when(threadRepository.findById(9L)).thenReturn(Optional.of(entity));
+        when(threadRepository.findReadStateById(9L))
+                .thenReturn(Optional.of(new ThreadReadState(9L, entity.getStatus(), entity.getUpdatedAt())));
         ThreadQueryView view = mock(ThreadQueryView.class);
         Instant viewUpdatedAt = Instant.parse("2026-10-18T00:00:02Z");
         when(view.getId()).thenReturn(9L);
@@ -541,7 +546,8 @@ class ThreadServiceCacheTest {
 
         ThreadRepository threadRepository = mock(ThreadRepository.class);
         com.example.demo.threads.entity.Thread entity = normalThread(9L);
-        when(threadRepository.findById(9L)).thenReturn(java.util.Optional.of(entity));
+        when(threadRepository.findReadStateById(9L))
+                .thenReturn(Optional.of(new ThreadReadState(9L, entity.getStatus(), entity.getUpdatedAt())));
         ThreadQueryView view = mock(ThreadQueryView.class);
         when(view.getId()).thenReturn(9L);
         when(view.getSectionId()).thenReturn(7L);

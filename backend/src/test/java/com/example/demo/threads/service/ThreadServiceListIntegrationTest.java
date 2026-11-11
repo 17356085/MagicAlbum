@@ -25,6 +25,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 import com.example.demo.threads.service.SqlStatementCountingConfiguration.PreparedStatementCounter;
 import com.example.demo.threads.repo.ThreadLikeRepository;
 import com.example.demo.threads.repo.ThreadRepository;
@@ -34,11 +35,15 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -303,6 +308,60 @@ class ThreadServiceListIntegrationTest {
         List<ThreadDto> result = mapper.toDtosFromEntities(staleSnapshots);
 
         assertThat(result).extracting(ThreadDto::getId).containsExactly(visibleFirstId, visibleSecondId);
+    }
+
+    @Test
+    void cachedListAndDetailAvoidLoadingThreadEntitiesAndRespectVisibilityChanges() {
+        Map<String, String> cacheStore = new HashMap<>();
+        when(valueOperations.get(anyString())).thenAnswer(invocation -> cacheStore.get(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            cacheStore.put(invocation.getArgument(0), invocation.getArgument(1));
+            return null;
+        }).when(valueOperations).set(anyString(), anyString(), any());
+
+        var initialList = threadService.list(null, null, sectionId, 1, 10);
+        assertThat(initialList.getContent()).hasSize(10);
+
+        List<Long> initialIds = initialList.getContent().stream().map(ThreadDto::getId).toList();
+        QueryCounts listCounts = measure(() -> {
+            var cachedList = threadService.list(null, null, sectionId, 1, 10);
+            assertThat(cachedList.getContent()).extracting(ThreadDto::getId).containsExactlyElementsOf(initialIds);
+        });
+        long listEntityLoads = statistics.getEntityLoadCount();
+
+        System.out.println("THREAD_CACHE_READ_COUNTS list hibernate=" + listCounts.hibernate()
+                + " jdbcTags=" + listCounts.jdbcTags() + " total=" + listCounts.total()
+                + " entityLoads=" + listEntityLoads);
+        assertThat(listCounts.total()).isEqualTo(1L);
+
+        Long detailId = initialIds.getFirst();
+        ThreadDto initialDetail = threadService.getById(detailId);
+        assertThat(initialDetail.getId()).isEqualTo(detailId);
+
+        QueryCounts detailCounts = measure(() -> {
+            ThreadDto cachedDetail = threadService.getById(detailId);
+            assertThat(cachedDetail.getContent()).isEqualTo(initialDetail.getContent());
+        });
+        long detailEntityLoads = statistics.getEntityLoadCount();
+
+        System.out.println("THREAD_CACHE_READ_COUNTS detail hibernate=" + detailCounts.hibernate()
+                + " jdbcTags=" + detailCounts.jdbcTags() + " total=" + detailCounts.total()
+                + " entityLoads=" + detailEntityLoads);
+        assertThat(detailCounts.total()).isEqualTo(1L);
+        assertThat(listEntityLoads).isZero();
+        assertThat(detailEntityLoads).isZero();
+
+        // Leave both cache entries populated while changing only the database visibility state.
+        assertThat(entityManager.createQuery("UPDATE Thread t SET t.status = 'HIDDEN' WHERE t.id = :id")
+                .setParameter("id", detailId)
+                .executeUpdate()).isEqualTo(1);
+        entityManager.clear();
+
+        assertThatThrownBy(() -> threadService.getById(detailId))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        exception -> assertThat(exception.getStatusCode().value()).isEqualTo(404));
+        assertThat(threadService.list(null, null, sectionId, 1, 10).getContent())
+                .extracting(ThreadDto::getId).doesNotContain(detailId);
     }
 
     private QueryCounts measure(Runnable operation) {
