@@ -1871,3 +1871,11 @@ RestCognitoOtpClient 的生产 HTTP 客户端明确设置连接 3 秒、读取 5
 隔离 H2 模拟索引与控制状态，使用实际 SQL 和数据库夹具验证原索引顺序及返回字段。索引命中 10 条的查询由 40 条降为 4 条，命中 1 条仍为 4 条。旧版有效基线为 `backend/target/thread-search-query-cost-baseline-old-v2-20261111.log`，复核后完整后端 787 项通过并打包，日志为 `test-artifacts/thread-search-index-batch-full-20261111.log`。仓库结构、Java 模块依赖和 Git Bash 下的搜索验收脚本护栏通过。
 
 在现有 GitHub MySQL、RabbitMQ 与 Elasticsearch 验收中加入双命中顺序和隐藏一条后整页回退的读回检查。H2 查询计数覆盖数据库回填，生产时延与实际并发锁等待需要运行环境测量。
+
+GitHub [搜索专项验收](https://github.com/17356085/MagicAlbum/actions/runs/43034665288/job/130571403700) 的四个阶段均通过。下载产物并按 GitHub 提供的 SHA-256 校验后，四份 JUnit 各记录 1 项通过，实际链路报告 `indexedBatchSize=2`、`staleBatchFellBack=true`，验收环境清理成功。
+
+## 2026-11-13 MyBatis 帖子分页顺序
+
+启用 MyBatis 读取时，帖子列表此前只按创建时间降序。隔离 H2 与实际 MyBatis 分页的回归给两篇帖子相同的创建时间，每页读取一篇，旧结果为 `T2, T2, T1`，其中 `T3` 缺失。查询追加 ID 降序次排序，与 JPA 的列表查询和 Elasticsearch 的最新排序一致。改后读取 `T3, T2, T1`，同时检查返回 ID 严格降序和各页总数。
+
+MyBatis 接口契约 2 项、JPA 接口及仓储回归 6 项通过，Checkstyle、仓库和 Java 依赖结构检查通过。原始输出见 `%TEMP%/bluealbum-mp-pagination-20261113-baseline.log`、`%TEMP%/bluealbum-mp-pagination-20261113-final2.log` 和 `%TEMP%/bluealbum-mp-pagination-20261113-jpa-repo.log`。此验证使用 H2；实际 MySQL 的分页及列表增删期间的偏移变化仍需分别验证。

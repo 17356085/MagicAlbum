@@ -29,8 +29,8 @@ public class ThreadReadServiceMp {
             String keyword = q.trim();
             qw.and(w -> w.like(Thread::getTitle, keyword).or().like(Thread::getContentMd, keyword));
         }
-        // 与 JPA 的 searchNewest 保持一致：按 createdAt 倒序
-        qw.orderByDesc(Thread::getCreatedAt);
+        // 与 JPA/ES 的 newest 排序保持一致：按 createdAt 倒序并以 id 倒序稳定分页
+        qw.orderByDesc(Thread::getCreatedAt, Thread::getId);
 
         Page<Thread> pageParam = new Page<>(current, limit);
         return threadMapper.selectPage(pageParam, qw);

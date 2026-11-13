@@ -21,6 +21,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -80,7 +82,7 @@ public class ThreadsControllerContractMPIT {
         t2.setTitle("T2");
         t2.setContentMd("C2");
         t2.setStatus("NORMAL");
-        t2.setCreatedAt(Instant.parse("2025-01-02T00:00:01Z"));
+        t2.setCreatedAt(Instant.parse("2025-01-03T00:00:01Z"));
         t2.setUpdatedAt(Instant.parse("2025-01-02T00:00:02Z"));
         threadRepository.save(t2);
 
@@ -114,5 +116,35 @@ public class ThreadsControllerContractMPIT {
         assertThat(items.get(0).get("title").asText()).isEqualTo("T3");
         assertThat(items.get(0).get("sectionName").asText()).isEqualTo("Tech");
         assertThat(items.get(0).get("authorUsername").asText()).isEqualTo("alice");
+    }
+
+    @Test
+    void list_contract_should_page_same_createdAt_by_id_desc_without_duplicates() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        List<String> titles = new ArrayList<>();
+        List<Long> ids = new ArrayList<>();
+
+        for (int page = 1; page <= 3; page++) {
+            String resp = mockMvc.perform(get("/api/v1/threads")
+                            .param("page", Integer.toString(page))
+                            .param("size", "1"))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString();
+
+            JsonNode root = mapper.readTree(resp);
+            assertThat(root.get("page").asInt()).isEqualTo(page);
+            assertThat(root.get("size").asInt()).isEqualTo(1);
+            assertThat(root.get("total").asLong()).isEqualTo(3);
+
+            JsonNode items = root.get("items");
+            assertThat(items.isArray()).isTrue();
+            assertThat(items.size()).isEqualTo(1);
+            ids.add(items.get(0).get("id").asLong());
+            titles.add(items.get(0).get("title").asText());
+        }
+
+        assertThat(titles).containsExactly("T3", "T2", "T1").doesNotHaveDuplicates();
+        assertThat(ids.get(0)).isGreaterThan(ids.get(1));
+        assertThat(ids.get(1)).isGreaterThan(ids.get(2));
     }
 }
