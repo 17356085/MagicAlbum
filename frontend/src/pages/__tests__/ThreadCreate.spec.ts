@@ -72,6 +72,35 @@ describe('ThreadCreate', () => {
     wrapper.unmount()
   })
 
+  it('keeps the tag preview and create payload in sync', async () => {
+    useAuthStore().applyAuthState({ accessToken: 'real-token', user: { id: 9, username: 'test-user' } })
+    createThreadMock.mockResolvedValueOnce({ id: 42, title: '带标签的新帖子' })
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const expectedTags = ['Vue', 'TypeScript', 'React', 'CSS', 'HTML']
+    const tagsInput = wrapper.get('#thread-create-tags')
+    const rawTags = '#Vue, vue， #TypeScript、typescript #React\tReact #CSS #HTML #JavaScript #'
+    await tagsInput.trigger('compositionstart')
+    const inputElement = tagsInput.element as HTMLInputElement
+    inputElement.value = rawTags
+    await tagsInput.trigger('input')
+    expect(wrapper.findAll('.ui-tag')).toHaveLength(0)
+    await tagsInput.trigger('compositionend')
+    await nextTick()
+    expect(wrapper.findAll('.ui-tag').map((tag) => tag.text())).toEqual(expectedTags.map((tag) => `#${tag}`))
+    expect(wrapper.text()).toContain('已设置 5 个')
+
+    await wrapper.find('select').setValue('3')
+    await wrapper.get('#thread-create-title').setValue('带标签的新帖子')
+    await wrapper.find('textarea').setValue('正文')
+    await wrapper.findAll('button').find((button) => button.text() === '发布')!.trigger('click')
+    await flushPromises()
+
+    expect(createThreadMock).toHaveBeenCalledWith(expect.objectContaining({ tags: expectedTags }))
+    wrapper.unmount()
+  })
+
   it('keeps form values and retries a failed section request', async () => {
     listSectionsMock
       .mockRejectedValueOnce(new Error('network down'))

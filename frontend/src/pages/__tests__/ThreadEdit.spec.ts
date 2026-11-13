@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
-import { reactive } from 'vue'
+import { nextTick, reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ThreadEdit from '../ThreadEdit.vue'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
@@ -56,6 +56,32 @@ describe('ThreadEdit content boundaries', () => {
       previewDefaultCollapsed: true,
       mobilePreviewExclusive: true,
     })
+    wrapper.unmount()
+  })
+
+  it('keeps the tag preview and update payload in sync', async () => {
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+    mocks.updateThread.mockResolvedValue({ id: 42 })
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const expectedTags = ['Vue', 'TypeScript', 'React', 'CSS', 'HTML']
+    const tagsInput = wrapper.get('#thread-edit-tags')
+    const rawTags = '#Vue, vue， #TypeScript、typescript #React\tReact #CSS #HTML #JavaScript #'
+    await tagsInput.trigger('compositionstart')
+    const inputElement = tagsInput.element as HTMLInputElement
+    inputElement.value = rawTags
+    await tagsInput.trigger('input')
+    expect(wrapper.findAll('.ui-tag')).toHaveLength(0)
+    await tagsInput.trigger('compositionend')
+    await nextTick()
+    expect(wrapper.findAll('.ui-tag').map((tag) => tag.text())).toEqual(expectedTags.map((tag) => `#${tag}`))
+    expect(wrapper.text()).toContain('已设置 5 个')
+
+    await wrapper.get('button.ui-button-primary').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateThread).toHaveBeenCalledWith('42', expect.objectContaining({ tags: expectedTags }))
     wrapper.unmount()
   })
 

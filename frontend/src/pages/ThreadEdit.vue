@@ -13,7 +13,9 @@ import { storeToRefs } from 'pinia'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown } from '@/composables/useMarkdownTools'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
+import ThreadTagField from '@/components/ThreadTagField.vue'
 import type { Id, Section } from '@/types'
+import { parseThreadTags } from '@/utils/threadTags'
 
 interface ThreadEditForm {
   sectionId: string
@@ -283,7 +285,7 @@ async function submit(): Promise<void> {
   activeSubmissionId = submissionId
   const originalThreadId = context.routeId
   const sectionId = form.value.sectionId || undefined
-  const tags = parsedTags.value
+  const tags = parseThreadTags(form.value.tags)
   submitting.value = true
   let navigationScheduled = false
   try {
@@ -342,17 +344,6 @@ async function submit(): Promise<void> {
       }
     }
   }
-}
-
-const parsedTags = computed(() => parseTags(form.value.tags))
-
-function parseTags(raw: string): string[] {
-  return String(raw || '')
-    .split(/[,，、\s]+/)
-    .map((tag) => tag.trim().replace(/^#+/, ''))
-    .filter(Boolean)
-    .filter((tag, index, arr) => arr.findIndex((item) => item.toLowerCase() === tag.toLowerCase()) === index)
-    .slice(0, 5)
 }
 
 function cancel(): void {
@@ -442,27 +433,7 @@ onUnmounted(() => {
         <input id="thread-edit-title" v-model="form.title" :disabled="submitting" type="text" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]" placeholder="请输入标题" />
       </div>
 
-      <details class="rounded-xl border border-[var(--ui-border)] px-3">
-        <summary class="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
-          <span>标签（可选）</span>
-          <span v-if="parsedTags.length" class="ui-muted text-xs">已设置 {{ parsedTags.length }} 个</span>
-        </summary>
-        <div class="pb-3">
-          <label for="thread-edit-tags" class="sr-only">标签</label>
-          <input
-            id="thread-edit-tags"
-            v-model="form.tags" :disabled="submitting"
-            type="text"
-            class="ui-field min-h-11 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]"
-            placeholder="用空格或逗号分隔，最多 5 个"
-          />
-          <div v-if="parsedTags.length" class="mt-2 flex flex-wrap gap-2">
-            <span v-for="tag in parsedTags" :key="tag" class="ui-tag">
-              #{{ tag }}
-            </span>
-          </div>
-        </div>
-      </details>
+      <ThreadTagField id="thread-edit-tags" v-model="form.tags" :disabled="submitting" />
 
       <div>
         <label class="mb-1 block text-sm font-medium">内容（支持 Markdown）</label>
