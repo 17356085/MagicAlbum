@@ -454,4 +454,48 @@ describe('FollowingFeed session ownership', () => {
       expect(wrapper.text()).toContain('全部动态')
     } finally { wrapper.unmount() }
   })
+
+  it('prefers summary, cleans its whitespace, and keeps the empty caller fallback', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 1,
+            title: '首选动态',
+            summary: '  首选 [标签](https://example.test)  ',
+            content: 'fallback-content',
+            contentMd: 'fallback-markdown',
+            authorId: 2,
+            authorUsername: 'alice',
+          },
+          {
+            id: 2,
+            title: '空动态',
+            summary: '',
+            content: '',
+            contentMd: '',
+            authorId: 2,
+            authorUsername: 'alice',
+          },
+        ],
+        page: 1,
+        size: 10,
+        total: 2,
+      })
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await flushPromises()
+      const rows = wrapper.findAll('section.ui-page ul > li')
+      expect(rows[0].find('p').text()).toBe('首选 标签')
+      expect(wrapper.text()).not.toContain('fallback-content')
+      expect(rows[1].find('p').text()).toBe('暂无内容摘要')
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

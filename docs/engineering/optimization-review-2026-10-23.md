@@ -1911,3 +1911,11 @@ GitHub 上这两个提交的 13 个检查作业分别通过。标签提交的浏
 旧实现与新实现通过同一组真实本地 HTTP 回归，验证领取和结果提交都拒绝超限响应、未知字段和额外 JSON，结果状态异常仍返回原错误结构。定向日志为 `test-artifacts/coreclient-json-refactor-baseline-20261113.log` 和 `test-artifacts/coreclient-json-refactor-final-targeted-20261113.log`。
 
 本地 Go 1.26.2 的全模块竞态测试、`go vet`、格式和仓库结构检查通过。Go 原始输出见 `test-artifacts/coreclient-json-refactor-final-race-20261113.log` 和 `test-artifacts/coreclient-json-refactor-final-vet-20261113.log`。本地 HTTP 测试使用受控服务端，实际 Java、RabbitMQ 与 Go 的协作由 GitHub 媒体验收验证。
+
+GitHub 媒体专项的 16 项通过，产物校验后确认结果回调幂等、租约恢复、预览图读回和隔离环境清理，整轮 CI 的 13 个作业通过。[媒体专项](https://github.com/17356085/MagicAlbum/actions/runs/43346169790/job/131627131059)
+
+## 2026-11-13 列表纯文本摘要复用
+
+我的帖子、我的评论、关注动态和排行榜共用纯文本摘要处理。四个页面保留各自的正文或摘要优先级、长度上限、空文案和展示结构。四个页面由 1,308 行减至 1,277 行，计入 11 行摘要函数后为 1,288 行，净减 20 行。发现页有独立的行内代码和段落规则，继续在该页处理。
+
+旧实现相关套件 101 项通过，新增四个页面回归后关联套件 105 项通过。测试覆盖来源优先级、空文案、空白和链接文本归一、截断长度。原始输出见 `test-artifacts/markdown-excerpt-refactor-baseline-no-dash-20261113.log` 和 `test-artifacts/markdown-excerpt-reviewed-20261113.log`。

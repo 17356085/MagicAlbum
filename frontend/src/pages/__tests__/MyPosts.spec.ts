@@ -364,4 +364,17 @@ describe('MyPosts list and delete recovery', () => {
     expect(wrapper.text()).not.toContain('双击评论')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
+  it('prefers content, truncates it, and keeps the empty caller fallback', async () => {
+    mocks.listMyPosts.mockResolvedValueOnce(result([
+      { ...post(1, 'a'.repeat(181)), contentMd: 'fallback-source' },
+      { ...post(2, ''), contentMd: '' },
+    ]))
+    const wrapper = createWrapper()
+    await settle()
+
+    const rows = wrapper.findAll('ul > li')
+    expect(rows[0].find('p').text()).toBe(`${'a'.repeat(180)}...`)
+    expect(wrapper.text()).not.toContain('fallback-source')
+    expect(rows[1].find('p').text()).toBe('暂无评论内容')
+  })
 })

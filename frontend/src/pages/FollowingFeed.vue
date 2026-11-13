@@ -6,6 +6,7 @@ import { listFollowingFeed } from '@/api/followingFeed'
 import { listUserFollowing, listUserThreads } from '@/api/users'
 import { getStoredAccessToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
+import { markdownExcerpt } from '@/utils/markdownExcerpt'
 import { getEmptyPageFallback } from '@/utils/pagination'
 import type { FollowingFeedItem } from '@/api/followingFeed'
 import type { Id, PageResult, User } from '@/types'
@@ -123,16 +124,7 @@ function avatarOf(item: FollowingFeedItem): string {
 }
 
 function excerpt(item: FollowingFeedItem): string {
-  const text = String(item.summary || item.content || item.contentMd || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!text) return ''
-  return text.length > 220 ? `${text.slice(0, 220)}...` : text
+  return markdownExcerpt(item.summary || item.content || item.contentMd, 220)
 }
 
 function imageUrls(item: FollowingFeedItem): string[] {

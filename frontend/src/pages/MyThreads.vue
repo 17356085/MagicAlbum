@@ -5,6 +5,7 @@ import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
 import { useOwnedContentList } from '@/composables/useOwnedContentList'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { markdownExcerpt } from '@/utils/markdownExcerpt'
 import type { Section, Thread } from '@/types'
 
 const {
@@ -67,16 +68,7 @@ onUnmounted(() => {
 })
 
 function excerpt(item: Thread): string {
-  const text = String(item.content || item.contentMd || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!text) return '暂无内容摘要'
-  return text.length > 160 ? `${text.slice(0, 160)}...` : text
+  return markdownExcerpt(item.content || item.contentMd, 160) || '暂无内容摘要'
 }
 </script>
 

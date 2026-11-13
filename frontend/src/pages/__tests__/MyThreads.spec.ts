@@ -514,4 +514,17 @@ describe('MyThreads list and delete recovery', () => {
     expect(wrapper.text()).not.toContain('删除帖子失败，请检查网络后重试')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
+  it('prefers content, truncates it, and keeps the empty caller fallback', async () => {
+    mocks.listMyThreads.mockResolvedValueOnce(result([
+      { ...thread(1, '首选帖子'), content: 'a'.repeat(161), contentMd: 'fallback-source' },
+      { ...thread(2, '空帖子'), content: '', contentMd: '' },
+    ]))
+    const wrapper = createWrapper()
+    await settle()
+
+    const rows = wrapper.findAll('ul > li')
+    expect(rows[0].find('p').text()).toBe(`${'a'.repeat(160)}...`)
+    expect(wrapper.text()).not.toContain('fallback-source')
+    expect(rows[1].find('p').text()).toBe('暂无内容摘要')
+  })
 })

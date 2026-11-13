@@ -399,4 +399,18 @@ describe('Ranking query normalization and pagination', () => {
     expect(mocks.listThreadRanking).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
+
+  it('prefers content before contentMd for ranking excerpts', async () => {
+    mocks.listThreadRanking.mockResolvedValueOnce(rankingPage([{
+      ...thread(14, '首选排行'),
+      content: '  归一 [标签](https://example.test)  ',
+      contentMd: 'fallback-ranking',
+    }]))
+    const wrapper = createWrapper()
+    await settle()
+
+    expect(wrapper.text()).toContain('归一 标签')
+    expect(wrapper.text()).not.toContain('fallback-ranking')
+    wrapper.unmount()
+  })
 })

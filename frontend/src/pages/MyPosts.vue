@@ -5,6 +5,7 @@ import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
 import { useOwnedContentList } from '@/composables/useOwnedContentList'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { markdownExcerpt } from '@/utils/markdownExcerpt'
 import type { Id, Post, Section } from '@/types'
 
 interface MyPostItem extends Post {
@@ -73,16 +74,7 @@ onUnmounted(() => {
 })
 
 function excerpt(item: MyPostItem): string {
-  const text = String(item.content || item.contentMd || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!text) return '暂无评论内容'
-  return text.length > 180 ? `${text.slice(0, 180)}...` : text
+  return markdownExcerpt(item.content || item.contentMd, 180) || '暂无评论内容'
 }
 
 function contextLink(item: MyPostItem): string {

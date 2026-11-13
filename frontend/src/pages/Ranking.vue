@@ -5,6 +5,7 @@ import { listSections } from '@/api/sections'
 import { listThreadRanking } from '@/api/threads'
 import { getSingleQueryValue } from '@/utils/router'
 import { normalizeImageUrl } from '@/utils/image'
+import { markdownExcerpt } from '@/utils/markdownExcerpt'
 import type { Id, Section, Thread } from '@/types'
 
 const route = useRoute()
@@ -127,15 +128,7 @@ function retryRanking(): void {
 }
 
 function excerpt(thread: Thread): string {
-  const text = String(thread.content || thread.contentMd || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_`~\-[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return text.length > 120 ? `${text.slice(0, 120)}...` : text
+  return markdownExcerpt(thread.content || thread.contentMd, 120)
 }
 
 function firstImageUrl(thread: Thread): string {
