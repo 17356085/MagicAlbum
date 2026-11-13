@@ -309,16 +309,14 @@ func (c *Client) SubmitResult(ctx context.Context, jobID string, jobVersion int,
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set(HeaderLeaseToken, leaseToken)
-	return c.doJSONRequest(request, "result", func(data []byte) error {
-		var response ExecutionResponse
-		if err := decodeJSON(data, c.maxJSONBytes, &response); err != nil {
-			return err
-		}
-		if response.Status != wireStatusSucceeded {
-			return errors.New("unexpected result status")
-		}
-		return nil
-	})
+	var response ExecutionResponse
+	if err := c.doJSONRequest(request, "result", &response); err != nil {
+		return err
+	}
+	if response.Status != wireStatusSucceeded {
+		return &Error{Operation: "result", Kind: ErrorResponse, Status: http.StatusOK, Cause: errors.New("unexpected result status")}
+	}
+	return nil
 }
 
 var allowedFailureCodes = map[string]struct{}{
@@ -358,33 +356,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body []byte, o
 		return &Error{Operation: operation, Kind: ErrorTransient, Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
-	return c.doJSONRequestDecode(request, operation, output)
+	return c.doJSONRequest(request, operation, output)
 }
 
-func (c *Client) doJSONRequestDecode(request *http.Request, operation string, output any) error {
-	var data []byte
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return classifyTransport(operation, err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return classifyStatus(operation, response.StatusCode)
-	}
-	data, err = io.ReadAll(io.LimitReader(response.Body, c.maxJSONBytes+1))
-	if err != nil {
-		return classifyTransport(operation, err)
-	}
-	if int64(len(data)) > c.maxJSONBytes {
-		return &Error{Operation: operation, Kind: ErrorResponse, Status: response.StatusCode}
-	}
-	if err := decodeJSON(data, c.maxJSONBytes, output); err != nil {
-		return &Error{Operation: operation, Kind: ErrorResponse, Cause: err, Status: response.StatusCode}
-	}
-	return nil
-}
-
-func (c *Client) doJSONRequest(request *http.Request, operation string, validate func([]byte) error) error {
+func (c *Client) doJSONRequest(request *http.Request, operation string, output any) error {
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return classifyTransport(operation, err)
@@ -400,8 +375,8 @@ func (c *Client) doJSONRequest(request *http.Request, operation string, validate
 	if int64(len(data)) > c.maxJSONBytes {
 		return &Error{Operation: operation, Kind: ErrorResponse, Status: response.StatusCode}
 	}
-	if err := validate(data); err != nil {
-		return &Error{Operation: operation, Kind: ErrorResponse, Status: response.StatusCode, Cause: err}
+	if err := decodeJSON(data, c.maxJSONBytes, output); err != nil {
+		return &Error{Operation: operation, Kind: ErrorResponse, Cause: err, Status: response.StatusCode}
 	}
 	return nil
 }

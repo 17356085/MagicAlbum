@@ -1901,3 +1901,13 @@ MyBatis 接口契约 2 项、JPA 接口及仓储回归 6 项通过，Checkstyle�
 旧实现运行新增回归时，两页共 45 项通过。改动后关联测试共 52 项通过，覆盖输入法组合结束后才更新预览、混合分隔符、忽略空项、忽略大小写去重、保留顺序、最多五项及预览与提交一致。原始输出见 `test-artifacts/thread-tags-baseline-final-tests-20261113.log` 和 `test-artifacts/thread-tags-main-targeted-20261113.log`。
 
 前端完整测试 134 个文件、1,553 项通过，前端 lint、类型检查、生产构建、首屏依赖检查、仓库结构及 Java 依赖边界检查通过。前端页面回归使用 jsdom 和模拟请求，实际浏览器和 HTTP 行为由 GitHub 运行环境单独核对。
+
+GitHub 上这两个提交的 13 个检查作业分别通过。标签提交的浏览器产物经 SHA-256 核对后，报告记录 API 14 项、Selenium 和 Playwright 各 1 项通过，无失败或跳过。Playwright 流程实际展开标签字段、输入并发布帖子，再通过 API 读回帖子。[分页 CI](https://github.com/17356085/MagicAlbum/actions/runs/43341630233) [标签 CI](https://github.com/17356085/MagicAlbum/actions/runs/43343180226)
+
+## 2026-11-13 媒体客户端复用 JSON 响应读取
+
+媒体客户端的领取、续租、失败确认与结果提交复用同一个 HTTP 状态判断、响应体限长读取和严格 JSON 解码。结果提交在收到解码后的响应后单独检查 `SUCCEEDED`，保留原有错误类别、HTTP 状态和原因。图片字节下载仍走专用读取。`coreclient/client.go` 的生产源码由 486 行减至 461 行。
+
+旧实现与新实现通过同一组真实本地 HTTP 回归，验证领取和结果提交都拒绝超限响应、未知字段和额外 JSON，结果状态异常仍返回原错误结构。定向日志为 `test-artifacts/coreclient-json-refactor-baseline-20261113.log` 和 `test-artifacts/coreclient-json-refactor-final-targeted-20261113.log`。
+
+本地 Go 1.26.2 的全模块竞态测试、`go vet`、格式和仓库结构检查通过。Go 原始输出见 `test-artifacts/coreclient-json-refactor-final-race-20261113.log` 和 `test-artifacts/coreclient-json-refactor-final-vet-20261113.log`。本地 HTTP 测试使用受控服务端，实际 Java、RabbitMQ 与 Go 的协作由 GitHub 媒体验收验证。

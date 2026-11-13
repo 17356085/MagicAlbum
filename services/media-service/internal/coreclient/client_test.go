@@ -271,4 +271,72 @@ func TestAuthResponsesAreClassifiedWithoutLeakingResponseBody(t *testing.T) {
 	}
 }
 
+func TestJSONAcknowledgementsRejectOversizeAndInvalidData(t *testing.T) {
+	resultBytes := []byte("result")
+	result := processor.Result{Bytes: resultBytes, ContentType: "image/png", Width: 1, Height: 1, SHA256: digest(resultBytes), ProcessorVersion: 1}
+	oversized := strings.Repeat("x", int(config.MaxJSONBytes+1))
+	claim := func(client *Client) error {
+		_, err := client.Claim(context.Background(), testEnvelope())
+		return err
+	}
+	submitResult := func(client *Client) error {
+		return client.SubmitResult(context.Background(), testJob, 1, "lease-token", result, digest([]byte("original")))
+	}
+	type endpoint struct {
+		operation string
+		call      func(*Client) error
+	}
+	claimEndpoint := endpoint{operation: "claim", call: claim}
+	resultEndpoint := endpoint{operation: "result", call: submitResult}
+	endpoints := []endpoint{claimEndpoint, resultEndpoint}
+	type responseCase struct {
+		name, body, wantCause string
+	}
+	responses := []responseCase{
+		{name: "oversized", body: oversized},
+		{name: "unknown field", body: `{"status":"CLAIMED","unexpected":true}`, wantCause: "invalid JSON response"},
+		{name: "trailing JSON", body: `{"status":"CLAIMED"}{"status":"CLAIMED"}`, wantCause: "invalid JSON response"},
+	}
+	run := func(t *testing.T, endpoint endpoint, response responseCase) {
+		t.Helper()
+		client, closeServer := testClient(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if !strings.HasSuffix(request.URL.Path, "/"+endpoint.operation) {
+				t.Errorf("unexpected path: %s", request.URL.Path)
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, response.body)
+		}), time.Second)
+		defer closeServer()
+
+		err := endpoint.call(client)
+		if err == nil {
+			t.Fatal("expected response error")
+		}
+		coreErr, ok := err.(*Error)
+		if !ok {
+			t.Fatalf("error type=%T, error=%v", err, err)
+		}
+		if coreErr.Operation != endpoint.operation || coreErr.Kind != ErrorResponse || coreErr.Status != http.StatusOK {
+			t.Fatalf("unexpected error shape: %+v", coreErr)
+		}
+		if response.wantCause == "" {
+			if coreErr.Cause != nil {
+				t.Fatalf("unexpected cause: %v", coreErr.Cause)
+			}
+		} else if coreErr.Cause == nil || coreErr.Cause.Error() != response.wantCause {
+			t.Fatalf("cause=%v, want %q", coreErr.Cause, response.wantCause)
+		}
+	}
+	for _, endpoint := range endpoints {
+		for _, response := range responses {
+			t.Run(endpoint.operation+"/"+response.name, func(t *testing.T) {
+				run(t, endpoint, response)
+			})
+		}
+	}
+	t.Run("result/wrong status", func(t *testing.T) {
+		run(t, resultEndpoint, responseCase{name: "wrong status", body: `{"status":"FAILED"}`, wantCause: "unexpected result status"})
+	})
+}
+
 func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
