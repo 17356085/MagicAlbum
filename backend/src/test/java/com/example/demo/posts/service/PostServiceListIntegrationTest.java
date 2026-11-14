@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -23,12 +24,18 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("test")
@@ -202,6 +209,47 @@ class PostServiceListIntegrationTest {
 
         System.out.println("SQL_STATEMENTS acceptance empty authenticated page=3 size=50 actual=" + statements);
         assertThat(statements).isEqualTo(3L);
+    }
+
+    @Test
+    void cachedRepliesValidateWithEntityLoadAndStatementEvidence() {
+        Post externalParent = entityManager.find(Post.class, postIds.get(47));
+        Post child = entityManager.find(Post.class, postIds.get(48));
+        Post overlapChild = entityManager.find(Post.class, postIds.get(49));
+        Post standalone = entityManager.find(Post.class, postIds.get(50));
+        child.setReplyToPostId(externalParent.getId());
+        overlapChild.setReplyToPostId(child.getId());
+        standalone.setReplyToPostId(null);
+        entityManager.flush();
+        entityManager.clear();
+
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        Map<String, String> entries = new HashMap<>();
+        when(redisTemplate.opsForValue()).thenReturn(values);
+        when(values.get(anyString())).thenAnswer(invocation -> entries.get(invocation.getArgument(0)));
+        doAnswer(invocation -> {
+            entries.put(invocation.getArgument(0), invocation.getArgument(1));
+            return null;
+        }).when(values).set(anyString(), anyString(), any(java.time.Duration.class));
+
+        var generated = postService.listByThread(threadId, null, "time", 17, 3);
+        String cacheKey = "cache:posts:thread:" + threadId + ":time:17:3";
+        assertThat(entries).containsKey(cacheKey);
+        assertThat(generated.getContent()).extracting(PostDto::getId)
+                .containsExactly(child.getId(), overlapChild.getId(), standalone.getId());
+
+        entityManager.clear();
+        statistics.clear();
+        var page = postService.listByThread(threadId, null, "time", 17, 3);
+        long statements = statistics.getPrepareStatementCount();
+        long entityLoads = statistics.getEntityLoadCount();
+
+        System.out.println("CACHE_HIT_EVIDENCE actual statements=" + statements + " entityLoads=" + entityLoads
+                + " items=" + page.getContent().size());
+        assertThat(statements).isEqualTo(2L);
+        assertThat(entityLoads).isZero();
+        assertThat(page.getContent()).extracting(PostDto::getId)
+                .containsExactlyElementsOf(generated.getContent().stream().map(PostDto::getId).toList());
     }
 
     private long statementCount(Runnable operation) {

@@ -4,6 +4,7 @@ import com.example.demo.posts.dto.PostLikeCountView;
 import com.example.demo.posts.dto.PostQueryView;
 import com.example.demo.posts.repo.PostLikeRepository;
 import com.example.demo.posts.repo.PostRepository;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,7 @@ class PostServiceLikeBatchTest {
         ThreadRepository threads = mock(ThreadRepository.class);
         UserRepository users = mock(UserRepository.class);
         PostQueryView view = view(1L);
-        when(threads.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 20), 1));
         when(likes.findLikeCountsByPostIds(List.of(1L)))
@@ -56,7 +57,7 @@ class PostServiceLikeBatchTest {
         UserRepository users = mock(UserRepository.class);
         PostQueryView view = view(1L);
         PostLikeCountView count = mock(PostLikeCountView.class);
-        when(threads.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 20), 1));
         when(count.getPostId()).thenReturn(1L);
@@ -81,7 +82,7 @@ class PostServiceLikeBatchTest {
         PostLikeRepository likes = mock(PostLikeRepository.class);
         ThreadRepository threads = mock(ThreadRepository.class);
         UserRepository users = mock(UserRepository.class);
-        when(threads.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
@@ -99,7 +100,7 @@ class PostServiceLikeBatchTest {
         ThreadRepository threads = mock(ThreadRepository.class);
         UserRepository users = mock(UserRepository.class);
         PostQueryView view = view(1L);
-        when(threads.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 20), 1));
 
@@ -132,5 +133,9 @@ class PostServiceLikeBatchTest {
         thread.setId(7L);
         thread.setStatus("NORMAL");
         return thread;
+    }
+
+    private static ThreadReadState normalThreadReadState() {
+        return new ThreadReadState(7L, "NORMAL", java.time.Instant.parse("2026-10-18T00:00:00Z"));
     }
 }

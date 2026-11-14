@@ -2,9 +2,11 @@ package com.example.demo.posts.service;
 
 import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.dto.PostDto;
+import com.example.demo.posts.dto.PostReadState;
 import com.example.demo.posts.dto.PostQueryView;
 import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.repo.PostRepository;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -51,7 +53,7 @@ class PostServiceCacheTest {
             entries.put(call.getArgument(0), call.getArgument(1));
             return null;
         }).when(values).set(anyString(), anyString(), any(java.time.Duration.class));
-        when(threads.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         PageRequest page = PageRequest.of(0, 20);
         when(posts.findByThreadAscView(7L, page)).thenReturn(new PageImpl<>(List.of(), page, 0));
         PostService service = new PostService(posts, threads, mock(UserRepository.class), redis, null);
@@ -65,7 +67,7 @@ class PostServiceCacheTest {
 
         assertThat(entries).hasSize(1).containsKey("cache:posts:thread:7:time:1:20");
         verify(posts, times(1)).findByThreadAscView(7L, page);
-        verify(threads, times(3)).findById(7L);
+        verify(threads, times(3)).findReadStateById(7L);
     }
 
     private static com.example.demo.threads.entity.Thread normalThread() {
@@ -73,6 +75,10 @@ class PostServiceCacheTest {
         thread.setId(7L);
         thread.setStatus("NORMAL");
         return thread;
+    }
+
+    private static ThreadReadState normalThreadReadState() {
+        return new ThreadReadState(7L, "NORMAL", Instant.parse("2026-10-18T00:00:00Z"));
     }
 
     @Test
@@ -84,7 +90,7 @@ class PostServiceCacheTest {
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(anyString())).thenReturn(null);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
 
         PostQueryView view = mock(PostQueryView.class);
         when(view.getId()).thenReturn(1L);
@@ -114,7 +120,7 @@ class PostServiceCacheTest {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
 
         PostDto dto = new PostDto();
         dto.setId(1L);
@@ -122,12 +128,8 @@ class PostServiceCacheTest {
         dto.setContent("Cached");
         Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
         dto.setUpdatedAt(updatedAt);
-        Post authoritative = new Post();
-        authoritative.setId(1L);
-        authoritative.setThreadId(7L);
-        authoritative.setStatus("NORMAL");
-        authoritative.setUpdatedAt(updatedAt);
-        when(postRepository.findAllById(List.of(1L))).thenReturn(List.of(authoritative));
+        when(postRepository.findReadStateByIdIn(any()))
+                .thenReturn(List.of(new PostReadState(1L, 7L, "NORMAL", updatedAt)));
         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
         String json = mapper.writeValueAsString(new Object() {
             public final List<PostDto> items = List.of(dto);
@@ -152,7 +154,7 @@ class PostServiceCacheTest {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
 
         PostQueryView view = mock(PostQueryView.class);
         when(view.getId()).thenReturn(1L);
@@ -181,7 +183,7 @@ class PostServiceCacheTest {
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(anyString())).thenReturn(null);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
@@ -202,7 +204,7 @@ class PostServiceCacheTest {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
 
         Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
         PostDto dto = new PostDto();
@@ -214,12 +216,8 @@ class PostServiceCacheTest {
             public final List<PostDto> items = List.of(dto);
             public final long total = 1L;
         }));
-        Post hidden = new Post();
-        hidden.setId(1L);
-        hidden.setThreadId(7L);
-        hidden.setStatus("HIDDEN");
-        hidden.setUpdatedAt(updatedAt);
-        when(postRepository.findAllById(List.of(1L))).thenReturn(List.of(hidden));
+        when(postRepository.findReadStateByIdIn(any()))
+                .thenReturn(List.of(new PostReadState(1L, 7L, "HIDDEN", updatedAt)));
         when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
@@ -237,7 +235,7 @@ class PostServiceCacheTest {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
 
         Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
         PostDto dto = new PostDto();
@@ -251,18 +249,10 @@ class PostServiceCacheTest {
             public final long total = 1L;
         }));
 
-        Post child = new Post();
-        child.setId(1L);
-        child.setThreadId(7L);
-        child.setStatus("NORMAL");
-        child.setUpdatedAt(updatedAt);
-        Post deletedParent = new Post();
-        deletedParent.setId(2L);
-        deletedParent.setThreadId(7L);
-        deletedParent.setStatus("DELETED");
-        deletedParent.setUpdatedAt(updatedAt);
-        when(postRepository.findAllById(List.of(1L))).thenReturn(List.of(child));
-        when(postRepository.findAllById(List.of(2L))).thenReturn(List.of(deletedParent));
+        when(postRepository.findReadStateByIdIn(any()))
+                .thenReturn(List.of(
+                        new PostReadState(1L, 7L, "NORMAL", updatedAt),
+                        new PostReadState(2L, 7L, "DELETED", updatedAt)));
         when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
@@ -280,7 +270,7 @@ class PostServiceCacheTest {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(threadRepository.findById(7L)).thenReturn(Optional.of(normalThread()));
+        when(threadRepository.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         Instant updatedAt = Instant.parse("2026-10-18T00:00:00Z");
         PostDto dto = new PostDto();
         dto.setId(1L);
@@ -292,7 +282,7 @@ class PostServiceCacheTest {
             public final long total = 1L;
         }));
         IllegalStateException failure = new IllegalStateException("database unavailable");
-        when(postRepository.findAllById(List.of(1L))).thenThrow(failure);
+        when(postRepository.findReadStateByIdIn(any())).thenThrow(failure);
 
         PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, mapper);
 

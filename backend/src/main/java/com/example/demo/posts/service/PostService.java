@@ -8,6 +8,7 @@ import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.dto.PostLikeCountView;
 import com.example.demo.posts.dto.PostLikeResponse;
 import com.example.demo.posts.dto.PostDto;
+import com.example.demo.posts.dto.PostReadState;
 import com.example.demo.posts.dto.PostQueryView;
 import com.example.demo.posts.dto.UpdatePostRequest;
 import com.example.demo.posts.entity.Post;
@@ -15,6 +16,7 @@ import com.example.demo.posts.entity.PostLike;
 import com.example.demo.posts.repo.PostLikeRepository;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.repo.ThreadRepository;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.service.ThreadCacheInvalidator;
 import com.example.demo.user.repo.UserRepository;
 import org.springframework.beans.factory.ObjectProvider;
@@ -32,6 +34,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -105,7 +108,7 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public Page<PostDto> listByThread(Long threadId, Long currentUserId, String sort, int page, int size) {
-        findNormalThread(threadId);
+        requireNormalThread(threadId);
         int limit = Math.min(Math.max(size, 1), 50);
         int pageIndex = Math.max(page, 1) - 1;
         int effectivePage = pageIndex + 1;
@@ -456,7 +459,7 @@ public class PostService {
     private Post findActivePost(Long postId) {
         Post post = postRepository.findActiveById(postId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "评论不存在"));
-        findNormalThread(post.getThreadId());
+        requireNormalThread(post.getThreadId());
         return post;
     }
 
@@ -480,12 +483,11 @@ public class PostService {
         return post;
     }
 
-    private com.example.demo.threads.entity.Thread findNormalThread(Long threadId) {
-        com.example.demo.threads.entity.Thread thread = threadId == null ? null : threadRepository.findById(threadId).orElse(null);
-        if (thread == null || !"NORMAL".equals(thread.getStatus())) {
+    private void requireNormalThread(Long threadId) {
+        ThreadReadState state = threadId == null ? null : threadRepository.findReadStateById(threadId).orElse(null);
+        if (state == null || !"NORMAL".equals(state.status())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
         }
-        return thread;
     }
 
     private boolean isFreshAnonymousPostPage(CachedPostPage cached, Long threadId) {
@@ -496,64 +498,46 @@ public class PostService {
         if (items.isEmpty()) {
             return true;
         }
-        if (items.stream().anyMatch(dto -> dto == null
-                || dto.getId() == null
-                || dto.getId() <= 0
-                || dto.getThreadId() == null
-                || dto.getUpdatedAt() == null)) {
+        Map<Long, Instant> cachedUpdatedAtById = new HashMap<>();
+        Set<Long> requestedIds = new HashSet<>();
+        for (PostDto dto : items) {
+            if (dto == null
+                    || dto.getId() == null
+                    || dto.getId() <= 0
+                    || !threadId.equals(dto.getThreadId())
+                    || dto.getUpdatedAt() == null) {
+                return false;
+            }
+            if (cachedUpdatedAtById.put(dto.getId(), dto.getUpdatedAt()) != null) {
+                return false;
+            }
+            requestedIds.add(dto.getId());
+            Long parentId = dto.getReplyToPostId();
+            if (parentId != null) {
+                if (parentId <= 0) {
+                    return false;
+                }
+                requestedIds.add(parentId);
+            }
+        }
+
+        List<PostReadState> states = postRepository.findReadStateByIdIn(requestedIds);
+        if (states == null || states.size() != requestedIds.size()) {
             return false;
         }
-        List<Long> ids = items.stream().map(PostDto::getId).toList();
-        if (ids.stream().distinct().count() != ids.size()) {
-            return false;
-        }
-        List<Post> authoritative = postRepository.findAllById(ids);
-        if (authoritative == null || authoritative.size() != ids.size()) {
-            return false;
-        }
-        Map<Long, Post> byId = new HashMap<>();
-        for (Post post : authoritative) {
-            if (post == null || post.getId() == null || byId.put(post.getId(), post) != null) {
+        for (PostReadState state : states) {
+            if (state == null
+                    || !requestedIds.remove(state.id())
+                    || !threadId.equals(state.threadId())
+                    || !"NORMAL".equals(state.status())) {
+                return false;
+            }
+            Instant cachedUpdatedAt = cachedUpdatedAtById.get(state.id());
+            if (cachedUpdatedAt != null && !cachedUpdatedAt.equals(state.updatedAt())) {
                 return false;
             }
         }
-        boolean postsFresh = items.stream().allMatch(dto -> {
-            Post post = dto == null ? null : byId.get(dto.getId());
-            return post != null
-                    && threadId.equals(post.getThreadId())
-                    && threadId.equals(dto.getThreadId())
-                    && "NORMAL".equals(post.getStatus())
-                    && post.getUpdatedAt() != null
-                    && dto.getUpdatedAt() != null
-                    && Objects.equals(post.getUpdatedAt(), dto.getUpdatedAt());
-        });
-        if (!postsFresh) {
-            return false;
-        }
-        List<Long> parentIds = items.stream()
-                .map(PostDto::getReplyToPostId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        if (parentIds.isEmpty()) {
-            return true;
-        }
-        List<Post> parents = postRepository.findAllById(parentIds);
-        if (parents == null || parents.size() != parentIds.size()) {
-            return false;
-        }
-        Map<Long, Post> parentsById = new HashMap<>();
-        for (Post parent : parents) {
-            if (parent == null || parent.getId() == null || parentsById.put(parent.getId(), parent) != null) {
-                return false;
-            }
-        }
-        return parentIds.stream().allMatch(parentId -> {
-            Post parent = parentsById.get(parentId);
-            return parent != null
-                    && threadId.equals(parent.getThreadId())
-                    && "NORMAL".equals(parent.getStatus());
-        });
+        return requestedIds.isEmpty();
     }
 
     private long countLikes(Long postId) {

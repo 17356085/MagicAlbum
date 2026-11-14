@@ -7,6 +7,7 @@ import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.repo.PostLikeRepository;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.entity.Thread;
+import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,8 @@ class PostServiceModerationTest {
     @Test
     void hiddenThreadDoesNotExposeOrAcceptComments() {
         Thread hidden = thread("HIDDEN");
-        when(threads.findById(7L)).thenReturn(Optional.of(hidden));
+        when(threads.findReadStateById(7L)).thenReturn(Optional.of(
+                new ThreadReadState(7L, hidden.getStatus(), java.time.Instant.parse("2026-10-18T00:00:00Z"))));
 
         assertThatThrownBy(() -> service.listByThread(7L, 1, 20))
                 .isInstanceOfSatisfying(ResponseStatusException.class,

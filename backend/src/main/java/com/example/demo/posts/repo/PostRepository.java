@@ -1,5 +1,6 @@
 package com.example.demo.posts.repo;
 
+import com.example.demo.posts.dto.PostReadState;
 import com.example.demo.posts.dto.PostQueryView;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -7,11 +8,20 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<com.example.demo.posts.entity.Post, Long> {
     @Query("SELECT p.threadId FROM Post p WHERE p.id = :id")
     Optional<Long> findThreadIdByPostId(@Param("id") Long id);
+
+    @Query("""
+            SELECT new com.example.demo.posts.dto.PostReadState(p.id, p.threadId, p.status, p.updatedAt)
+            FROM Post p
+            WHERE p.id IN :ids
+            """)
+    List<PostReadState> findReadStateByIdIn(@Param("ids") Collection<Long> ids);
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Post p WHERE p.id = :id")
