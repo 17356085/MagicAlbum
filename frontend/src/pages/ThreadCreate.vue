@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
-import { useThreadEditorSections } from '@/composables/useThreadEditorSections'
+import { useSectionOptions } from '@/composables/useSectionOptions'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import ThreadTagField from '@/components/ThreadTagField.vue'
 import type { Id } from '@/types'
@@ -23,7 +23,7 @@ const createdThreadId = ref<Id | null>(null)
 const creationUnconfirmed = ref(false)
 const authStore = useAuthStore()
 const { isLoggedIn, token } = storeToRefs(authStore)
-const { sections, sectionsLoading, sectionsError, loadSections } = useThreadEditorSections()
+const { sections, sectionsLoading, sectionsError, loadSections } = useSectionOptions()
 
 interface ThreadCreateForm {
   sectionId: string

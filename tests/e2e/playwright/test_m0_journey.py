@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import pytest
@@ -151,6 +152,41 @@ def _eventually(label: str, predicate: Callable[[], Any]) -> Any:
             pass
         time.sleep(0.25)
     pytest.fail(f"{label} was not observable through the API within {POLL_TIMEOUT_SECONDS:g}s")
+
+
+def _verify_owned_section_filter(
+    page: Page,
+    *,
+    route: str,
+    endpoint: str,
+    section_id: int,
+    expected_item_id: int,
+    expected_text: str,
+) -> None:
+    """Verify a real owned-list section filter through its browser response."""
+
+    page.goto(f"{BASE_URL}{route}", wait_until="domcontentloaded")
+    section_filter = page.get_by_label("按分区筛选", exact=True)
+    expect(section_filter).to_be_visible(timeout=10000)
+    expect(section_filter.locator(f'option[value="{section_id}"]')).to_have_count(1, timeout=10000)
+
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "GET"
+            and urlparse(response.url).path == endpoint
+            and parse_qs(urlparse(response.url).query).get("sectionId") == [str(section_id)]
+        ),
+        timeout=10000,
+    ) as filtered_response_info:
+        section_filter.select_option(str(section_id))
+
+    filtered_response = filtered_response_info.value
+    if filtered_response.status != 200:
+        pytest.fail(f"{endpoint} section filter returned HTTP {filtered_response.status}")
+    filtered_items = _extract_items(_json_body(filtered_response, f"{endpoint} section filter"))
+    if not any(_extract_id(item) == expected_item_id for item in filtered_items):
+        pytest.fail(f"{endpoint} section filter did not include entity {expected_item_id}")
+    expect(page.get_by_text(expected_text, exact=True)).to_be_visible(timeout=10000)
 
 
 def _register_via_api(client: ApiClient, identity: AccountIdentity) -> int:
@@ -677,6 +713,25 @@ def test_m0_r01_r04_browser_journey(
                 lambda: _thread_like_state(client_b, thread_id, expected=False),
             )
             assert unlike_state["liked"] is False
+
+            if paged_sections:
+                _verify_owned_section_filter(
+                    page_a,
+                    route="/my/threads",
+                    endpoint="/api/v1/users/me/threads",
+                    section_id=edit_section_id,
+                    expected_item_id=thread_id,
+                    expected_text=thread_title,
+                )
+                _verify_owned_section_filter(
+                    page_b,
+                    route="/my/posts",
+                    endpoint="/api/v1/users/me/posts",
+                    section_id=edit_section_id,
+                    expected_item_id=post_id,
+                    expected_text=comment_content,
+                )
+                record_testsuite_property("owned_section_filter_page", 2)
     finally:
         # Keep generated accounts for server-side auditability; clean mutable
         # content/bookmark state where the API provides an owner operation.

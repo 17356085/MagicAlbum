@@ -11,7 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown } from '@/composables/useMarkdownTools'
-import { useThreadEditorSections } from '@/composables/useThreadEditorSections'
+import { useSectionOptions } from '@/composables/useSectionOptions'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import ThreadTagField from '@/components/ThreadTagField.vue'
 import type { Id } from '@/types'
@@ -39,7 +39,7 @@ const error = ref('')
 const threadLoadError = ref('')
 const success = ref('')
 const saveUnconfirmed = ref(false)
-const { sections, sectionsLoading, sectionsError, loadSections } = useThreadEditorSections()
+const { sections, sectionsLoading, sectionsError, loadSections } = useSectionOptions()
 const form = ref<ThreadEditForm>({ sectionId: '', title: '', content: '', tags: '' })
 
 interface AuthContextSnapshot {

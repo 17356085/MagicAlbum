@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MyThreads from '../MyThreads.vue'
 import { useAuthStore } from '@/stores/auth'
-import type { Id, PageResult, Thread } from '@/types'
+import type { Id, PageResult, Section, Thread } from '@/types'
 
 const mocks = vi.hoisted(() => ({
   listMyThreads: vi.fn(),
@@ -35,6 +35,10 @@ function thread(id: Id, title: string): Thread {
 }
 
 function result(items: Thread[], page = 1, total = items.length, size = 10): PageResult<Thread> {
+  return { items, page, size, total }
+}
+
+function sectionResult(items: Section[], page = 1, total = items.length, size = 100): PageResult<Section> {
   return { items, page, size, total }
 }
 
@@ -526,5 +530,65 @@ describe('MyThreads list and delete recovery', () => {
     expect(rows[0].find('p').text()).toBe(`${'a'.repeat(160)}...`)
     expect(wrapper.text()).not.toContain('fallback-source')
     expect(rows[1].find('p').text()).toBe('暂无内容摘要')
+  })
+  it('loads a later section page and switches the owner query without accepting a stale response', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: index + 1, name: `分区${index + 1}` }))
+    const secondPage = [{ id: 101, name: '第101分区' }]
+    mocks.listSections
+      .mockResolvedValueOnce(sectionResult(firstPage, 1, 101))
+      .mockResolvedValueOnce(sectionResult(secondPage, 2, 101))
+
+    const oldRequest = deferred<PageResult<Thread>>()
+    const newRequest = deferred<PageResult<Thread>>()
+    mocks.listMyThreads.mockReturnValueOnce(oldRequest.promise).mockReturnValueOnce(newRequest.promise)
+
+    const wrapper = createWrapper()
+    await settle()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(1, { page: 1, size: 100 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(2, { page: 2, size: 100 })
+    expect(wrapper.find('select[aria-label="按分区筛选"] option[value="101"]').exists()).toBe(true)
+    await wrapper.get('select[aria-label="按分区筛选"]').setValue('101')
+    expect(mocks.listMyThreads).toHaveBeenLastCalledWith({ q: '', sectionId: '101', page: 1, size: 10, sort: 'updatedAt' })
+
+    newRequest.resolve(result([thread(101, '第101分区帖子')]))
+    await settle()
+    oldRequest.resolve(result([thread(1, '旧的全部分区帖子')]))
+    await settle()
+
+    expect(wrapper.text()).toContain('第101分区帖子')
+    expect(wrapper.text()).not.toContain('旧的全部分区帖子')
+  })
+
+  it('retries a failed later section page without clearing visible owner content', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: index + 1, name: `分区${index + 1}` }))
+    const secondPage = [{ id: 101, name: '重试后的分区' }]
+    mocks.listSections
+      .mockResolvedValueOnce(sectionResult(firstPage, 1, 101))
+      .mockRejectedValueOnce(new Error('second page unavailable'))
+      .mockResolvedValueOnce(sectionResult(firstPage, 1, 101))
+      .mockResolvedValueOnce(sectionResult(secondPage, 2, 101))
+    mocks.listMyThreads.mockResolvedValueOnce(result([thread(7, '仍然可见的帖子')]))
+
+    const wrapper = createWrapper()
+    await settle()
+
+    const sectionAlert = wrapper.get('[role="alert"]')
+    expect(sectionAlert.text()).toContain('分区加载失败')
+    expect(mocks.listSections).toHaveBeenNthCalledWith(1, { page: 1, size: 100 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(2, { page: 2, size: 100 })
+    expect((wrapper.get('select[aria-label="按分区筛选"]').element as HTMLSelectElement).value).toBe('')
+    expect(wrapper.text()).toContain('仍然可见的帖子')
+    expect(mocks.listMyThreads).toHaveBeenCalledTimes(1)
+
+    await sectionAlert.get('button').trigger('click')
+    await settle()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(3, { page: 1, size: 100 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(4, { page: 2, size: 100 })
+    expect(wrapper.find('select[aria-label="按分区筛选"] option[value="101"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('仍然可见的帖子')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(mocks.listMyThreads).toHaveBeenCalledTimes(1)
   })
 })

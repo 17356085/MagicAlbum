@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { listMyPosts, deletePost } from '@/api/my'
-import { listSections } from '@/api/sections'
 import { formatRelativeTime } from '@/composables/time'
+import { useSectionOptions } from '@/composables/useSectionOptions'
 import { useOwnedContentList } from '@/composables/useOwnedContentList'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { markdownExcerpt } from '@/utils/markdownExcerpt'
-import type { Id, Post, Section } from '@/types'
+import type { Id, Post } from '@/types'
 
 interface MyPostItem extends Post {
   threadTitle?: string
@@ -49,28 +49,10 @@ const {
   },
 })
 
-const sections = ref<Section[]>([])
-let sectionsRequestSeq = 0
-let sectionsDisposed = false
-
-async function loadSections(): Promise<void> {
-  const requestSeq = ++sectionsRequestSeq
-  try {
-    const data = await listSections({ size: 200 })
-    if (sectionsDisposed || requestSeq !== sectionsRequestSeq) return
-    sections.value = data.items
-  } catch (_) {
-    // 保持空列表即可
-  }
-}
+const { sections, sectionsLoading, sectionsError, loadSections } = useSectionOptions()
 
 onMounted(() => {
   void loadSections()
-})
-
-onUnmounted(() => {
-  sectionsDisposed = true
-  sectionsRequestSeq += 1
 })
 
 function excerpt(item: MyPostItem): string {
@@ -96,8 +78,13 @@ function contextLink(item: MyPostItem): string {
         </select>
         <select v-model="query.sectionId" class="ui-field w-auto" aria-label="按分区筛选" @change="query.page=1; load()">
           <option value="">全部分区</option>
-          <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name || ('#' + s.id) }}</option>
+          <option v-for="s in sections" :key="s.id" :value="String(s.id)">{{ s.name || ('#' + s.id) }}</option>
         </select>
+        <span v-if="sectionsLoading" class="ui-muted text-xs" role="status" aria-live="polite">正在加载分区...</span>
+        <div v-else-if="sectionsError" class="ui-error flex flex-wrap items-center gap-2 text-xs" role="alert" aria-live="assertive">
+          <span>{{ sectionsError }}</span>
+          <button type="button" class="ui-button min-h-11 px-3 py-1 text-xs" @click="loadSections">重试加载分区</button>
+        </div>
       </div>
     </header>
 

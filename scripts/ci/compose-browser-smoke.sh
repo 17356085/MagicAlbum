@@ -162,6 +162,9 @@ if sys.argv[3]:
     properties = root.findall(".//property[@name='thread_editor_section_page']")
     if [item.get("value") for item in properties] != [sys.argv[3]]:
         raise SystemExit("M0 browser journey did not verify posting and editing with second-page sections")
+    properties = root.findall(".//property[@name='owned_section_filter_page']")
+    if [item.get("value") for item in properties] != [sys.argv[3]]:
+        raise SystemExit("M0 browser journey did not verify both owned section filters")
 print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }

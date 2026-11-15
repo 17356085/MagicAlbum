@@ -4,7 +4,7 @@ import type { Section } from '@/types'
 
 const SECTION_PAGE_SIZE = 100
 
-export function useThreadEditorSections() {
+export function useSectionOptions() {
   const sections = ref<Section[]>([])
   const sectionsLoading = ref(false)
   const sectionsError = ref('')
