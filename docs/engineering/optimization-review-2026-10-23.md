@@ -1962,3 +1962,5 @@ GitHub 的 13 个作业通过，运行时验收产物已按 SHA-256 核对。API
 在 `2b6faee` 隔离副本上运行两份最终列表回归，新增四项因后续分页或重试入口缺失而失败，原有 35 项通过。修复后两份列表回归 39 项、编辑器和请求适配器等关联测试 57 项通过。前端全量 134 个文件、1,566 项通过，lint、类型检查、生产构建及首屏依赖检查通过。原始结果和文件行数见 `test-artifacts/bluealbum-20261115/owned-sections/`。
 
 GitHub 的隔离浏览器测试复用前序发帖、编辑和评论数据，使用两份已登录会话分别在本人帖子与评论页选择第二页分区，核对实际 GET 参数、返回记录 ID 和页面文本。两个步骤通过后才写入 `owned_section_filter_page=2`，JUnit 门禁同时要求编辑器和本人列表的验收属性。
+
+首次 GitHub 运行中，API 14 项和 Selenium 1 项通过。Playwright 在本人帖子页确认分区参数及接口返回 ID 后，因结果列表和最近浏览侧栏同时显示相同标题而停在可见性断言。后续断言先按准确的实体 ID 定位唯一列表行，再核对行内文字。失败报告及其原始产物分开保留，本地副本为 `test-artifacts/bluealbum-20261115/owned-sections/first-ci-runtime.zip`。[首次浏览器运行](https://github.com/17356085/MagicAlbum/actions/runs/43675995410/job/132696815504)

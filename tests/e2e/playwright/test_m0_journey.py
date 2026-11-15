@@ -186,7 +186,10 @@ def _verify_owned_section_filter(
     filtered_items = _extract_items(_json_body(filtered_response, f"{endpoint} section filter"))
     if not any(_extract_id(item) == expected_item_id for item in filtered_items):
         pytest.fail(f"{endpoint} section filter did not include entity {expected_item_id}")
-    expect(page.get_by_text(expected_text, exact=True)).to_be_visible(timeout=10000)
+    item_id = page.get_by_text(f"ID: {expected_item_id}", exact=True)
+    result_row = page.get_by_role("listitem").filter(has=item_id)
+    expect(result_row).to_have_count(1, timeout=10000)
+    expect(result_row.get_by_text(expected_text, exact=True)).to_be_visible(timeout=10000)
 
 
 def _register_via_api(client: ApiClient, identity: AccountIdentity) -> int:
