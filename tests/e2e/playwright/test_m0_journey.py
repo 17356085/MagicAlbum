@@ -385,7 +385,9 @@ def _write_fixture(
 @pytest.mark.ui
 @pytest.mark.auth
 @pytest.mark.slow
-def test_m0_r01_r04_browser_journey(playwright_instance: Playwright) -> None:
+def test_m0_r01_r04_browser_journey(
+    playwright_instance: Playwright, record_testsuite_property: Callable[[str, object], None]
+) -> None:
     """Exercise registration, content interaction, notification, report, and isolation paths."""
 
     identity_a = _new_identity("a")
@@ -417,12 +419,17 @@ def test_m0_r01_r04_browser_journey(playwright_instance: Playwright) -> None:
             _register_and_login_ui(page_a, identity_a)
             _, user_a_id, user_a = _login_via_api(client_a, identity_a)
 
-            sections = client_a.list_sections(page=1, size=1)
+            paged_sections = os.getenv("TEST_M0_PAGED_SECTIONS") == "1"
+            sections = client_a.list_sections(page=2 if paged_sections else 1, size=100 if paged_sections else 1)
             _assert_status(sections, (200,), "section lookup")
-            section_items = _extract_items(_json_body(sections, "section lookup"))
+            section_page = _json_body(sections, "section lookup")
+            section_items = _extract_items(section_page)
             if not section_items or _extract_id(section_items[0]) is None:
                 pytest.fail("isolated stack did not expose a writable section")
             section_id = int(section_items[0]["id"])
+            if paged_sections:
+                assert section_page["page"] == 2 and section_page["size"] == 100
+                assert len(section_items) >= 2 and section_page["total"] > 101
 
             # Account B is created through the API only to keep the browser
             # registration assertion focused on the first account.
@@ -458,6 +465,25 @@ def test_m0_r01_r04_browser_journey(playwright_instance: Playwright) -> None:
                 lambda: _read_thread_if_ready(client_a, thread_id, thread_title, user_a_id),
             )
             assert thread["content"] == thread_content
+            assert int(thread["sectionId"]) == section_id
+
+            if paged_sections:
+                edit_section_id = int(section_items[1]["id"])
+                page_a.goto(f"{BASE_URL}/threads/{thread_id}/edit", wait_until="domcontentloaded")
+                edit_section = page_a.get_by_label("分区", exact=True)
+                expect(edit_section).to_have_value(str(section_id), timeout=10000)
+                edit_section.select_option(str(edit_section_id))
+                with page_a.expect_response(
+                    lambda response: response.request.method == "PATCH" and response.url.endswith(f"/threads/{thread_id}"),
+                    timeout=10000,
+                ) as saved:
+                    page_a.get_by_role("button", name="保存修改", exact=True).click()
+                assert saved.value.status == 200
+                edited_response = client_a.get_thread(thread_id)
+                _assert_status(edited_response, (200,), "browser thread edit readback")
+                edited = _json_body(edited_response, "browser thread edit readback")
+                assert int(edited["sectionId"]) == edit_section_id
+                record_testsuite_property("thread_editor_section_page", 2)
 
             context_b = browser.new_context(viewport={"width": 1280, "height": 900}, locale="zh-CN")
             page_b = context_b.new_page()

@@ -2,7 +2,6 @@
 import { isAxiosError } from 'axios'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { WatchStopHandle } from 'vue'
-import { listSections } from '@/api/sections'
 import { createThread } from '@/api/threadWrites'
 import { isThreadWriteUnconfirmedError } from '@/api/threadWriteResponse'
 import { uploadImage } from '@/api/uploads'
@@ -10,22 +9,21 @@ import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown, useDraft } from '@/composables/useMarkdownTools'
+import { useThreadEditorSections } from '@/composables/useThreadEditorSections'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import ThreadTagField from '@/components/ThreadTagField.vue'
-import type { Id, Section } from '@/types'
+import type { Id } from '@/types'
 import { THREAD_CONTENT_MAX_LENGTH } from '@/config/contentLimits'
 import { parseThreadTags } from '@/utils/threadTags'
 
-const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const success = ref('')
 const createdThreadId = ref<Id | null>(null)
 const creationUnconfirmed = ref(false)
-const sections = ref<Section[]>([])
-const sectionsError = ref('')
 const authStore = useAuthStore()
 const { isLoggedIn, token } = storeToRefs(authStore)
+const { sections, sectionsLoading, sectionsError, loadSections } = useThreadEditorSections()
 
 interface ThreadCreateForm {
   sectionId: string
@@ -98,7 +96,6 @@ const { draftHasData, saveDraft, flushAutoSave, restoreDraft, clearDraft, refres
 let stopAuthWatch: WatchStopHandle | null = null
 let draftMessageTimer: ReturnType<typeof setTimeout> | null = null
 let mounted = false
-let sectionsRequestSeq = 0
 let identityRefreshSequence = 0
 let submissionSequence = 0
 let activeSubmissionId: number | null = null
@@ -278,23 +275,6 @@ async function uploadThreadImage(file: File): Promise<string> {
   }
 }
 
-async function loadSections(): Promise<void> {
-  if (!mounted) return
-  const requestSeq = ++sectionsRequestSeq
-  loading.value = true
-  sectionsError.value = ''
-  try {
-    const data = await listSections({ size: 100 })
-    if (!mounted || requestSeq !== sectionsRequestSeq) return
-    sections.value = data.items
-  } catch (_) {
-    if (!mounted || requestSeq !== sectionsRequestSeq) return
-    sectionsError.value = '分区加载失败，请重试'
-  } finally {
-    if (mounted && requestSeq === sectionsRequestSeq) loading.value = false
-  }
-}
-
 async function submit(): Promise<void> {
   if (submitting.value) return
   if (isUploading.value || beautifying.value) {
@@ -442,7 +422,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   mounted = false
-  sectionsRequestSeq += 1
   activeSubmissionId = null
   submissionSequence += 1
   editorOperationSequence += 1
@@ -510,11 +489,11 @@ onUnmounted(() => {
       <div class="space-y-4">
         <div>
           <label for="thread-create-section" class="mb-1 block text-sm font-medium">分区</label>
-          <select id="thread-create-section" v-model="form.sectionId" :disabled="loading || submitting" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
+          <select id="thread-create-section" v-model="form.sectionId" :disabled="sectionsLoading || submitting" class="ui-field min-h-12 text-base focus:outline-none focus:ring-2 focus:ring-[var(--ui-accent-soft)]">
             <option value="" disabled>请选择分区</option>
             <option v-for="s in sections" :key="s.id" :value="s.id">{{ s.name }}</option>
           </select>
-          <p v-if="loading" class="ui-muted mt-1 text-xs" role="status" aria-live="polite">正在加载分区...</p>
+          <p v-if="sectionsLoading" class="ui-muted mt-1 text-xs" role="status" aria-live="polite">正在加载分区...</p>
           <div v-else-if="sectionsError" class="ui-error mt-2 flex flex-wrap items-center gap-2 text-sm" role="alert" aria-live="assertive">
             <span>{{ sectionsError }}</span>
             <button type="button" class="ui-button min-h-9 px-3 py-1 text-sm" @click="loadSections">重试</button>

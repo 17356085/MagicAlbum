@@ -3,7 +3,6 @@ import { THREAD_CONTENT_MAX_LENGTH } from '@/config/contentLimits'
 import { isAxiosError } from 'axios'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { listSections } from '@/api/sections'
 import { getThread } from '@/api/threads'
 import { updateThread } from '@/api/threadWrites'
 import { isThreadWriteUnconfirmedError } from '@/api/threadWriteResponse'
@@ -12,9 +11,10 @@ import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 import { getStoredAccessToken, hasRealToken } from '@/utils/authStorage'
 import { beautifyMarkdown } from '@/composables/useMarkdownTools'
+import { useThreadEditorSections } from '@/composables/useThreadEditorSections'
 import MarkdownTextareaEditor from '@/components/MarkdownTextareaEditor.vue'
 import ThreadTagField from '@/components/ThreadTagField.vue'
-import type { Id, Section } from '@/types'
+import type { Id } from '@/types'
 import { parseThreadTags } from '@/utils/threadTags'
 
 interface ThreadEditForm {
@@ -39,9 +39,7 @@ const error = ref('')
 const threadLoadError = ref('')
 const success = ref('')
 const saveUnconfirmed = ref(false)
-const sections = ref<Section[]>([])
-const sectionsLoading = ref(false)
-const sectionsError = ref('')
+const { sections, sectionsLoading, sectionsError, loadSections } = useThreadEditorSections()
 const form = ref<ThreadEditForm>({ sectionId: '', title: '', content: '', tags: '' })
 
 interface AuthContextSnapshot {
@@ -52,7 +50,6 @@ interface AuthContextSnapshot {
 
 let mounted = false
 let loadSequence = 0
-let sectionsRequestSeq = 0
 let submissionSequence = 0
 let activeSubmissionId: number | null = null
 let successTimer: ReturnType<typeof setTimeout> | null = null
@@ -155,21 +152,6 @@ function invalidatePageContext(resetForm = true): void {
   threadLoadError.value = ''
   saveUnconfirmed.value = false
   if (resetForm) form.value = emptyForm()
-}
-
-async function loadSections(): Promise<void> {
-  if (!mounted) return
-  const requestSeq = ++sectionsRequestSeq
-  sectionsLoading.value = true
-  sectionsError.value = ''
-  try {
-    const data = await listSections({ size: 100 })
-    if (mounted && requestSeq === sectionsRequestSeq) sections.value = data.items
-  } catch (_) {
-    if (mounted && requestSeq === sectionsRequestSeq) sectionsError.value = '分区加载失败，请重试'
-  } finally {
-    if (mounted && requestSeq === sectionsRequestSeq) sectionsLoading.value = false
-  }
 }
 
 async function loadThread(): Promise<void> {
@@ -372,7 +354,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   mounted = false
-  sectionsRequestSeq += 1
   window.removeEventListener('auth-state-changed', onAuthStateChanged)
   invalidatePageContext(false)
   clearSuccessTimer()

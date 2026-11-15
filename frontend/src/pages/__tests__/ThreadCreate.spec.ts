@@ -121,6 +121,69 @@ describe('ThreadCreate', () => {
     wrapper.unmount()
   })
 
+  it('loads later section pages, deduplicates ids, and submits a later section', async ({ onTestFinished }) => {
+    listSectionsMock.mockReset()
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: index + 1, name: `分区${index + 1}` }))
+    listSectionsMock
+      .mockResolvedValueOnce({ items: firstPage, page: 1, size: 100, total: 101 })
+      .mockResolvedValueOnce({
+        items: [{ id: 100, name: '重复分区' }, { id: 101, name: '第101分区' }],
+        page: 2,
+        size: 100,
+        total: 101,
+      })
+    useAuthStore().applyAuthState({ accessToken: 'real-token', user: { id: 9, username: 'test-user' } })
+    createThreadMock.mockResolvedValue({ id: 42, title: '第101分区帖子' })
+
+    const wrapper = createWrapper()
+    onTestFinished(() => {
+      wrapper.unmount()
+      createThreadMock.mockReset()
+      listSectionsMock.mockReset()
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('#thread-create-section option[value="100"]')).toHaveLength(1)
+    expect(wrapper.find('#thread-create-section option[value="101"]').exists()).toBe(true)
+    expect(wrapper.findAll('#thread-create-section option')).toHaveLength(102)
+    expect(listSectionsMock).toHaveBeenNthCalledWith(1, { page: 1, size: 100 })
+    expect(listSectionsMock).toHaveBeenNthCalledWith(2, { page: 2, size: 100 })
+
+    await wrapper.find('select').setValue('101')
+    await wrapper.get('#thread-create-title').setValue('第101分区帖子')
+    await wrapper.find('textarea').setValue('正文')
+    await wrapper.findAll('button').find((button) => button.text() === '发布')!.trigger('click')
+    await flushPromises()
+
+    expect(createThreadMock).toHaveBeenCalledWith(expect.objectContaining({ sectionId: 101 }))
+  })
+
+  it('keeps existing form state and retries after a later section page fails', async ({ onTestFinished }) => {
+    listSectionsMock.mockReset()
+    listSectionsMock
+      .mockResolvedValueOnce({ items: [{ id: 1, name: '第一页分区' }], page: 1, size: 100, total: 101 })
+      .mockRejectedValueOnce(new Error('second page unavailable'))
+      .mockResolvedValueOnce({ items: [{ id: 2, name: '重试分区' }], page: 1, size: 100, total: 1 })
+
+    const wrapper = createWrapper()
+    onTestFinished(() => {
+      wrapper.unmount()
+      listSectionsMock.mockReset()
+    })
+    await wrapper.get('#thread-create-title').setValue('保留标题')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('分区加载失败')
+    expect(wrapper.find('#thread-create-section option[value="1"]').exists()).toBe(false)
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(listSectionsMock).toHaveBeenNthCalledWith(3, { page: 1, size: 100 })
+    expect((wrapper.get('#thread-create-title').element as HTMLInputElement).value).toBe('保留标题')
+    expect(wrapper.find('#thread-create-section option[value="2"]').exists()).toBe(true)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
   it('distinguishes an empty section result from a failed request', async () => {
     listSectionsMock.mockReset()
     listSectionsMock.mockResolvedValueOnce({ items: [], page: 1, size: 100, total: 0 })

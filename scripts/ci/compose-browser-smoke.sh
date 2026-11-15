@@ -129,7 +129,8 @@ random_hex_32() {
 validate_junit() {
   local report="$1"
   local expected="$2"
-  "$PYTHON_BIN" - "$report" "$expected" <<'PY'
+  local required_section_page="${3:-}"
+  "$PYTHON_BIN" - "$report" "$expected" "$required_section_page" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -157,6 +158,10 @@ if len(cases) < 1 or skipped or failed or errors or invalid_summary:
     )
 if len(cases) != expected:
     raise SystemExit(f"JUnit gate failed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
+if sys.argv[3]:
+    properties = root.findall(".//property[@name='thread_editor_section_page']")
+    if [item.get("value") for item in properties] != [sys.argv[3]]:
+        raise SystemExit("M0 browser journey did not verify posting and editing with second-page sections")
 print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }
@@ -458,13 +463,27 @@ set -e
 validate_junit "$SELENIUM_JUNIT_FILE" 1
 (( selenium_status == 0 )) || die "CI Selenium smoke exited with status $selenium_status"
 
+# Populate only the disposable M0 database, after the API and Selenium cases.
+compose exec -T mysql sh -c '
+  MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --batch -u "$MYSQL_USER" "$MYSQL_DATABASE"
+' <<'SQL'
+INSERT INTO sections (name, slug)
+WITH RECURSIVE sequence_numbers (n) AS (
+    SELECT 1
+    UNION ALL SELECT n + 1 FROM sequence_numbers WHERE n < 101
+)
+SELECT CONCAT('CI editor section ', n), CONCAT('ci-editor-section-', n)
+FROM sequence_numbers;
+SQL
+export TEST_M0_PAGED_SECTIONS=1
+
 set +e
 "$PYTHON_BIN" -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py -q --junitxml "$UI_JUNIT_FILE"
 ui_status=$?
 set -e
 
 [[ -f "$UI_JUNIT_FILE" ]] || die "browser pytest did not produce a JUnit report: $UI_JUNIT_FILE"
-validate_junit "$UI_JUNIT_FILE" 1
+validate_junit "$UI_JUNIT_FILE" 1 2
 (( ui_status == 0 )) || die "M0 browser journey exited with status $ui_status"
 
 # Keep the historical artifact name for local tooling that already consumes it.

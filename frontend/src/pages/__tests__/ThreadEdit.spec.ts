@@ -142,6 +142,74 @@ describe('ThreadEdit content boundaries', () => {
     wrapper.unmount()
   })
 
+  it('loads later section pages, deduplicates ids, and keeps the saved section selected', async ({ onTestFinished }) => {
+    mocks.listSections.mockReset()
+    mocks.listSections
+      .mockResolvedValueOnce({ items: [{ id: 1, name: '第一页分区' }], page: 1, size: 100, total: 101 })
+      .mockResolvedValueOnce({
+        items: [{ id: '1', name: '重复分区' }, { id: 101, name: '第101分区' }],
+        page: 2,
+        size: 100,
+        total: 101,
+      })
+    mocks.getThread.mockResolvedValue({ id: 42, sectionId: 101, title: '原帖子', content: '正文' })
+
+    const wrapper = createWrapper()
+    onTestFinished(() => {
+      wrapper.unmount()
+      mocks.listSections.mockReset()
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('#thread-edit-section option[value="1"]')).toHaveLength(1)
+    expect(wrapper.find('#thread-edit-section option[value="101"]').exists()).toBe(true)
+    expect((wrapper.get('#thread-edit-section').element as HTMLSelectElement).value).toBe('101')
+    expect(mocks.listSections).toHaveBeenNthCalledWith(1, { page: 1, size: 100 })
+    expect(mocks.listSections).toHaveBeenNthCalledWith(2, { page: 2, size: 100 })
+  })
+
+  it('keeps typed edit values and retries after a later section page fails', async ({ onTestFinished }) => {
+    mocks.listSections.mockReset()
+    mocks.listSections
+      .mockResolvedValueOnce({ items: [{ id: 1, name: '第一页分区' }], page: 1, size: 100, total: 101 })
+      .mockRejectedValueOnce(new Error('second page unavailable'))
+      .mockResolvedValueOnce({ items: [{ id: 2, name: '重试分区' }], page: 1, size: 100, total: 1 })
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+
+    const wrapper = createWrapper()
+    onTestFinished(() => {
+      wrapper.unmount()
+      mocks.listSections.mockReset()
+    })
+    await flushPromises()
+    await wrapper.get('#thread-edit-title').setValue('用户修改标题')
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('分区加载失败')
+    expect(wrapper.find('#thread-edit-section option[value="1"]').exists()).toBe(false)
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenNthCalledWith(3, { page: 1, size: 100 })
+    expect((wrapper.get('#thread-edit-title').element as HTMLInputElement).value).toBe('用户修改标题')
+    expect(wrapper.find('#thread-edit-section option[value="2"]').exists()).toBe(true)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('does not request another section page after unmounting during the first page', async () => {
+    mocks.listSections.mockReset()
+    let resolveFirstPage!: (value: unknown) => void
+    mocks.listSections.mockReturnValueOnce(new Promise((resolve) => { resolveFirstPage = resolve }))
+    mocks.getThread.mockResolvedValue({ id: 42, title: '原帖子', content: '正文' })
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    wrapper.unmount()
+    resolveFirstPage({ items: [{ id: 1, name: '第一页分区' }], page: 1, size: 100, total: 101 })
+    await flushPromises()
+
+    expect(mocks.listSections).toHaveBeenCalledTimes(1)
+  })
+
   it('clears old save errors across routes while preserving a public section failure', async () => {
     mocks.getThread.mockImplementation((id: string) => Promise.resolve({ id, title: `帖子${id}`, content: '正文' }))
     mocks.listSections.mockRejectedValueOnce(new Error('section service unavailable'))
