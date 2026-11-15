@@ -200,6 +200,37 @@ class PostServiceListIntegrationTest {
     }
 
     @Test
+    void authorPaginationUsesDescendingIdWhenPostTimestampsTie() {
+        List<Long> tiedIds = postIds.subList(postIds.size() - 3, postIds.size()).stream()
+                .sorted(Comparator.reverseOrder())
+                .toList();
+        Instant tiedInstant = Instant.parse("2026-03-01T00:00:00Z");
+        entityManager.createQuery("UPDATE Post p SET p.createdAt = :instant, p.updatedAt = :instant "
+                        + "WHERE p.id IN (:ids)")
+                .setParameter("instant", tiedInstant)
+                .setParameter("ids", tiedIds)
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        for (String sort : List.of("updatedAt", "createdAt")) {
+            assertAuthorPages(tiedIds, sort, null, null);
+            assertAuthorPages(tiedIds, sort, "comment", 1L);
+        }
+    }
+
+    private void assertAuthorPages(List<Long> expectedIds, String sort, String query, Long sectionId) {
+        List<Long> actualIds = new ArrayList<>();
+        for (int page = 1; page <= expectedIds.size(); page++) {
+            var result = postService.listByAuthor(authorId, query, sectionId, sort, page, 1);
+            assertThat(result.getTotalElements()).isEqualTo(51);
+            actualIds.addAll(result.getContent().stream().map(PostDto::getId).toList());
+        }
+        assertThat(actualIds).containsExactlyElementsOf(expectedIds);
+        assertThat(actualIds).doesNotHaveDuplicates();
+    }
+
+    @Test
     void emptyPageSkipsLikeQueries() {
         long statements = statementCount(() -> {
             var page = postService.listByThread(threadId, viewerOneId, "time", 3, 50);

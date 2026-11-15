@@ -1926,7 +1926,7 @@ GitHub 媒体专项的 16 项通过，产物校验后确认结果回调幂等、
 
 隔离 H2 使用真实服务先生成一页缓存，模拟 Redis 保存和返回其 JSON。该页三条评论覆盖独立评论、页外父评论和页内父评论。对提交 `974da09` 的隔离副本运行同一个测量用例，旧实现执行 3 条 SQL、加载 5 个完整实体。改后为 2 条 SQL、0 个完整实体，返回行顺序一致。旧版因超过新查询上限而失败，完整输出见 `test-artifacts/bluealbum-20261115/comment-cache-baseline/old-head-cache-hit-test.log`。该计数针对测试数据，实际服务时延需要单独测量。
 
-相关生产文件加上新的投影类型合计仍为 888 行，评论服务自身由 695 行减至 679 行。后端完整打包和 789 项测试通过，包含缓存降级边界的回归，见 `test-artifacts/bluealbum-20261115/backend-package.log`。仓库结构及 Java 架构检查通过。
+相关生产文件加上新的投影类型合计仍为 888 行，评论服务自身由 695 行减至 679 行。后端完整打包和 789 项测试通过，包含缓存降级边界的回归，见 `test-artifacts/bluealbum-20261115/backend-package.log`。仓库结构及 Java 架构检查通过，GitHub 的 13 个作业通过。[评论缓存 CI](https://github.com/17356085/MagicAlbum/actions/runs/43619132054)
 
 ## 2026-11-15 发帖和编辑可选择后续页分区
 
@@ -1935,3 +1935,11 @@ GitHub 媒体专项的 16 项通过，产物校验后确认结果回调幂等、
 在提交 `974da09` 的隔离副本中运行最终两份测试，新增的四项场景因分区缺失或没有重试提示而失败，其余 46 项通过。修复后编辑器、真实前端请求适配器和会话恢复相关 57 项通过，生产构建、lint 和类型检查通过。日志见 `test-artifacts/bluealbum-20261115/editor-baseline/vitest-editor-final-complete.log` 和 `test-artifacts/bluealbum-20261115/editors-final.log`。
 
 GitHub 浏览器验收在隔离 MySQL 保留现有案例的基础上增加分区数据，选择第二页分区完成发帖，再从编辑页改到另一个第二页分区并通过 API 读回。此路径必须在 JUnit 中留下对应的验收属性。
+
+GitHub 的 13 个作业通过，运行时验收产物已按 SHA-256 核对。API 14 项、Selenium 1 项、Playwright 1 项通过，无失败和跳过。Playwright 报告记录 `thread_editor_section_page=2`，本地副本为 `test-artifacts/bluealbum-20261115/editor-ci-runtime.zip`。[编辑器浏览器验收](https://github.com/17356085/MagicAlbum/actions/runs/43673868962/job/132690247160)
+
+## 2026-11-15 同时间戳的作者内容分页
+
+我的帖子、我的评论和个人主页的作者列表在按创建或更新时间降序时，均增加 ID 降序作为次排序。评论列表还合并了重复的有无关键词分支，归一后的关键词和分区直接交给原查询。评论服务由 679 行减至 671 行，计入两份仓储后相关生产代码由 1,225 行减至 1,217 行。
+
+旧版 H2 回归将最近三条内容设为同一时间且每页只读一条，帖子返回 `98, 100, 100` 并漏掉 `99`，评论返回 `49, 50, 51`。改后两种时间排序及有无筛选的入口都通过跨页顺序、完整性和总数检查。后端关联集成测试 12 项、仓储及控制器测试 15 项通过，随后完整打包及 791 项测试、Checkstyle、仓库结构和 Java 架构检查通过。旧版复现和最终打包分别见 `test-artifacts/bluealbum-20261115/author-pagination/old-source-tie-regression.log` 与 `parent-backend-package.log`。该回归固定数据后验收分页顺序，并发发布或删除仍可能移动偏移页。

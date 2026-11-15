@@ -181,7 +181,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = t.authorId
             WHERE t.authorId = :authorId AND t.status = 'NORMAL'
-            ORDER BY t.updatedAt DESC
+            ORDER BY t.updatedAt DESC, t.id DESC
             """,
             countQuery = "SELECT COUNT(t) FROM Thread t WHERE t.authorId = :authorId AND t.status = 'NORMAL'")
     Page<ThreadQueryView> findByAuthorNewestView(Long authorId, Pageable pageable);
@@ -206,7 +206,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = t.authorId
             WHERE t.authorId = :authorId AND t.status = 'NORMAL'
-            ORDER BY t.createdAt DESC
+            ORDER BY t.createdAt DESC, t.id DESC
             """,
             countQuery = "SELECT COUNT(t) FROM Thread t WHERE t.authorId = :authorId AND t.status = 'NORMAL'")
     Page<ThreadQueryView> findByAuthorCreatedDescView(Long authorId, Pageable pageable);
@@ -234,7 +234,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
               AND t.status = 'NORMAL'
               AND (:q IS NULL OR LOWER(t.title) LIKE LOWER(CONCAT('%', :q, '%')) OR LOWER(t.contentMd) LIKE LOWER(CONCAT('%', :q, '%')))
               AND (:sectionId IS NULL OR t.sectionId = :sectionId)
-            ORDER BY t.updatedAt DESC
+            ORDER BY t.updatedAt DESC, t.id DESC
             """,
             countQuery = """
             SELECT COUNT(t)
@@ -269,7 +269,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
               AND t.status = 'NORMAL'
               AND (:q IS NULL OR LOWER(t.title) LIKE LOWER(CONCAT('%', :q, '%')) OR LOWER(t.contentMd) LIKE LOWER(CONCAT('%', :q, '%')))
               AND (:sectionId IS NULL OR t.sectionId = :sectionId)
-            ORDER BY t.createdAt DESC
+            ORDER BY t.createdAt DESC, t.id DESC
             """,
             countQuery = """
             SELECT COUNT(t)

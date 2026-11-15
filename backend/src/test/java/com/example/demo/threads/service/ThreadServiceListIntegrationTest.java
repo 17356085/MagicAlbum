@@ -230,6 +230,40 @@ class ThreadServiceListIntegrationTest {
     }
 
     @Test
+    void authorPaginationUsesDescendingIdWhenThreadTimestampsTie() {
+        List<Long> tiedIds = fixtures.subList(THREAD_COUNT - 3, THREAD_COUNT).stream()
+                .map(ThreadFixture::id)
+                .sorted(Comparator.reverseOrder())
+                .toList();
+        Instant tiedInstant = Instant.parse("2026-02-01T00:00:00Z");
+        entityManager.createQuery("UPDATE Thread t SET t.createdAt = :instant, t.updatedAt = :instant "
+                        + "WHERE t.id IN (:ids)")
+                .setParameter("instant", tiedInstant)
+                .setParameter("ids", tiedIds)
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        for (String sort : List.of("updatedAt", "createdAt")) {
+            assertAuthorPages(tiedIds, sort, null, null);
+            assertAuthorPages(tiedIds, sort, "thread-", sectionId);
+        }
+    }
+
+    private void assertAuthorPages(List<Long> expectedIds, String sort, String query, Long filteredSectionId) {
+        List<Long> actualIds = new ArrayList<>();
+        for (int page = 1; page <= expectedIds.size(); page++) {
+            var result = query == null
+                    ? threadService.listByAuthor(authorId, sort, page, 1)
+                    : threadService.listByAuthor(authorId, query, filteredSectionId, sort, page, 1);
+            assertThat(result.getTotalElements()).isEqualTo(THREAD_COUNT);
+            actualIds.addAll(result.getContent().stream().map(ThreadDto::getId).toList());
+        }
+        assertThat(actualIds).containsExactlyElementsOf(expectedIds);
+        assertThat(actualIds).doesNotHaveDuplicates();
+    }
+
+    @Test
     void rankingKeepsProjectionMetadataAndBatchesOnlyTags() {
         for (int size : List.of(1, 20)) {
             QueryCounts counts = measure(() -> {

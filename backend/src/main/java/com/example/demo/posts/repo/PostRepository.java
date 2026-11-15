@@ -117,7 +117,7 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
               AND p.threadId = th.id
               AND (:sectionId IS NULL OR th.sectionId = :sectionId)
               AND (:q IS NULL OR LOWER(p.contentMd) LIKE LOWER(CONCAT('%', :q, '%')))
-            ORDER BY p.createdAt DESC
+            ORDER BY p.createdAt DESC, p.id DESC
             """,
             countQuery = """
             SELECT COUNT(p)
@@ -160,7 +160,7 @@ public interface PostRepository extends JpaRepository<com.example.demo.posts.ent
               AND p.threadId = th.id
               AND (:sectionId IS NULL OR th.sectionId = :sectionId)
               AND (:q IS NULL OR LOWER(p.contentMd) LIKE LOWER(CONCAT('%', :q, '%')))
-            ORDER BY p.updatedAt DESC
+            ORDER BY p.updatedAt DESC, p.id DESC
             """,
             countQuery = """
             SELECT COUNT(p)

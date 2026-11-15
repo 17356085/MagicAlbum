@@ -147,18 +147,10 @@ public class PostService {
         String s = (sort == null || sort.isBlank()) ? "createdAt" : sort.trim();
         String keyword = (q == null || q.isBlank()) ? null : q.trim();
         Page<PostQueryView> p;
-        if (keyword == null) {
-            if ("updatedAt".equalsIgnoreCase(s)) {
-                p = postRepository.searchByAuthorUpdatedDescWithSectionView(authorId, null, sectionId, pr);
-            } else {
-                p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, null, sectionId, pr);
-            }
+        if ("updatedAt".equalsIgnoreCase(s)) {
+            p = postRepository.searchByAuthorUpdatedDescWithSectionView(authorId, keyword, sectionId, pr);
         } else {
-            if ("updatedAt".equalsIgnoreCase(s)) {
-                p = postRepository.searchByAuthorUpdatedDescWithSectionView(authorId, keyword, sectionId, pr);
-            } else {
-                p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, keyword, sectionId, pr);
-            }
+            p = postRepository.searchByAuthorCreatedDescWithSectionView(authorId, keyword, sectionId, pr);
         }
         return new org.springframework.data.domain.PageImpl<>(toDtos(p.getContent(), null), p.getPageable(), p.getTotalElements());
     }
