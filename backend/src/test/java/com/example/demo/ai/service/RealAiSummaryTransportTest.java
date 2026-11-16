@@ -5,16 +5,24 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Flow;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class RealAiSummaryTransportTest {
     @Test
@@ -197,55 +205,65 @@ class RealAiSummaryTransportTest {
 
     @Test
     void cancelStopsReadingAnOpenResponse() throws Exception {
-        CountDownLatch requestStarted = new CountDownLatch(1);
-        CountDownLatch prefixFlushed = new CountDownLatch(1);
         CountDownLatch allowProbe = new CountDownLatch(1);
-        CountDownLatch probeStarted = new CountDownLatch(1);
-        AtomicBoolean connectionClosed = new AtomicBoolean();
+        CountDownLatch connectionClosed = new CountDownLatch(1);
+        byte[] probeChunk = new byte[8_192];
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/chat/completions", exchange -> {
-            requestStarted.countDown();
             try {
                 exchange.sendResponseHeaders(200, 0);
                 try (var output = exchange.getResponseBody()) {
                     output.write("{\"choices\":[".getBytes(StandardCharsets.UTF_8));
                     output.flush();
-                    prefixFlushed.countDown();
-                    if (!allowProbe.await(2, TimeUnit.SECONDS)) {
-                        return;
-                    }
-                    probeStarted.countDown();
-                    while (true) {
-                        output.write(new byte[8_192]);
-                        output.flush();
+                    allowProbe.await();
+                    try {
+                        while (true) {
+                            output.write(probeChunk);
+                            output.flush();
+                        }
+                    } catch (IOException ex) {
+                        connectionClosed.countDown();
                     }
                 }
-            } catch (IOException ex) {
-                connectionClosed.set(true);
             } catch (InterruptedException ex) {
                 java.lang.Thread.currentThread().interrupt();
             }
         });
-        server.start();
+        HttpClient realHttpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
         try {
-            var provider = provider(server, Duration.ofSeconds(10));
+            server.start();
+            CountDownLatch firstBodyItemProcessed = new CountDownLatch(1);
+            HttpClient httpClient = mock(HttpClient.class);
+            when(httpClient.<Flow.Publisher<List<ByteBuffer>>>sendAsync(any(HttpRequest.class), any()))
+                    .thenAnswer(invocation -> {
+                        HttpRequest request = invocation.getArgument(0, HttpRequest.class);
+                        HttpResponse.BodyHandler<Flow.Publisher<List<ByteBuffer>>> bodyHandler =
+                                invocation.getArgument(1);
+                        return realHttpClient.sendAsync(
+                                request,
+                                observedBodyHandler(bodyHandler, firstBodyItemProcessed));
+                    });
+            var provider = provider(server, Duration.ofSeconds(10), httpClient);
             AiSummaryCall call = provider.requestSummary("content", 512);
-            assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
-            assertThat(prefixFlushed.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(firstBodyItemProcessed.await(2, TimeUnit.SECONDS))
+                    .as("cancellation should happen after the production subscriber reads a body item")
+                    .isTrue();
             call.cancel();
             AiSummaryException failure = failure(call);
             assertThat(failure.code()).isEqualTo(AiSummaryFailureCode.CANCELLED);
             allowProbe.countDown();
-            assertThat(probeStarted.await(2, TimeUnit.SECONDS))
-                    .as("cancel should allow a post-cancel socket probe").isTrue();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-            while (!connectionClosed.get() && System.nanoTime() < deadline) {
-                java.lang.Thread.sleep(10);
-            }
-            assertThat(connectionClosed).as("cancel should close the response transport").isTrue();
+            assertThat(connectionClosed.await(2, TimeUnit.SECONDS))
+                    .as("cancel should close the response transport with a write failure")
+                    .isTrue();
         } finally {
             allowProbe.countDown();
-            server.stop(0);
+            try {
+                server.stop(0);
+            } finally {
+                realHttpClient.shutdownNow();
+            }
         }
     }
 
@@ -306,6 +324,56 @@ class RealAiSummaryTransportTest {
         return new RealAiProvider(
                 "http://127.0.0.1:" + server.getAddress().getPort(),
                 "test-only", "test", timeout);
+    }
+
+    private static RealAiProvider provider(
+            HttpServer server,
+            Duration timeout,
+            HttpClient httpClient
+    ) {
+        return new RealAiProvider(
+                "http://127.0.0.1:" + server.getAddress().getPort(),
+                "test-only", "test", timeout, httpClient);
+    }
+
+    private static HttpResponse.BodyHandler<Flow.Publisher<List<ByteBuffer>>> observedBodyHandler(
+            HttpResponse.BodyHandler<Flow.Publisher<List<ByteBuffer>>> bodyHandler,
+            CountDownLatch firstBodyItemProcessed
+    ) {
+        return responseInfo -> HttpResponse.BodySubscribers.mapping(
+                bodyHandler.apply(responseInfo),
+                publisher -> observedPublisher(publisher, firstBodyItemProcessed));
+    }
+
+    private static Flow.Publisher<List<ByteBuffer>> observedPublisher(
+            Flow.Publisher<List<ByteBuffer>> publisher,
+            CountDownLatch firstBodyItemProcessed
+    ) {
+        return subscriber -> publisher.subscribe(new Flow.Subscriber<>() {
+            @Override
+            public void onSubscribe(Flow.Subscription subscription) {
+                subscriber.onSubscribe(subscription);
+            }
+
+            @Override
+            public void onNext(List<ByteBuffer> item) {
+                boolean hasBytes = item.stream().anyMatch(ByteBuffer::hasRemaining);
+                subscriber.onNext(item);
+                if (hasBytes) {
+                    firstBodyItemProcessed.countDown();
+                }
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                subscriber.onError(throwable);
+            }
+
+            @Override
+            public void onComplete() {
+                subscriber.onComplete();
+            }
+        });
     }
 
     private static AiSummaryException failure(AiSummaryCall call) {
