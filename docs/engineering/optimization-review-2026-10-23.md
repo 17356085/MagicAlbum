@@ -1964,3 +1964,13 @@ GitHub 的 13 个作业通过，运行时验收产物已按 SHA-256 核对。API
 GitHub 的隔离浏览器测试复用前序发帖、编辑和评论数据，使用两份已登录会话分别在本人帖子与评论页选择第二页分区，核对实际 GET 参数、返回记录 ID 和页面文本。两个步骤通过后才写入 `owned_section_filter_page=2`，JUnit 门禁同时要求编辑器和本人列表的验收属性。
 
 首次 GitHub 运行中，API 14 项和 Selenium 1 项通过。Playwright 在本人帖子页确认分区参数及接口返回 ID 后，因结果列表和最近浏览侧栏同时显示相同标题而停在可见性断言。后续断言先按准确的实体 ID 定位唯一列表行，再核对行内文字。失败报告及其原始产物分开保留，本地副本为 `test-artifacts/bluealbum-20261115/owned-sections/first-ci-runtime.zip`。[首次浏览器运行](https://github.com/17356085/MagicAlbum/actions/runs/43675995410/job/132696815504)
+
+修正后的 GitHub 运行覆盖提交 `2bbe127`。校验 SHA-256 后读取 API、Selenium 和 Playwright 的 JUnit，分别有 14、1、1 项通过，无失败或跳过。Playwright 报告同时记录 `thread_editor_section_page=2` 和 `owned_section_filter_page=2`，原始产物为 `test-artifacts/bluealbum-20261115/owned-sections/final-ci-runtime.zip`。[修正后浏览器验收](https://github.com/17356085/MagicAlbum/actions/runs/43677124888/job/132700142535)
+
+该工作流最终 12 项通过。媒体作业在构建中运行现有 AI 摘要传输测试时，未在两秒内观察到取消后的连接关闭。该用例随后在本地单独通过三次，GitHub 接口拒绝了单作业重跑。远端失败产物保留于 `test-artifacts/bluealbum-20261115/owned-sections/media-runtime-first.zip`。[媒体作业](https://github.com/17356085/MagicAlbum/actions/runs/43677124888/job/132700142562)
+
+## 2026-11-16 用户主页关注状态
+
+用户主页在读资料时兼容 `following` 和 `followedByMe` 两个字段。页面现在以归一后的 `followedByMe` 显示和驱动关注按钮，成功写入后直接消费接口层已校验的关系与计数。页面继续管理路由、会话、旧请求和重试，关注响应的字段与计数校验集中在 API 适配器。相关生产源码从 711 行减至 666 行。
+
+将最终测试覆盖到 `2bbe127` 的隔离副本，确认测试文件与当前版本相同、资料页源码与原提交相同。旧版 33 项中 1 项失败，复现了只有旧字段的资料页在关注成功后仍显示“关注”。修复后验证可关注、取消关注并显示返回的计数，异常响应继续进入重试。回归经过实际前端请求适配器和解码器，传输由测试替换。前端全量 134 个文件、1,567 项通过，lint、类型检查、生产构建和首屏依赖检查通过。原始日志位于 `test-artifacts/bluealbum-20261115/profile-follow/`。

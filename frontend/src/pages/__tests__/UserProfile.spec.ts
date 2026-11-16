@@ -3,24 +3,37 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
-import { InteractionResponseError } from '@/api/interactionState'
 import UserProfile from '../UserProfile.vue'
 import type { PageResult, Thread, UserProfile as UserProfileModel } from '@/types'
 
 const mocks = vi.hoisted(() => ({
   getUserProfile: vi.fn(),
   listUserThreads: vi.fn(),
-  followUser: vi.fn(),
-  unfollowUser: vi.fn(),
   route: { params: { id: '1' } } as { params: { id: string } },
   router: { push: vi.fn() },
 }))
 
-vi.mock('@/api/users', () => ({
+const transport = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  delete: vi.fn(),
+}))
+
+// Keep the real follow/unfollow adapters and interaction decoder in this page
+// test. Only profile/thread reads are replaced; the Axios client transport is
+// mocked so wire responses cross the same API code path as browser requests.
+vi.mock('@/api/users', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/users')>()),
   getUserProfile: mocks.getUserProfile,
   listUserThreads: mocks.listUserThreads,
-  followUser: mocks.followUser,
-  unfollowUser: mocks.unfollowUser,
+}))
+
+vi.mock('@/api/client', () => ({
+  default: {
+    get: transport.get,
+    post: transport.post,
+    delete: transport.delete,
+  },
 }))
 
 vi.mock('@/utils/image', () => ({
@@ -64,6 +77,23 @@ function profile(id: string, nickname = `用户${id}`): UserProfileModel {
     followingCount: 0,
     followedByMe: false,
     followingMe: false,
+  }
+}
+
+function followWire(
+  userId: string,
+  following: boolean,
+  followerCount: number,
+  followingCount: number,
+  followingMe = false,
+) {
+  return {
+    userId,
+    following,
+    followedByMe: following,
+    followingMe,
+    followerCount,
+    followingCount,
   }
 }
 
@@ -112,8 +142,9 @@ describe('UserProfile request ordering', () => {
     setActivePinia(createPinia())
     mocks.getUserProfile.mockReset()
     mocks.listUserThreads.mockReset()
-    mocks.followUser.mockReset()
-    mocks.unfollowUser.mockReset()
+    transport.get.mockReset()
+    transport.post.mockReset().mockResolvedValue({ data: followWire('1', true, 1, 1) })
+    transport.delete.mockReset().mockResolvedValue({ data: followWire('1', false, 0, 1) })
     mocks.router.push.mockReset()
     mocks.route = reactive({ params: reactive({ id: '1' }) })
     mocks.getUserProfile.mockResolvedValue(profile('1'))
@@ -363,8 +394,8 @@ describe('UserProfile request ordering', () => {
   })
 
   it.each(['success', 'failure'])('ignores an old account follow %s and emits no stale follow signal', async outcome => {
-    const write = deferred<{ following: boolean; followerCount: number; followingCount: number }>()
-    mocks.followUser.mockReturnValue(write.promise)
+    const write = deferred<{ data: ReturnType<typeof followWire> }>()
+    transport.post.mockReturnValue(write.promise)
     const wrapper = createWrapper(10)
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text() === '关注')!.trigger('click')
@@ -373,7 +404,7 @@ describe('UserProfile request ordering', () => {
     try {
       loginAs(20)
       await flushPromises()
-      if (outcome === 'success') write.resolve({ following: true, followerCount: 99, followingCount: 88 })
+      if (outcome === 'success') write.resolve({ data: followWire('1', true, 99, 88) })
       else write.reject(new Error('old write failed'))
       await flushPromises()
 
@@ -386,8 +417,8 @@ describe('UserProfile request ordering', () => {
   })
 
   it('invalidates a prior session even when logout and login restore the same token in one turn', async () => {
-    const write = deferred<{ following: boolean; followerCount: number; followingCount: number }>()
-    mocks.followUser.mockReturnValue(write.promise)
+    const write = deferred<{ data: ReturnType<typeof followWire> }>()
+    transport.post.mockReturnValue(write.promise)
     const wrapper = createWrapper(10)
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text() === '关注')!.trigger('click')
@@ -395,7 +426,7 @@ describe('UserProfile request ordering', () => {
     useAuthStore().logout()
     loginAs(10)
     await flushPromises()
-    write.resolve({ following: true, followerCount: 99, followingCount: 88 })
+    write.resolve({ data: followWire('1', true, 99, 88) })
     await flushPromises()
 
     expect(mocks.getUserProfile).toHaveBeenCalledTimes(2)
@@ -463,8 +494,8 @@ describe('UserProfile request ordering', () => {
 
     await followButton(wrapper)!.trigger('click')
 
-    expect(mocks.followUser).not.toHaveBeenCalled()
-    expect(mocks.unfollowUser).not.toHaveBeenCalled()
+    expect(transport.post).not.toHaveBeenCalled()
+    expect(transport.delete).not.toHaveBeenCalled()
     expect(wrapper.get('[role="alert"]').text()).toContain('登录状态已变化，请重试')
     expect(wrapper.text()).not.toContain('处理中...')
   })
@@ -496,14 +527,14 @@ describe('UserProfile request ordering', () => {
   })
 
   it.each(['success', 'error'] as const)('rejects a pending follow %s after storage drift', async outcome => {
-    const write = deferred<{ following: boolean; followedByMe: boolean; followerCount: number; followingCount: number }>()
-    mocks.followUser.mockReturnValueOnce(write.promise)
+    const write = deferred<{ data: ReturnType<typeof followWire> }>()
+    transport.post.mockReturnValueOnce(write.promise)
     const wrapper = createWrapper(10, 'account-a')
     await flushPromises()
     await followButton(wrapper)!.trigger('click')
     localStorage.setItem('accessToken', 'account-b')
 
-    if (outcome === 'success') write.resolve({ following: true, followedByMe: true, followerCount: 99, followingCount: 88 })
+    if (outcome === 'success') write.resolve({ data: followWire('1', true, 99, 88) })
     else write.reject(new Error('旧关注失败'))
     await flushPromises()
 
@@ -579,7 +610,7 @@ describe('UserProfile request ordering', () => {
   it('keeps an accepted mutation ahead of an older same-route profile refresh', async () => {
     const staleRead = deferred<UserProfileModel>()
     mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), followedByMe: false }).mockReturnValueOnce(staleRead.promise)
-    mocks.followUser.mockResolvedValueOnce({ following: true, followedByMe: true, followerCount: 4, followingCount: 5 })
+    transport.post.mockResolvedValueOnce({ data: followWire('1', true, 4, 5) })
     const wrapper = createWrapper(10, 'account-a')
     await flushPromises()
     window.dispatchEvent(new CustomEvent('auth-state-changed'))
@@ -591,6 +622,37 @@ describe('UserProfile request ordering', () => {
     expect(wrapper.text()).toContain('已关注')
   })
 
+  it('uses the normalized relation after a legacy following-alias profile is followed and unfollowed', async () => {
+    const legacyProfile = { ...profile('1'), following: false }
+    delete legacyProfile.followedByMe
+    mocks.getUserProfile.mockResolvedValueOnce(legacyProfile)
+    transport.post.mockResolvedValueOnce({ data: followWire('1', true, 4, 5) })
+    transport.delete.mockResolvedValueOnce({ data: followWire('1', false, 3, 5) })
+    const wrapper = createWrapper(10, 'account-a')
+    await flushPromises()
+
+    const button = followButton(wrapper)!
+    expect(button.text()).toBe('关注')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await button.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已关注')
+    expect(wrapper.text()).toContain('粉丝 4')
+    expect(wrapper.text()).toContain('关注 5')
+    expect(followButton(wrapper)!.attributes('disabled')).toBeUndefined()
+
+    await followButton(wrapper)!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('已关注')
+    expect(wrapper.text()).toContain('关注')
+    expect(wrapper.text()).toContain('粉丝 3')
+    expect(wrapper.text()).toContain('关注 5')
+    expect(followButton(wrapper)!.attributes('disabled')).toBeUndefined()
+    expect(transport.post).toHaveBeenCalledWith('/users/1/follow')
+    expect(transport.delete).toHaveBeenCalledWith('/users/1/follow')
+  })
+
   it('shows a retry when the relationship state is unknown and never assumes unfollowed', async () => {
     mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), followedByMe: undefined })
     const wrapper = createWrapper(10, 'account-a')
@@ -599,12 +661,21 @@ describe('UserProfile request ordering', () => {
     expect(wrapper.text()).toContain('关注状态加载失败，请重试')
     expect(followButton(wrapper)!.attributes('disabled')).toBeDefined()
     await followButton(wrapper)!.trigger('click')
-    expect(mocks.followUser).not.toHaveBeenCalled()
+    expect(transport.post).not.toHaveBeenCalled()
   })
 
   it('does not announce success or zero counts for a malformed mutation response', async () => {
     mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), followerCount: 7, followingCount: 8 })
-    mocks.followUser.mockResolvedValueOnce({ following: 'yes', followedByMe: 'yes', followerCount: 'bad', followingCount: null })
+    transport.post.mockResolvedValueOnce({
+      data: {
+        userId: '1',
+        following: 'yes',
+        followedByMe: 'yes',
+        followingMe: false,
+        followerCount: 'bad',
+        followingCount: null,
+      },
+    })
     const signal = vi.fn()
     window.addEventListener('follow-state-updated', signal)
     try {
@@ -615,7 +686,7 @@ describe('UserProfile request ordering', () => {
 
       expect(signal).not.toHaveBeenCalled()
       expect(wrapper.text()).not.toContain('已关注')
-      expect(wrapper.text()).toContain('关注结果暂未确认，请重试状态')
+      expect(wrapper.text()).toContain('互动状态暂不可用，请稍后重试')
       expect(wrapper.text()).toContain('粉丝 7')
       expect(wrapper.text()).toContain('关注 8')
     } finally {
@@ -625,7 +696,16 @@ describe('UserProfile request ordering', () => {
 
   it('turns decoder errors into an unknown relationship with a retry state', async () => {
     mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), followerCount: 7, followingCount: 8 })
-    mocks.followUser.mockRejectedValueOnce(new InteractionResponseError('/users/1/follow', 'followerCount'))
+    transport.post.mockResolvedValueOnce({
+      data: {
+        userId: '1',
+        following: true,
+        followedByMe: true,
+        followingMe: false,
+        followerCount: 'bad',
+        followingCount: 8,
+      },
+    })
     const wrapper = createWrapper(10, 'account-a')
     await flushPromises()
 

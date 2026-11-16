@@ -189,40 +189,10 @@ function readRelationship(value: unknown): boolean | null {
   return followedByMe ?? following ?? null
 }
 
-const followedByMe = computed<boolean | null>(() => readRelationship(profile.value))
+const followedByMe = computed<boolean | null>(() => profile.value.followedByMe ?? null)
 const followButtonDisabled = computed(() => followSaving.value || (
   Boolean(isLoggedIn.value) && (followedByMe.value === null || Boolean(followStateError.value))
 ))
-
-function normalizeCount(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return null
-  return value
-}
-
-function normalizeFollowState(value: unknown, requestedUserId: string): NormalizedFollowState | null {
-  if (typeof value !== 'object' || value === null) return null
-  const record = value as {
-    userId?: unknown
-    followedByMe?: unknown
-    following?: unknown
-    followingMe?: unknown
-    followerCount?: unknown
-    followingCount?: unknown
-  }
-  const relationship = readRelationship(record)
-  if (relationship === null) return null
-  if (record.userId !== undefined && String(record.userId) !== requestedUserId) return null
-  if (record.followingMe !== undefined && typeof record.followingMe !== 'boolean') return null
-  const followerCount = normalizeCount(record.followerCount)
-  const followingCount = normalizeCount(record.followingCount)
-  if (followerCount === null || followingCount === null) return null
-  return {
-    following: relationship,
-    followingMe: record.followingMe as boolean | undefined,
-    followerCount,
-    followingCount,
-  }
-}
 
 function setProfileRelationUnknown(): void {
   profile.value = {
@@ -278,13 +248,6 @@ interface ThreadsRequestContext extends ViewerContext {
 interface FollowRequestContext extends ViewerContext {
   userId: string
   epoch: number
-}
-
-interface NormalizedFollowState {
-  following: boolean
-  followingMe?: boolean
-  followerCount: number
-  followingCount: number
 }
 
 let profileRequestSeq = 0
@@ -559,27 +522,19 @@ async function toggleFollow(): Promise<void> {
       setStorageDriftError('follow', context, requestSeq)
       return
     }
-    const normalized = normalizeFollowState(state, requestedUserId)
-    if (!normalized) {
-      if (mutationRevision === relationRevision) {
-        setProfileRelationUnknown()
-        followStateError.value = '关注结果暂未确认，请重试状态'
-      }
-      return
-    }
     profile.value = {
       ...profile.value,
-      followedByMe: normalized.following,
-      followingMe: normalized.followingMe,
-      followerCount: normalized.followerCount,
-      followingCount: normalized.followingCount,
+      followedByMe: state.following,
+      followingMe: state.followingMe,
+      followerCount: state.followerCount,
+      followingCount: state.followingCount,
     }
     followStateError.value = ''
     try {
       window.dispatchEvent(new CustomEvent('follow-state-updated', {
         detail: {
           userId: requestedUserId,
-          following: normalized.following,
+          following: state.following,
         },
       }))
     } catch (_) {}
