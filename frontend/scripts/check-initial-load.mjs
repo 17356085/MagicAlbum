@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 
-const listingEntries = ['index.html', 'src/pages/Discover.vue', 'src/pages/SectionsList.vue']
+const lightweightEntries = ['index.html', 'src/pages/Discover.vue', 'src/pages/SectionsList.vue', 'src/pages/UserProfile.vue']
 const deferredPages = ['src/pages/ThreadCreate.vue', 'src/pages/ThreadDetail.vue']
 const authModalSource = 'src/components/auth/AuthModal.vue'
 
@@ -38,7 +38,7 @@ export function checkDeferredAuthModal(manifest) {
 export function checkInitialLoad(manifest) {
   checkDeferredAuthModal(manifest)
   const routes = {}
-  for (const entry of listingEntries) {
+  for (const entry of lightweightEntries) {
     const chunks = staticChunks(manifest, entry)
     const heavy = chunks.filter(chunk => ['math', 'highlight'].includes(chunk.name))
     if (heavy.length) {

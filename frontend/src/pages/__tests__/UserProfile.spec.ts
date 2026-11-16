@@ -9,6 +9,8 @@ import type { PageResult, Thread, UserProfile as UserProfileModel } from '@/type
 const mocks = vi.hoisted(() => ({
   getUserProfile: vi.fn(),
   listUserThreads: vi.fn(),
+  createMarkdownRenderer: vi.fn(),
+  renderMarkdown: vi.fn(),
   route: { params: { id: '1' } } as { params: { id: string } },
   router: { push: vi.fn() },
 }))
@@ -41,8 +43,8 @@ vi.mock('@/utils/image', () => ({
 }))
 
 vi.mock('@/utils/markdown', () => ({
-  createMarkdownRenderer: () => ({}),
-  renderMarkdown: (_renderer: unknown, text: string | undefined) => text || '',
+  createMarkdownRenderer: mocks.createMarkdownRenderer,
+  renderMarkdown: mocks.renderMarkdown,
 }))
 
 vi.mock('@/utils/router', () => ({
@@ -142,6 +144,8 @@ describe('UserProfile request ordering', () => {
     setActivePinia(createPinia())
     mocks.getUserProfile.mockReset()
     mocks.listUserThreads.mockReset()
+    mocks.createMarkdownRenderer.mockReset().mockReturnValue({})
+    mocks.renderMarkdown.mockReset().mockImplementation((_renderer: unknown, text: string | undefined) => `<p>${text || ''}</p>`)
     transport.get.mockReset()
     transport.post.mockReset().mockResolvedValue({ data: followWire('1', true, 1, 1) })
     transport.delete.mockReset().mockResolvedValue({ data: followWire('1', false, 0, 1) })
@@ -475,6 +479,40 @@ describe('UserProfile request ordering', () => {
     expect(mocks.getUserProfile).toHaveBeenCalledExactlyOnceWith('1')
     expect(mocks.listUserThreads).toHaveBeenCalledExactlyOnceWith('1', { page: 1, size: 10 })
     expect(wrapper.text()).toContain('用户1')
+  })
+
+  it('does not initialize the optional bio renderer for an empty bio', async () => {
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('这个人很神秘，什么都没有写。')
+    expect(mocks.createMarkdownRenderer).not.toHaveBeenCalled()
+    expect(mocks.renderMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('initializes and renders the optional bio renderer after mounting a nonblank bio', async () => {
+    mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), bio: '**你好**' })
+    const wrapper = createWrapper()
+
+    expect(mocks.createMarkdownRenderer).not.toHaveBeenCalled()
+    await flushPromises()
+
+    expect(mocks.createMarkdownRenderer).toHaveBeenCalledExactlyOnceWith({ katex: true, normalizeImages: true })
+    expect(mocks.renderMarkdown).toHaveBeenCalledExactlyOnceWith(expect.anything(), '**你好**')
+    expect(wrapper.find('.prose').html()).toContain('<p>**你好**</p>')
+  })
+
+  it('shows escaped plain bio text when the optional renderer fails', async () => {
+    mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), bio: '<script>alert(1)</script>' })
+    mocks.createMarkdownRenderer.mockImplementationOnce(() => {
+      throw new Error('optional renderer unavailable')
+    })
+    const wrapper = createWrapper()
+    await flushPromises()
+
+    const bio = wrapper.find('.prose')
+    expect(bio.text()).toBe('<script>alert(1)</script>')
+    expect(bio.html()).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
   it('blocks profile and post GETs when storage changes before the request', async () => {

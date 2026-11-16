@@ -51,9 +51,7 @@
 
       <section class="border-t border-[var(--ui-border)] pt-5">
         <h2 class="text-sm font-semibold text-[var(--ui-muted)]">个人介绍</h2>
-        <template v-if="profile.bio && String(profile.bio).trim()">
-          <div class="prose mt-2 max-w-none text-[var(--ui-ink)] dark:prose-invert" v-html="renderBioMarkdownHtml(profile.bio)"></div>
-        </template>
+        <UserProfileBio v-if="profile.bio && String(profile.bio).trim()" :bio="String(profile.bio)" />
         <template v-else>
           <p class="mt-2 text-[var(--ui-muted)]">这个人很神秘，什么都没有写。</p>
         </template>
@@ -107,7 +105,6 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { followUser, getUserProfile, listUserThreads, unfollowUser } from '@/api/users'
 import { normalizeImageUrl } from '@/utils/image'
-import { createMarkdownRenderer, renderMarkdown } from '@/utils/markdown'
 import { safeBack as navigateBackSafely } from '@/utils/router'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
@@ -116,6 +113,7 @@ import { getEmptyPageFallback } from '@/utils/pagination'
 import { formatRelativeTime } from '@/composables/time'
 import { InteractionResponseError } from '@/api/interactionState'
 import type { PageResult, Thread, User, UserProfile as UserProfileModel } from '@/types'
+import UserProfileBio from './user-profile/UserProfileBio.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -153,14 +151,8 @@ const followSaving = ref(false)
 const followError = ref('')
 const followStateError = ref('')
 
-const md = createMarkdownRenderer({ katex: true, normalizeImages: true })
-
 function safeBack(): void {
   navigateBackSafely(router)
-}
-
-function renderBioMarkdownHtml(raw: string | undefined) {
-  return renderMarkdown(md, raw)
 }
 
 // 主题帖分页状态
