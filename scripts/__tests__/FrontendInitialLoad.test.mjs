@@ -7,11 +7,13 @@ function manifest() {
     'index.html': { file: 'assets/app.js', imports: ['_vue'], dynamicImports: ['_math'] },
     'src/pages/Discover.vue': { file: 'assets/discover.js', imports: ['_markdown'] },
     'src/pages/SectionsList.vue': { file: 'assets/sections.js', imports: ['_markdown'] },
+    'src/pages/UserProfile.vue': { file: 'assets/user-profile.js', imports: ['_vue'], dynamicImports: ['_bioMarkdown'] },
     'src/pages/ThreadCreate.vue': { file: 'assets/create.js', isDynamicEntry: true, imports: ['_math', '_highlight'] },
     'src/pages/ThreadDetail.vue': { file: 'assets/detail.js', isDynamicEntry: true, imports: ['_math', '_highlight'] },
     'src/components/auth/AuthModal.vue': { file: 'assets/auth-modal.js', isDynamicEntry: true, imports: ['_vue'] },
     _vue: { file: 'assets/vue.js' },
     _markdown: { file: 'assets/markdown.js', imports: ['_vue'] },
+    _bioMarkdown: { file: 'assets/bio-markdown.js', imports: ['_math', '_highlight'] },
     _math: { file: 'assets/math.js', name: 'math' },
     _highlight: { file: 'assets/highlight.js', name: 'highlight' },
   }
@@ -45,6 +47,15 @@ test('catches a heavy dependency introduced through a shared transitive chunk', 
   const graph = manifest()
   graph._vue.imports = ['_highlight']
   assert.throws(() => checkInitialLoad(graph), /Optional rendering dependencies loaded by index.html/)
+})
+
+test('allows rich rendering on a profile only through its dynamic imports', () => {
+  const graph = manifest()
+  const profile = 'src/pages/UserProfile.vue'
+  assert.deepEqual(checkInitialLoad(graph)[profile], ['assets/user-profile.js', 'assets/vue.js'])
+
+  graph[profile].imports.push('_bioMarkdown')
+  assert.throws(() => checkInitialLoad(graph), /Optional rendering dependencies loaded by src\/pages\/UserProfile\.vue/)
 })
 
 test('catches an eagerly imported detail page even if the chunk names change', () => {

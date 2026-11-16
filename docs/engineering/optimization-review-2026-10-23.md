@@ -1981,6 +1981,8 @@ GitHub 的隔离浏览器测试复用前序发帖、编辑和评论数据，使�
 
 最终传输及交接测试共 13 项通过，Checkstyle 无违规。使用 `2bbe127` 的原始生产实现单独重复传输用例 25 次，全部通过。随后在同一隔离副本里仅去掉活动订阅的取消，将完全相同的最终测试运行一次，准确失败于服务端连接关闭断言。这一负对照证明当前测试能发现漏取消订阅。上一次 GitHub 的失败还缺少取消时的客户端读取阶段证据。两组原始输出分别见 `test-artifacts/bluealbum-20261115/summary-transport/positive-25-real-loopback.log` 和 `negative-missing-cancel.log`。
 
+提交 `353af88` 的 GitHub 媒体专项已通过。下载产物并核对 SHA-256 后，JUnit 中 16 项全部通过，包含构建、上传读回、消息恢复和浏览器媒体状态。报告和比对结果见 `test-artifacts/bluealbum-20261115/summary-transport/`。[媒体专项](https://github.com/17356085/MagicAlbum/actions/runs/43851329298/job/133245888315)
+
 ## 2026-11-16 按需加载个人介绍的 Markdown
 
 有正文的个人介绍才挂载独立组件，按需加载原有的 Markdown、公式与代码高亮功能。渲染器加载中或不可用时，组件用普通文字显示原内容。空白介绍显示原有提示。主页由 666 行缩至 658 行，新增介绍组件 37 行，相关生产代码合计 695 行。
@@ -1988,3 +1990,5 @@ GitHub 的隔离浏览器测试复用前序发帖、编辑和评论数据，使�
 在两个实际构建的 Vite 清单中分别扣除应用公共包后，用户主页静态依赖的 JS 和 CSS 从 586,885 字节减至 15,295 字节。按 gzip 分别为 196,760 和 5,893 字节，减少约 97%。这是构建资源口径。新版的动态渲染依赖仍包含公式和高亮，旧清单因静态包含这两项被新增的构建检查拒绝。对比记录见 `test-artifacts/bluealbum-20261115/profile-bio/final-route-assets.json`。
 
 用 `a7b16df` 的隔离源码副本及最终测试复现旧实现，36 项中仅新增的 3 项失败，覆盖空介绍时初始化渲染器、正文加载时机和渲染不可用时的文字降级。首次对照因依赖目录链接失效未启动测试，有效对照在独立目录离线安装锁定依赖后运行。新实现前端全量 134 个文件、1,570 项通过，lint、类型检查、生产构建、首屏依赖及仓库结构检查通过。原始日志和两份清单证据位于 `test-artifacts/bluealbum-20261115/profile-bio/`。
+
+首笔 GitHub 仓库检查发现合成清单缺少新增的主页条目，本地复现其中两项失败。补齐条目后，脚本测试验证公式与高亮经动态引用可用，经静态引用会被拒绝。在 Windows 用 Git Bash 运行与 CI 相同的脚本测试，50 项全部通过。三个 Python 守卫套件、仓库结构、Java 依赖边界和 PowerShell 语法检查也通过。原始输出为同目录内的 `repository-fixture-before.log` 与 `repository-fixture-final.log`。[首次仓库检查](https://github.com/17356085/MagicAlbum/actions/runs/43852760201/job/133249254883)
