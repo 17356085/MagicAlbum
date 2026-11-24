@@ -1,9 +1,9 @@
 name: CI
 
-# Pushes to release branches or M5 candidates, and pull requests to release branches.
+# Pushes to release branches or architecture candidates, and pull requests to release branches.
 on:
   push:
-    branches: [ main, master, dev, 'codex/m5-*' ]
+    branches: [ main, master, dev, 'codex/m5-*', 'codex/architecture-*' ]
   pull_request:
     branches: [ main, master, dev ]
 

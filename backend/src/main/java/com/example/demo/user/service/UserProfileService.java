@@ -1,12 +1,12 @@
 package com.example.demo.user.service;
 
+import com.example.demo.social.service.FollowStatistics;
 import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.dto.UserSummaryDto;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserRepository;
 import com.example.demo.user.repo.UserProfileRepository;
-import com.example.demo.user.repo.UserFollowRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -23,13 +23,13 @@ public class UserProfileService {
 
     private final UserRepository userRepository;
     private final UserProfileRepository profileRepository;
-    private final UserFollowRepository followRepository;
+    private final FollowStatistics follows;
 
     public UserProfileService(UserRepository userRepository, UserProfileRepository profileRepository,
-                              UserFollowRepository followRepository) {
+                              FollowStatistics follows) {
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
-        this.followRepository = followRepository;
+        this.follows = follows;
     }
 
     public ProfileDto getProfile(Long userId) {
@@ -164,15 +164,11 @@ public class UserProfileService {
     }
 
     private void enrichFollowState(ProfileDto dto, Long userId, Long viewerId) {
-        dto.setFollowerCount(followRepository.countByFollowingId(userId));
-        dto.setFollowingCount(followRepository.countByFollowerId(userId));
-        if (viewerId == null || viewerId.equals(userId)) {
-            dto.setFollowedByMe(false);
-            dto.setFollowingMe(false);
-            return;
-        }
-        dto.setFollowedByMe(followRepository.existsByFollowerIdAndFollowingId(viewerId, userId));
-        dto.setFollowingMe(followRepository.existsByFollowerIdAndFollowingId(userId, viewerId));
+        FollowStatistics.Snapshot state = follows.forUser(userId, viewerId);
+        dto.setFollowerCount(state.followers());
+        dto.setFollowingCount(state.following());
+        dto.setFollowedByMe(state.followedByViewer());
+        dto.setFollowingMe(state.followingViewer());
     }
 
     private String nullToEmpty(String s) { return s == null ? "" : s; }

@@ -39,13 +39,14 @@
 
 | 域 | 当前对外入口和 DTO/Service | 事务边界 | 授权入口 | 已知历史债务 |
 | --- | --- | --- | --- | --- |
-| identity | `/api/v1/users/**`、登录/OAuth/二维码接口；`UserDto`、`UserSummaryDto`、设置和关注 DTO；认证 Service | 关注新增/取消由 `UserFollowService` 事务包住；用户注册、基本资料和密码修改目前没有 Service 级显式事务声明，需单独补充针对性验证 | Controller 从 `SecurityContext` 取得当前用户；owner Service 校验目标用户和关系 | auth 读取 user Entity/Repository 属于同一 identity 域；不要把这类读取扩展到其他域 |
-| content | `/api/v1/threads/**`、`/api/v1/threads/{threadId}/posts`；`ThreadService`、`PostService`；线程/帖子查询 DTO 和分页投影 | 发帖、编辑、删除、隐藏、评论和点赞写入由 content Service 的事务负责；通知 Outbox 写入必须加入调用事务 | 线程作者、评论作者和当前登录用户由 owner Service 检查；审核隐藏通过 content owner | `ThreadService` 读取 user/section，`PostService` 读取 user/thread；这些历史 Entity/Repository 对在配置中逐对保留 |
+| identity | `/api/v1/users/**`、登录/OAuth/二维码接口；账号资料和设置；账号查询与锁的服务接口 | 关系事务通过身份接口锁定参与者。用户注册、基本资料和密码修改的事务分类另行验证 | Controller 从 `SecurityContext` 取得当前用户，身份服务拥有账号记录 | auth 读取 user Entity/Repository 属于同一 identity 域 |
+| social | 关注的既有用户接口、好友和拉黑的聊天接口 | 关注、好友申请、解除好友及拉黑写入使用统一的账号行锁 | 社交服务验证关系参与者，联系判定供 Chat 使用 | 关注流和社交投影仍共享核心数据库，按 [M6 验收](../architecture/11-M6-domain-autonomy.md) 管理读写边界 |
+| content | `/api/v1/threads/**`、`/api/v1/threads/{threadId}/posts`；`ThreadService`、`PostService`；线程/帖子查询 DTO 和分页投影 | 发帖、编辑、删除、隐藏、评论和点赞写入由 content Service 的事务负责，通知 Outbox 写入加入调用事务 | 线程作者、评论作者和当前登录用户由 owner Service 检查，审核隐藏通过内容领域 | `PostService` 仍读取同属内容领域的线程状态，账号查询通过身份接口 |
 | interaction | `/api/v1/threads/{id}/bookmark`、`/api/v1/users/me/bookmarks`；`ThreadBookmarkService`、收藏状态/列表 DTO | 收藏取消和列表显式事务；收藏新增依靠复合唯一键处理并发，当前缺少 Service 级显式事务声明 | 入口使用当前登录用户；目标帖子可见性由 content owner 数据校验 | 收藏 Service 和 Repository 读取 thread Entity/Repository，精确白名单保留；新的收藏跨域写仍应经 content owner |
 | notifications | core `NotificationClient`/`NotificationService`/`NotificationOutbox`；独立服务 `/api/v1/notifications` 和内部创建接口 | core Outbox `enqueue` 要求调用方已有事务；消费端持久化后才确认；独立服务以 `eventId` 唯一键幂等 | 用户通知查询按当前用户；内部接口使用独立 service token | core 客户端读取 user 通知偏好是公开 Service 入口；通知 Outbox 不能伪装成 M2 内容事件 |
 | storage | 上传、owner 状态/取消/重试及私有 worker 接口；`MediaAssetStatus` | 上传意图、确认/失败、任务领取/候选/接受各自短事务；对象写入在事务外，任务与请求 Outbox 同事务 | 用户 JWT 只授权 owner API；独立服务令牌与当前租约约束 worker；默认关闭媒体登记/处理 | 旧 URL 保持原语义，不自动迁移历史对象；新状态只在启用登记后建立，见 M3 契约 |
 | ai | `/api/v1/ai/**`；`AiService`、摘要缓存和 RabbitMQ 摘要 listener | 帖子更新把摘要状态置为 `PENDING`；listener 使用租约和条件更新避免旧结果覆盖 | 摘要读取应遵守 content 当前可见性；现有 controller 仍有直接读取 Thread 的历史对 | AI controller 读取 thread Entity/Repository 已在精确白名单；M2/M4 新调用应改为 content owner DTO |
-| governance | 举报、`/api/v1/governance/**`；`ContentReportService`、`GovernanceService`、`AdminAccessService` | 当前数据库角色与范围决定权限；角色/限制/分区管理及审计同事务提交；隐藏/恢复由 content owner 执行 | 版主继承父线程当前分区；作者写入检查发言限制与分区归档；管理员引导只执行一次 | M4A 为用户与分区行锁、分区配置保存增加五条精确依赖，理由和锁顺序见 M4A 记录；不允许治理直接写帖子/评论表 |
+| governance | 举报、`/api/v1/governance/**`；`ContentReportService`、`GovernanceService`、`AdminAccessService` | 当前数据库角色与范围决定权限。角色、限制、分区管理及审计同事务提交，隐藏和恢复由内容领域执行 | 版主继承父线程当前分区，作者写入检查发言限制与分区归档，管理员引导只执行一次 | 账号和分区通过各自领域接口取得，沿用原事务和锁顺序 |
 | infrastructure | 本地种子、配置、公共 Redis/RabbitMQ 适配 | 不拥有业务事务；只参与被调用 owner 的事务 | 不绕过 owner 授权 | 本地种子直接读写多个域 Repository 是启动夹具，精确白名单保留；新增业务代码不得仿效 |
 
 ## 3. M2 内容事件边界

@@ -9,8 +9,7 @@ import com.example.demo.governance.repo.CommunityAuditRepository;
 import com.example.demo.governance.repo.CommunityModeratorScopeRepository;
 import com.example.demo.governance.repo.CommunityPostingRestrictionRepository;
 import com.example.demo.governance.repo.CommunityStateRepository;
-import com.example.demo.user.entity.User;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.CommunityAccounts;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,7 +35,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class GovernanceServiceTest {
     @Mock
-    private UserRepository userRepository;
+    private CommunityAccounts communityAccounts;
     @Mock
     private SectionRepository sectionRepository;
     @Mock
@@ -55,7 +54,7 @@ class GovernanceServiceTest {
     @BeforeEach
     void setUp() {
         SectionAdministration sectionAdministration = new SectionAdministration(sectionRepository);
-        service = new GovernanceService(userRepository, sectionAdministration,
+        service = new GovernanceService(communityAccounts, sectionAdministration,
                 stateRepository, adminRoleRepository, moderatorScopeRepository,
                 restrictionRepository, auditRepository);
     }
@@ -87,9 +86,8 @@ class GovernanceServiceTest {
     void bootstrap_does_not_resurrect_a_role_after_state_is_marked() {
         CommunityState state = new CommunityState();
         state.setBootstrapped(true);
-        User user = user(42L);
         when(stateRepository.findByIdForUpdate(CommunityState.SINGLETON_ID)).thenReturn(Optional.of(state));
-        when(userRepository.findByIdForInteraction(42L)).thenReturn(Optional.of(user));
+        when(communityAccounts.findByIdForInteraction(42L)).thenReturn(Optional.of(account(42L)));
 
         service.bootstrapAdmin(42L);
 
@@ -102,7 +100,7 @@ class GovernanceServiceTest {
         CommunityState state = new CommunityState();
         when(adminRoleRepository.existsById(1L)).thenReturn(true);
         when(stateRepository.findByIdForUpdate(CommunityState.SINGLETON_ID)).thenReturn(Optional.of(state));
-        when(userRepository.findByIdForInteraction(1L)).thenReturn(Optional.of(user(1L)));
+        when(communityAccounts.findByIdForInteraction(1L)).thenReturn(Optional.of(account(1L)));
         when(adminRoleRepository.count()).thenReturn(1L);
 
         ResponseStatusException failure = assertThrows(ResponseStatusException.class,
@@ -117,7 +115,7 @@ class GovernanceServiceTest {
     void initial_admin_grant_records_audit_with_generated_request_identity() {
         CommunityState state = new CommunityState();
         when(stateRepository.findByIdForUpdate(CommunityState.SINGLETON_ID)).thenReturn(Optional.of(state));
-        when(userRepository.findByIdForInteraction(42L)).thenReturn(Optional.of(user(42L)));
+        when(communityAccounts.findByIdForInteraction(42L)).thenReturn(Optional.of(account(42L)));
         service.bootstrapAdmin(42L);
         var audit = org.mockito.ArgumentCaptor.forClass(com.example.demo.governance.entity.CommunityAudit.class);
         verify(auditRepository).save(audit.capture());
@@ -129,10 +127,9 @@ class GovernanceServiceTest {
 
     @Test
     void write_gate_locks_user_before_section_and_rejects_restriction() {
-        User user = user(7L);
         Section section = new Section();
         section.setId(9L);
-        when(userRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(user));
+        when(communityAccounts.findByIdForInteraction(7L)).thenReturn(Optional.of(account(7L)));
         when(sectionRepository.findByIdForWriting(9L)).thenReturn(Optional.of(section));
         when(restrictionRepository.findById(7L)).thenReturn(Optional.of(
                 new com.example.demo.governance.entity.CommunityPostingRestriction(7L, null)));
@@ -141,15 +138,12 @@ class GovernanceServiceTest {
                 () -> service.assertCanWrite(7L, 9L));
 
         assertEquals(HttpStatus.FORBIDDEN.value(), failure.getStatusCode().value());
-        InOrder order = inOrder(userRepository, sectionRepository);
-        order.verify(userRepository).findByIdForInteraction(7L);
+        InOrder order = inOrder(communityAccounts, sectionRepository);
+        order.verify(communityAccounts).findByIdForInteraction(7L);
         order.verify(sectionRepository).findByIdForWriting(9L);
     }
 
-    private static User user(Long id) {
-        User user = new User();
-        user.setId(id);
-        user.setUsername("user-" + id);
-        return user;
+    private static CommunityAccounts.AccountSummary account(Long id) {
+        return new CommunityAccounts.AccountSummary(id, "user-" + id);
     }
 }

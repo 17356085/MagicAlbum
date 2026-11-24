@@ -46,22 +46,6 @@
   ],
   "allowedCrossDomainDependencies": [
     {
-      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
-      "target": "com.example.demo.user.entity.User"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
-      "target": "com.example.demo.user.repo.UserRepository"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java",
-      "target": "com.example.demo.user.entity.User"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/admin/security/AdminAccessService.java",
-      "target": "com.example.demo.user.repo.UserRepository"
-    },
-    {
       "source": "backend/src/main/java/com/example/demo/auth/service/apple/AppleOAuthHandler.java",
       "target": "com.example.demo.user.entity.User"
     },
@@ -176,22 +160,6 @@
     {
       "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
       "target": "com.example.demo.threads.repo.ThreadRepository"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
-      "target": "com.example.demo.user.entity.User"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",
-      "target": "com.example.demo.user.repo.UserRepository"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/threads/service/ThreadService.java",
-      "target": "com.example.demo.sections.repo.SectionRepository"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/threads/service/ThreadService.java",
-      "target": "com.example.demo.user.repo.UserRepository"
     }
   ]
 }

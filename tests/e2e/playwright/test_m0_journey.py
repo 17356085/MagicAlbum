@@ -595,6 +595,24 @@ def _verify_realtime_chat(
         assert [item["content"] for item in messages["items"]] == [direct_message]
     finally:
         _assert_status(_request(client_b, "DELETE", block_path), (204,), "recipient removes the test block")
+
+    follow_a = f"/users/{user_b_id}/follow"
+    follow_b = f"/users/{user_a_id}/follow"
+    _assert_status(_request(client_a, "POST", follow_a), (200,), "sender follows the recipient")
+    _assert_status(_request(client_b, "POST", follow_b), (200,), "recipient follows the sender")
+    page_a.goto(f"{BASE_URL}/users/{user_b_id}", wait_until="domcontentloaded")
+    page_a.bring_to_front()
+    expect(page_a.get_by_role("button", name="已关注", exact=True)).to_be_visible()
+    with page_a.expect_response(
+        lambda response: response.request.method == "DELETE"
+        and urlparse(response.url).path == f"/api/v1/chat/friends/{user_b_id}"
+    ) as removed:
+        page_a.get_by_role("button", name="解除好友", exact=True).click()
+    assert removed.value.status == 200 and removed.value.json()["status"] == "NONE"
+    expect(page_a.get_by_role("button", name="添加好友", exact=True)).to_be_visible()
+    expect(page_a.get_by_role("button", name="关注", exact=True)).to_be_visible()
+    after = _json_body(_request(client_a, "GET", f"/users/{user_b_id}/follow-status"), "follow state after unfriend")
+    assert after["followedByMe"] is False and after["followingMe"] is True
     return recovered_ms
 
 
@@ -1072,6 +1090,7 @@ def test_m0_r01_r04_browser_journey(
             record_testsuite_property("realtime_chat_offline_backlog", 31)
             record_testsuite_property("realtime_chat_group_rejoin_history", "verified")
             record_testsuite_property("friend_request_browser", "accepted_without_mutual_follow")
+            record_testsuite_property("friend_removal_browser", "peer_follow_preserved")
             record_testsuite_property("chat_message_recall_browser", "receiver_tombstone")
     finally:
         # Keep generated accounts for server-side auditability; clean mutable

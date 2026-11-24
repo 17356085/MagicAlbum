@@ -8,7 +8,7 @@ import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import com.example.demo.user.service.UserSettingsService;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -27,7 +27,7 @@ class PostServiceNotificationFailureTest {
     void saved_comment_is_returned_when_notification_creation_fails() {
         PostRepository posts = mock(PostRepository.class);
         ThreadRepository threads = mock(ThreadRepository.class);
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         NotificationService notificationService = mock(NotificationService.class);
         UserSettingsService settings = mock(UserSettingsService.class);
         when(settings.shouldDeliver(2L, "reply")).thenReturn(true);
@@ -58,7 +58,7 @@ class PostServiceNotificationFailureTest {
         when(posts.findViewById(10L)).thenReturn(Optional.of(view));
 
         PostService service = new PostService(
-                posts, null, threads, users, null, null, notificationClient);
+                posts, null, threads, users, null, notificationClient);
         CreatePostRequest request = new CreatePostRequest();
         request.setContentMd("Hello");
 

@@ -51,7 +51,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = t.authorId
             WHERE t.status = 'NORMAL'
               AND EXISTS (
-                  SELECT uf.id FROM com.example.demo.user.entity.UserFollow uf
+                  SELECT uf.id FROM UserFollow uf
                   WHERE uf.followerId = :userId AND uf.followingId = t.authorId
               )
             ORDER BY t.createdAt DESC, t.id DESC
@@ -60,7 +60,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             SELECT COUNT(t) FROM Thread t
             WHERE t.status = 'NORMAL'
               AND EXISTS (
-                  SELECT uf.id FROM com.example.demo.user.entity.UserFollow uf
+                  SELECT uf.id FROM UserFollow uf
                   WHERE uf.followerId = :userId AND uf.followingId = t.authorId
               )
             """)

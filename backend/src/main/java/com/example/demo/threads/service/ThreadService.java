@@ -5,7 +5,7 @@ import com.example.demo.ai.service.AiSummaryCacheService;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.common.RedisKeys;
 import com.example.demo.notifications.client.NotificationClient;
-import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.tags.service.TagService;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadLikeResponse;
@@ -20,7 +20,7 @@ import com.example.demo.threads.event.entity.ContentEventType;
 import com.example.demo.threads.event.service.ContentEventRecorder;
 import com.example.demo.threads.repo.ThreadLikeRepository;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,8 +54,8 @@ public class ThreadService {
 
     private final ThreadRepository threadRepository;
     private final ThreadLikeRepository threadLikeRepository;
-    private final SectionRepository sectionRepository;
-    private final UserRepository userRepository;
+    private final SectionAdministration sections;
+    private final UserReadService users;
     private final MarkdownRenderService markdownRenderService;
     private final com.example.demo.threads.service.mp.ThreadReadServiceMp threadReadServiceMp;
     private final boolean mpThreadsEnabled;
@@ -71,8 +71,8 @@ public class ThreadService {
     @Autowired
     public ThreadService(ThreadRepository threadRepository,
                          ThreadLikeRepository threadLikeRepository,
-                         SectionRepository sectionRepository,
-                         UserRepository userRepository,
+                         SectionAdministration sections,
+                         UserReadService users,
                          MarkdownRenderService markdownRenderService,
                          ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                          @Value("${feature.mp.read.threads:false}") boolean mpThreadsEnabled,
@@ -84,7 +84,7 @@ public class ThreadService {
                          ObjectProvider<TagService> tagServiceProvider,
                          ObjectProvider<AiSummaryCacheService> aiSummaryCacheServiceProvider,
                          ContentEventRecorder contentEventRecorder) {
-        this(threadRepository, threadLikeRepository, sectionRepository, userRepository, markdownRenderService,
+        this(threadRepository, threadLikeRepository, sections, users, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 redisTemplateProvider == null ? null : redisTemplateProvider.getIfAvailable(),
                 resolveObjectMapper(objectMapperProvider),
@@ -95,22 +95,22 @@ public class ThreadService {
     }
 
     ThreadService(ThreadRepository threadRepository,
-                  SectionRepository sectionRepository,
+                  SectionAdministration sections,
                   MarkdownRenderService markdownRenderService,
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
                   ObjectProvider<RabbitTemplate> rabbitTemplateProvider,
                   boolean rabbitEnabled,
                   ContentEventRecorder contentEventRecorder) {
-        this(threadRepository, null, sectionRepository, null, markdownRenderService,
+        this(threadRepository, null, sections, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 null, defaultObjectMapper(), null, null, null, contentEventRecorder);
     }
 
     ThreadService(ThreadRepository threadRepository,
                   ThreadLikeRepository threadLikeRepository,
-                  SectionRepository sectionRepository,
-                  UserRepository userRepository,
+                  SectionAdministration sections,
+                  UserReadService users,
                   MarkdownRenderService markdownRenderService,
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
@@ -124,8 +124,8 @@ public class ThreadService {
                   ContentEventRecorder contentEventRecorder) {
         this.threadRepository = threadRepository;
         this.threadLikeRepository = threadLikeRepository;
-        this.sectionRepository = sectionRepository;
-        this.userRepository = userRepository;
+        this.sections = sections;
+        this.users = users;
         this.markdownRenderService = markdownRenderService;
         this.threadReadServiceMp = threadReadServiceMpProvider.getIfAvailable();
         this.mpThreadsEnabled = mpThreadsEnabled;
@@ -140,7 +140,7 @@ public class ThreadService {
     }
 
     ThreadService(ThreadRepository threadRepository,
-                  SectionRepository sectionRepository,
+                  SectionAdministration sections,
                   MarkdownRenderService markdownRenderService,
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
@@ -149,7 +149,7 @@ public class ThreadService {
                   StringRedisTemplate redisTemplate,
                   ObjectMapper objectMapper,
                   ContentEventRecorder contentEventRecorder) {
-        this(threadRepository, null, sectionRepository, null, markdownRenderService,
+        this(threadRepository, null, sections, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 redisTemplate, objectMapper, null, null, null, contentEventRecorder);
     }
@@ -159,7 +159,7 @@ public class ThreadService {
         if (governance != null) governance.assertCanWrite(authorId, req.getSectionId());
         // 校验分区存在
         Long sectionId = req.getSectionId();
-        if (sectionId == null || !sectionRepository.existsById(sectionId)) {
+        if (sectionId == null || !sections.existsById(sectionId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分区不存在");
         }
         if (req.getTitle() == null || req.getTitle().isBlank()) {
@@ -417,14 +417,14 @@ public class ThreadService {
     }
 
     private void sendLikeNotification(Long actorId, Thread thread) {
-        if (notificationClient == null || userRepository == null || thread == null || thread.getAuthorId() == null) {
+        if (notificationClient == null || users == null || thread == null || thread.getAuthorId() == null) {
             return;
         }
         if (thread.getAuthorId().equals(actorId)) {
             return;
         }
-        String actorName = userRepository.findById(actorId)
-                .map(user -> user.getUsername() == null || user.getUsername().isBlank() ? "有人" : user.getUsername())
+        String actorName = users.displayNameById(actorId)
+                .filter(name -> !name.isBlank())
                 .orElse("有人");
         String title = thread.getTitle() == null || thread.getTitle().isBlank() ? "你的帖子" : thread.getTitle();
         notificationClient.sendLike(
@@ -483,7 +483,7 @@ public class ThreadService {
             changed = true;
         }
         if (req.getSectionId() != null && !req.getSectionId().equals(t.getSectionId())) {
-            if (!sectionRepository.existsById(req.getSectionId())) {
+            if (!sections.existsById(req.getSectionId())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分区不存在");
             }
             t.setSectionId(req.getSectionId());

@@ -1,7 +1,7 @@
 package com.example.demo.threads.service;
 
 import com.example.demo.ai.service.AiSummaryCacheService;
-import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.threads.dto.CreateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
 class ThreadServiceTest {
 
     @Mock ThreadRepository threadRepository;
-    @Mock SectionRepository sectionRepository;
+    @Mock SectionAdministration sections;
     @Mock MarkdownRenderService markdownRenderService;
     @Mock RabbitTemplate rabbitTemplate;
     @Mock ContentEventRecorder contentEventRecorder;
@@ -50,7 +50,7 @@ class ThreadServiceTest {
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(
-                threadRepository, sectionRepository, markdownRenderService,
+                threadRepository, sections, markdownRenderService,
                 mpProvider, false, rabbitProvider, false, contentEventRecorder);
         Thread thread = new Thread();
         thread.setId(8L);
@@ -74,7 +74,7 @@ class ThreadServiceTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         AiSummaryCacheService aiSummaryCacheService = mock(AiSummaryCacheService.class);
         ThreadService service = new ThreadService(
-                threadRepository, null, sectionRepository, null, markdownRenderService,
+                threadRepository, null, sections, null, markdownRenderService,
                 mpProvider, false, rabbitProvider, false, null, null, null, null, aiSummaryCacheService,
                 contentEventRecorder);
         Thread thread = new Thread();
@@ -99,7 +99,7 @@ class ThreadServiceTest {
 
         ThreadService service = new ThreadService(
                 threadRepository,
-                sectionRepository,
+                sections,
                 markdownRenderService,
                 mpProvider,
                 false,
@@ -108,7 +108,7 @@ class ThreadServiceTest {
                 contentEventRecorder
         );
 
-        when(sectionRepository.existsById(7L)).thenReturn(true);
+        when(sections.existsById(7L)).thenReturn(true);
         when(threadRepository.save(any(Thread.class))).thenAnswer(inv -> {
             Thread t = inv.getArgument(0);
             t.setId(123L);
@@ -171,7 +171,7 @@ class ThreadServiceTest {
 
         ThreadService service = new ThreadService(
                 threadRepository,
-                sectionRepository,
+                sections,
                 markdownRenderService,
                 mpProvider,
                 false,
@@ -180,7 +180,7 @@ class ThreadServiceTest {
                 contentEventRecorder
         );
 
-        when(sectionRepository.existsById(7L)).thenReturn(true);
+        when(sections.existsById(7L)).thenReturn(true);
         when(threadRepository.save(any(Thread.class))).thenAnswer(inv -> {
             Thread t = inv.getArgument(0);
             t.setId(123L);
@@ -214,9 +214,9 @@ class ThreadServiceTest {
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(
-                threadRepository, sectionRepository, markdownRenderService,
+                threadRepository, sections, markdownRenderService,
                 mpProvider, false, rabbitProvider, false, contentEventRecorder);
-        when(sectionRepository.existsById(7L)).thenReturn(true);
+        when(sections.existsById(7L)).thenReturn(true);
         when(threadRepository.save(any(Thread.class))).thenAnswer(invocation -> {
             Thread saved = invocation.getArgument(0);
             saved.setId(123L);
@@ -243,9 +243,9 @@ class ThreadServiceTest {
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(
-                threadRepository, sectionRepository, markdownRenderService,
+                threadRepository, sections, markdownRenderService,
                 mpProvider, false, rabbitProvider, false, contentEventRecorder);
-        when(sectionRepository.existsById(7L)).thenReturn(true);
+        when(sections.existsById(7L)).thenReturn(true);
 
         CreateThreadRequest req = new CreateThreadRequest();
         req.setSectionId(7L);
@@ -263,7 +263,7 @@ class ThreadServiceTest {
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(
-                threadRepository, sectionRepository, markdownRenderService,
+                threadRepository, sections, markdownRenderService,
                 mpProvider, false, rabbitProvider, false, contentEventRecorder);
         Thread thread = new Thread();
         thread.setId(8L);
@@ -292,7 +292,7 @@ class ThreadServiceTest {
         ObjectProvider<ThreadReadServiceMp> mpProvider = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         ThreadService service = new ThreadService(
-                threadRepository, sectionRepository, markdownRenderService,
+                threadRepository, sections, markdownRenderService,
                 mpProvider, false, rabbitProvider, false, contentEventRecorder);
         Thread thread = new Thread();
         thread.setId(8L);
@@ -318,7 +318,7 @@ class ThreadServiceTest {
 
         ThreadService service = new ThreadService(
                 threadRepository,
-                sectionRepository,
+                sections,
                 markdownRenderService,
                 mpProvider,
                 false,
@@ -327,7 +327,7 @@ class ThreadServiceTest {
                 contentEventRecorder
         );
 
-        when(sectionRepository.existsById(7L)).thenReturn(false);
+        when(sections.existsById(7L)).thenReturn(false);
 
         CreateThreadRequest req = new CreateThreadRequest();
         req.setSectionId(7L);

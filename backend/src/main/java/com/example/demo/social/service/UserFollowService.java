@@ -1,11 +1,13 @@
-package com.example.demo.user.service;
+package com.example.demo.social.service;
 
 import com.example.demo.notifications.client.NotificationClient;
+import com.example.demo.social.entity.UserFollow;
+import com.example.demo.social.repo.UserFollowRepository;
 import com.example.demo.user.dto.UserFollowResponse;
 import com.example.demo.user.dto.UserSummaryDto;
-import com.example.demo.user.entity.UserFollow;
-import com.example.demo.user.repo.UserFollowRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.RelationshipAccountLock;
+import com.example.demo.user.service.UserProfileService;
+import com.example.demo.user.service.UserReadService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -21,17 +23,23 @@ import java.util.Map;
 @Service
 public class UserFollowService {
     private final UserFollowRepository userFollowRepository;
-    private final UserRepository userRepository;
+    private final RelationshipAccountLock accountLock;
+    private final UserReadService accounts;
     private final UserProfileService userProfileService;
+    private final FollowStatistics statistics;
     private final NotificationClient notificationClient;
 
     public UserFollowService(UserFollowRepository userFollowRepository,
-                             UserRepository userRepository,
+                             RelationshipAccountLock accountLock,
+                             UserReadService accounts,
                              UserProfileService userProfileService,
+                             FollowStatistics statistics,
                              ObjectProvider<NotificationClient> notificationClientProvider) {
         this.userFollowRepository = userFollowRepository;
-        this.userRepository = userRepository;
+        this.accountLock = accountLock;
+        this.accounts = accounts;
         this.userProfileService = userProfileService;
+        this.statistics = statistics;
         this.notificationClient = notificationClientProvider == null ? null : notificationClientProvider.getIfAvailable();
     }
 
@@ -57,28 +65,28 @@ public class UserFollowService {
         if (currentUserId.equals(targetUserId)) {
             return status(currentUserId, targetUserId);
         }
-        if (userFollowRepository.existsByFollowerIdAndFollowingId(currentUserId, targetUserId)) {
+        removeOutgoingFollow(currentUserId, targetUserId);
+        return status(currentUserId, targetUserId);
+    }
+
+    /** Caller holds the relationship lock for both accounts. */
+    void removeOutgoingFollow(Long currentUserId, Long targetUserId) {
+        if (statistics.isFollowing(currentUserId, targetUserId)) {
             userFollowRepository.deleteByFollowerIdAndFollowingId(currentUserId, targetUserId);
         }
-        return status(currentUserId, targetUserId);
     }
 
     @Transactional(readOnly = true)
     public UserFollowResponse status(Long currentUserId, Long targetUserId) {
         validateTarget(currentUserId, targetUserId);
-        boolean followedByMe = currentUserId != null
-                && !currentUserId.equals(targetUserId)
-                && userFollowRepository.existsByFollowerIdAndFollowingId(currentUserId, targetUserId);
-        boolean followingMe = currentUserId != null
-                && !currentUserId.equals(targetUserId)
-                && userFollowRepository.existsByFollowerIdAndFollowingId(targetUserId, currentUserId);
+        FollowStatistics.Snapshot state = statistics.forUser(targetUserId, currentUserId);
         return new UserFollowResponse(
                 targetUserId,
-                followedByMe,
-                userFollowRepository.countByFollowingId(targetUserId),
-                userFollowRepository.countByFollowerId(targetUserId),
-                followingMe,
-                followedByMe
+                state.followedByViewer(),
+                state.followers(),
+                state.following(),
+                state.followingViewer(),
+                state.followedByViewer()
         );
     }
 
@@ -109,7 +117,7 @@ public class UserFollowService {
 
     @Transactional(readOnly = true)
     public boolean areMutual(Long first, Long second) {
-        return isFollowing(first, second) && isFollowing(second, first);
+        return statistics.isFollowing(first, second) && statistics.isFollowing(second, first);
     }
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
@@ -124,34 +132,7 @@ public class UserFollowService {
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void lockUsers(java.util.Collection<Long> ids) {
-        if (ids == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少关系用户");
-        }
-        for (Long id : ids.stream().filter(java.util.Objects::nonNull).sorted().distinct().toList()) {
-            userRepository.findByIdForInteraction(id)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
-        }
-    }
-
-    long countFollowers(Long userId) {
-        if (userId == null) {
-            return 0;
-        }
-        return userFollowRepository.countByFollowingId(userId);
-    }
-
-    long countFollowing(Long userId) {
-        if (userId == null) {
-            return 0;
-        }
-        return userFollowRepository.countByFollowerId(userId);
-    }
-
-    boolean isFollowing(Long followerId, Long followingId) {
-        if (followerId == null || followingId == null || followerId.equals(followingId)) {
-            return false;
-        }
-        return userFollowRepository.existsByFollowerIdAndFollowingId(followerId, followingId);
+        accountLock.lockParticipants(ids);
     }
 
     private void lockPair(Long first, Long second) {
@@ -176,7 +157,7 @@ public class UserFollowService {
     }
 
     private void ensureUserExists(Long userId) {
-        if (userId == null || !userRepository.existsById(userId)) {
+        if (!accounts.existsById(userId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在");
         }
     }
@@ -195,8 +176,8 @@ public class UserFollowService {
         if (notificationClient == null) {
             return;
         }
-        String followerName = userRepository.findById(followerId)
-                .map(user -> user.getUsername() == null || user.getUsername().isBlank() ? "有人" : user.getUsername())
+        String followerName = accounts.displayNameById(followerId)
+                .filter(name -> !name.isBlank())
                 .orElse("有人");
         notificationClient.sendFollow(
                 targetUserId,

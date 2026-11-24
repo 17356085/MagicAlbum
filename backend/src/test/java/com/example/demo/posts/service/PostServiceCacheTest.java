@@ -5,10 +5,11 @@ import com.example.demo.posts.dto.PostDto;
 import com.example.demo.posts.dto.PostReadState;
 import com.example.demo.posts.dto.PostQueryView;
 import com.example.demo.posts.entity.Post;
+import com.example.demo.posts.cache.RedisPostPageCache;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -56,7 +57,7 @@ class PostServiceCacheTest {
         when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         PageRequest page = PageRequest.of(0, 20);
         when(posts.findByThreadAscView(7L, page)).thenReturn(new PageImpl<>(List.of(), page, 0));
-        PostService service = new PostService(posts, threads, mock(UserRepository.class), redis, null);
+        PostService service = new PostService(posts, threads, mock(UserReadService.class), new RedisPostPageCache(redis, null));
 
         for (int requestedPage : new int[]{0, -1, 1}) {
             var result = service.listByThread(7L, requestedPage, 20);
@@ -85,7 +86,7 @@ class PostServiceCacheTest {
     void listByThread_should_cache_result() {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -104,7 +105,8 @@ class PostServiceCacheTest {
         when(postRepository.findByThreadAscView(anyLong(), any(PageRequest.class)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 20), 1));
 
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, null);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, null));
         var result = service.listByThread(7L, 1, 20);
 
         assertThat(result.getContent()).hasSize(1);
@@ -116,7 +118,7 @@ class PostServiceCacheTest {
     void listByThread_should_return_cached_result() throws Exception {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -137,7 +139,8 @@ class PostServiceCacheTest {
         });
         when(valueOperations.get(anyString())).thenReturn(json);
 
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, mapper);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, mapper));
         var result = service.listByThread(7L, 1, 20);
 
         assertThat(result.getContent()).hasSize(1);
@@ -150,7 +153,7 @@ class PostServiceCacheTest {
         PostRepository postRepository = mock(PostRepository.class);
         com.example.demo.posts.repo.PostLikeRepository postLikeRepository = mock(com.example.demo.posts.repo.PostLikeRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -165,7 +168,7 @@ class PostServiceCacheTest {
         when(postLikeRepository.findPostIdsLikedByUser(99L, List.of(1L))).thenReturn(List.of(1L));
 
         PostService service = new PostService(postRepository, postLikeRepository, threadRepository,
-                userRepository, redisTemplate, null, null);
+                userRepository, new RedisPostPageCache(redisTemplate, null), null);
 
         assertThat(service.listByThread(7L, 99L, "time", 1, 20).getContent().get(0).isLiked()).isTrue();
         verify(valueOperations, never()).get(anyString());
@@ -178,7 +181,7 @@ class PostServiceCacheTest {
     void anonymous_cache_uses_effective_one_based_page() {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -188,7 +191,7 @@ class PostServiceCacheTest {
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
         PostService service = new PostService(postRepository, threadRepository, userRepository,
-                redisTemplate, null);
+                new RedisPostPageCache(redisTemplate, null));
 
         service.listByThread(7L, 0, 20);
 
@@ -200,7 +203,7 @@ class PostServiceCacheTest {
     void anonymous_cache_should_fallback_when_authoritative_post_is_hidden() throws Exception {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -221,7 +224,8 @@ class PostServiceCacheTest {
         when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, mapper);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, mapper));
 
         assertThat(service.listByThread(7L, 1, 20).getContent()).isEmpty();
         verify(postRepository).findByThreadAscView(7L, PageRequest.of(0, 20));
@@ -231,7 +235,7 @@ class PostServiceCacheTest {
     void anonymous_cache_should_fallback_when_cached_parent_is_deleted() throws Exception {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -256,7 +260,8 @@ class PostServiceCacheTest {
         when(postRepository.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, mapper);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, mapper));
 
         assertThat(service.listByThread(7L, 1, 20).getContent()).isEmpty();
         verify(postRepository).findByThreadAscView(7L, PageRequest.of(0, 20));
@@ -266,7 +271,7 @@ class PostServiceCacheTest {
     void anonymous_cache_validation_failure_should_propagate_database_error() throws Exception {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -284,7 +289,8 @@ class PostServiceCacheTest {
         IllegalStateException failure = new IllegalStateException("database unavailable");
         when(postRepository.findReadStateByIdIn(any())).thenThrow(failure);
 
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, mapper);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, mapper));
 
         assertThatThrownBy(() -> service.listByThread(7L, 1, 20)).isSameAs(failure);
         verify(postRepository, never()).findByThreadAscView(anyLong(), any(PageRequest.class));
@@ -294,7 +300,7 @@ class PostServiceCacheTest {
     void create_should_evict_thread_posts_cache() {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         when(threadRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(normalThread()));
         when(userRepository.existsById(1L)).thenReturn(true);
@@ -321,7 +327,8 @@ class PostServiceCacheTest {
         when(view.getContent()).thenReturn("Hi");
         when(postRepository.findViewById(10L)).thenReturn(Optional.of(view));
 
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, null);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, null));
         CreatePostRequest req = new CreatePostRequest();
         req.setContentMd("Hi");
 
@@ -340,7 +347,7 @@ class PostServiceCacheTest {
     void create_should_not_evict_any_cache_before_transaction_commit_or_after_rollback() {
         PostRepository postRepository = mock(PostRepository.class);
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        UserReadService userRepository = mock(UserReadService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         when(threadRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(normalThread()));
         when(userRepository.existsById(1L)).thenReturn(true);
@@ -354,7 +361,8 @@ class PostServiceCacheTest {
         when(view.getId()).thenReturn(10L);
         when(view.getThreadId()).thenReturn(7L);
         when(postRepository.findViewById(10L)).thenReturn(Optional.of(view));
-        PostService service = new PostService(postRepository, threadRepository, userRepository, redisTemplate, null);
+        PostService service = new PostService(postRepository, threadRepository, userRepository,
+                new RedisPostPageCache(redisTemplate, null));
         CreatePostRequest req = new CreatePostRequest();
         req.setContentMd("Hi");
 

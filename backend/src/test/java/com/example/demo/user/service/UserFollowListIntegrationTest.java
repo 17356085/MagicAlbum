@@ -1,9 +1,10 @@
 package com.example.demo.user.service;
 
+import com.example.demo.social.entity.UserFollow;
+import com.example.demo.social.service.UserFollowService;
 import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.dto.UserSummaryDto;
 import com.example.demo.user.entity.User;
-import com.example.demo.user.entity.UserFollow;
 import com.example.demo.user.entity.UserProfile;
 import jakarta.persistence.EntityManager;
 import org.hibernate.SessionFactory;

@@ -340,6 +340,9 @@ if sys.argv[4]:
     recovery = [item.get("value", "") for item in root.findall(".//property[@name='realtime_chat_connected_recovery_ms']")]
     if len(recovery) != 1 or not recovery[0].isdecimal() or not 0 < int(recovery[0]) <= 15_000:
         raise SystemExit("Browser journey did not record recovery within its polling deadline")
+    properties = root.findall(".//property[@name='friend_removal_browser']")
+    if [item.get("value") for item in properties] != ["peer_follow_preserved"]:
+        raise SystemExit("Browser journey did not verify friend removal preserves the peer's follow")
 print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }

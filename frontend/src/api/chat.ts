@@ -72,6 +72,10 @@ export async function decideFriendRequest(peer: User['id'], accept: boolean): Pr
   return (await api.put<{ status: FriendStatus }>(friendRequestPath(peer) + '/decision', { accept })).data.status
 }
 
+export async function removeFriend(peer: User['id']): Promise<FriendStatus> {
+  return (await api.delete<{ status: FriendStatus }>(base + '/friends/' + encodeURIComponent(String(peer)))).data.status
+}
+
 export async function direct(peer: number) {
   return (await api.get<Direct>(base + '/direct/' + peer)).data
 }

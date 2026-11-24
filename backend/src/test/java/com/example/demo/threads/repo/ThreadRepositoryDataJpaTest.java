@@ -8,7 +8,7 @@ import com.example.demo.threads.dto.ThreadRankingView;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.entity.ThreadLike;
 import com.example.demo.user.entity.User;
-import com.example.demo.user.entity.UserFollow;
+import com.example.demo.social.entity.UserFollow;
 import com.example.demo.user.entity.UserProfile;
 import com.example.demo.user.repo.UserRepository;
 import jakarta.persistence.EntityManager;

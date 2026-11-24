@@ -3,7 +3,7 @@ package com.example.demo.user.controller;
 import com.example.demo.common.PageResponse;
 import com.example.demo.user.dto.UserFollowResponse;
 import com.example.demo.user.dto.UserSummaryDto;
-import com.example.demo.user.service.UserFollowService;
+import com.example.demo.social.service.UserFollowService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
