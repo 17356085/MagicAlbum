@@ -21,7 +21,10 @@ import (
 
 	"github.com/17356085/MagicAlbum/services/media-service/internal/config"
 	"github.com/17356085/MagicAlbum/services/media-service/internal/processor"
+	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
 	"github.com/17356085/MagicAlbum/services/media-service/internal/wire"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -246,6 +249,8 @@ func (c *Client) GetInput(ctx context.Context, jobID string, jobVersion int, lea
 		return Input{}, &Error{Operation: "input", Kind: ErrorTransient, Cause: err}
 	}
 	request.Header.Set(HeaderLeaseToken, leaseToken)
+	request, span := c.startCoreSpan(request, "input")
+	defer span.End()
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return Input{}, classifyTransport("input", err)
@@ -360,6 +365,8 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body []byte, o
 }
 
 func (c *Client) doJSONRequest(request *http.Request, operation string, output any) error {
+	request, span := c.startCoreSpan(request, operation)
+	defer span.End()
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return classifyTransport(operation, err)
@@ -379,6 +386,13 @@ func (c *Client) doJSONRequest(request *http.Request, operation string, output a
 		return &Error{Operation: operation, Kind: ErrorResponse, Cause: err, Status: response.StatusCode}
 	}
 	return nil
+}
+
+func (c *Client) startCoreSpan(request *http.Request, operation string) (*http.Request, trace.Span) {
+	spanContext, span := telemetry.StartSpan(request.Context(), "media.core."+operation, trace.WithSpanKind(trace.SpanKindClient))
+	request = request.WithContext(spanContext)
+	telemetry.InjectTraceContext(spanContext, propagation.HeaderCarrier(request.Header))
+	return request, span
 }
 
 func decodeJSON(data []byte, max int64, output any) error {

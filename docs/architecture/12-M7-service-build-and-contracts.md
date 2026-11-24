@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | ARCH-08 | `chat-service` 拥有自己的 Maven 应用、Docker 镜像、配置与聊天专库迁移。两种拓扑共同使用 `chat-domain`，少量 Web 及限流组件由 `platform-web` 提供 | 可仅打包聊天应用及其依赖。模块守卫按源码归属拒绝直接引用 Core。验收默认部署、分库部署、迁移回滚和恢复 |
 | ARCH-12 | 会话验证沿用 Protobuf v1。添加字段时保持现有字段编号和服务身份校验。启用 gRPC 后使用独立凭证，TLS 验证证书身份，超时后当前连接失败关闭 | Java 和 Go 的测试覆盖未知字段、错误身份和调用截止时间。隔离部署通过真实 Go 客户端校验 Java 会话 |
-| ARCH-13 | 遥测配置启用 Go 导出。WebSocket 仅跟踪认证，Java 聊天提交后的 RabbitMQ 信号沿用发布链路，Go 消费后结束处理 span | 从 Tempo 读取网关和 Java 的 HTTP 链路、Go 和 Java 的会话验证链路，以及 Java 经 RabbitMQ 到 Go 的提示链路。从 Loki 比对同一 HTTP 请求的两端日志 |
+| ARCH-13 | 遥测配置启用 Go 导出。WebSocket 仅跟踪认证，Java 聊天提交后的 RabbitMQ 信号沿用发布链路，Go 消费后结束处理 span。上传的追踪上下文随媒体 Outbox 保存，Go worker 延续到结果回调 | 从 Tempo 读取网关和 Java 的 HTTP 链路、Go 和 Java 的会话验证链路，以及 Java 经 RabbitMQ 到 Go 的提示链路。从 Loki 比对同一 HTTP 请求的两端日志。媒体使用真实上传与 Core 结果回调验证同一追踪链路 |
 | ARCH-14 | 首页 BFF 组合公共主题和分区、当前账号资料、关注流和未读数。公共片段可在短时间内复用，认证响应标记为 `private, no-store` | 网关 HTTP 测试复用公共缓存，验证两个账号与匿名访问相互隔离，并演练通知超时和恢复。独立部署核验同一网关上的三类访问 |
 
 [分库 Compose](../../docker-compose.chat.yml) · [聊天应用](../../chat-service/pom.xml) · [Java 依赖规则](../../scripts/Check-JavaArchitecture.mjs) · [BFF HTTP 验收](../../gateway/src/test/java/com/example/gateway/HomeOverviewAuthorizationEndpointTest.java) · [遥测配置](../../docker-compose.telemetry.yml)

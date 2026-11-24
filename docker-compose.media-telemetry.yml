@@ -1,0 +1,27 @@
+# Optional telemetry for the media worker and Core without adding the split chat service.
+services:
+  backend:
+    extends:
+      file: docker-compose.telemetry.yml
+      service: backend
+  media-worker:
+    environment:
+      OTEL_SERVICE_NAME: bluealbum-media-worker
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  otel-collector:
+    extends:
+      file: docker-compose.telemetry.yml
+      service: otel-collector
+  tempo:
+    extends:
+      file: docker-compose.telemetry.yml
+      service: tempo
+  loki:
+    extends:
+      file: docker-compose.telemetry.yml
+      service: loki
+
+volumes:
+  telemetry-tempo:
+  telemetry-loki:

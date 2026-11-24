@@ -67,8 +67,16 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	tracingContext, shutdownTracing := telemetry.ConfigureTracing(ctx)
+	defer func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownContext); err != nil {
+			fmt.Fprintln(os.Stderr, "media worker tracing shutdown failed")
+		}
+	}()
 	runtimeErr := make(chan error, 1)
-	go func() { runtimeErr <- runtime.Run(ctx) }()
+	go func() { runtimeErr <- runtime.Run(tracingContext) }()
 	drained := false
 	select {
 	case <-ctx.Done():
