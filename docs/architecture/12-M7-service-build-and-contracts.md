@@ -25,3 +25,12 @@ docker build --file chat-service/Dockerfile --tag bluealbum-chat-service:0.1.0 .
 ## 同负载对比
 
 CI 在同一个 Java Core、RabbitMQ 和合成数据环境中，启动使用同一镜像的 HTTP/JSON 与 TLS gRPC Go 节点。两端关闭导出，以相同账号与并发数预热，再以 AB、BA 顺序执行等量 WebSocket 握手。统计连接到收到 `ready` 的吞吐和 p50、p95 延迟，并记录 Go 容器自身的 CPU 用量增量及内存。该比较包含握手及当前部署下的传输成本，资源指标仅覆盖 Go 容器。输出 `chat-auth-load.json`，每轮各保留结果。[负载脚本](../../scripts/ci/chat-auth-load.py) · [CI 验收](../../.github/workflows/ci.yml)
+
+`edfd652` 的专项验收采用 4 个合成账号、8 并发，每种协议两轮各 240 次握手，全部通过。
+
+| Go 到 Java 的会话校验 | 两轮吞吐（握手/秒） | p95（毫秒） | Go 容器 CPU（微秒） | Go 容器峰值内存（字节） |
+| --- | --- | --- | --- | --- |
+| HTTP/JSON | 410.57 / 473.29 | 26.417 / 26.069 | 280,279 / 270,018 | 12,910,592 / 13,156,352 |
+| TLS gRPC | 490.97 / 524.16 | 25.302 / 21.711 | 177,785 / 174,810 | 12,836,864 / 13,008,896 |
+
+同一提交的追踪产物验证了网关到 Core 的 HTTP、Go 到 Java 的 gRPC、沿 RabbitMQ 的聊天信号，以及从媒体上传经持久化 Outbox 到 Go 处理和 Core 回调的追踪父子关系。媒体验收 17 项全部通过。公网 WebSocket 通过网关完成鉴权，gRPC 父子关系从 Go 私有验收入口开始核对。指标适用于该合成环境和短时握手负载。此运行中的社区、摘要任务受动态导入回归影响，随后修复，共同候选版本须复跑这些任务。[专项验收产物](https://github.com/17356085/MagicAlbum/actions/runs/45454481137#artifacts)

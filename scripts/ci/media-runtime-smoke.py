@@ -34,6 +34,14 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 
+# ``community-runtime-smoke.py`` and ``summary-runtime-smoke.py`` load this
+# gate with ``importlib`` from the repository root.  In that entry point
+# Python does not add this script's directory to ``sys.path``, so resolve the
+# sibling helper explicitly while preserving the normal direct-script path.
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
 from telemetry_support import ancestor_link, trace_spans
 
 
