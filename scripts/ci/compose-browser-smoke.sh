@@ -364,8 +364,8 @@ cleanup() {
     cleanup_chat_backup || cleanup_status=1
   fi
   if (( COMPOSE_TOUCHED == 1 )); then
-    if [[ "$RPC_LOAD_CHECK" == 1 ]]; then
-      local load_nodes
+    if [[ "${RPC_LOAD_CHECK:-0}" == 1 ]]; then
+      local load_nodes load_node_ids
       load_nodes="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
         --filter "label=com.docker.compose.service=chat-realtime" \
         --filter 'label=com.docker.compose.oneoff=True')" || cleanup_status=1
