@@ -16,7 +16,7 @@ chat_permissions_env_value() {
   [[ "$variable" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
   [[ "$variable" != *PASSWORD* && "$variable" != *TOKEN* && "$variable" != *SECRET* && "$variable" != *KEY* ]] \
     || return 1
-  value="$(compose exec -T "$service" sh -ec 'printenv "$1"' sh "$variable")" || return 1
+  value="$(compose exec -T "$service" sh -ec 'printenv "$1"' sh "$variable" </dev/null)" || return 1
   printf '%s' "${value//$'\r'/}"
 }
 
@@ -58,7 +58,7 @@ chat_permissions_mysql() {
     esac
     MYSQL_PWD="$db_password" exec mysql --protocol=tcp --connect-timeout=5 \
       -h "$2" -u "$db_user" "$3" -Nse "$4"
-  ' sh "$role" "$host" "$database" "$statement"
+  ' sh "$role" "$host" "$database" "$statement" </dev/null
 }
 
 chat_permissions_root_mysql() {
@@ -70,7 +70,7 @@ chat_permissions_root_mysql() {
   compose exec -T "$service" sh -ec '
     MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --protocol=tcp --connect-timeout=5 \
       -h "$1" -u root "$2" -Nse "$3"
-  ' sh "$host" "$database" "$statement"
+  ' sh "$host" "$database" "$statement" </dev/null
 }
 
 chat_permissions_http_status() {
@@ -99,7 +99,7 @@ chat_permissions_http_status() {
       -H "Content-Type: application/json" \
       -H "X-Internal-Service-Token: $token" \
       --data-raw "$3" "$2" 2>/dev/null
-  ' sh "$token_variable" "$url" "$body"
+  ' sh "$token_variable" "$url" "$body" </dev/null
 }
 
 chat_permissions_require_numeric() {
@@ -187,6 +187,7 @@ verify_chat_permissions() {
   # Six effective (configured-account, owned-schema) pairs.  Core runtime and
   # migration intentionally remain one account in this Compose profile.
   local pair_label pair_service pair_role pair_host pair_database pair_table pair_result pair_grants
+  local owner_select_count=0
   while IFS='|' read -r pair_label pair_service pair_role pair_host pair_database pair_table; do
     [[ -n "$pair_label" ]] || continue
     pair_result="$(chat_permissions_mysql "$pair_service" "$pair_role" "$pair_host" "$pair_database" \
@@ -202,6 +203,7 @@ verify_chat_permissions() {
     [[ "$pair_grants" == *SELECT* || "$pair_grants" == *'ALL PRIVILEGES'* ]] \
       || die "ARCH-05 effective grant did not include SELECT for $pair_label"
     evidence+=("${pair_label}=select_granted_and_effective_grant_verified")
+    owner_select_count=$((owner_select_count + 1))
   done <<EOF
 core_runtime|mysql|core-runtime|127.0.0.1|$core_database|users
 core_migration_effective_same_account|mysql|core-migration|127.0.0.1|$core_database|users
@@ -210,18 +212,23 @@ notification_migration|mysql|notification-migration|127.0.0.1|$notification_data
 chat_runtime|chat-mysql|chat-runtime|127.0.0.1|$chat_database|chat_messages
 chat_migration|chat-mysql|chat-migration|127.0.0.1|$chat_database|chat_messages
 EOF
+  [[ "$owner_select_count" -eq 6 ]] \
+    || die "ARCH-05 owner SELECT coverage expected 6 cases, got $owner_select_count"
+  evidence+=("owner_select_cases=$owner_select_count")
   evidence+=("effective_pairs=6")
   evidence+=("core_runtime_migration_role=one_configured_account_verified")
 
   # Confirm the DML used by each owner is present without changing a row.  The
   # cross-schema matrix below separately proves that these rights do not leak.
   local dml_label dml_service dml_role dml_host dml_database dml_table
+  local owner_update_count=0
   while IFS='|' read -r dml_label dml_service dml_role dml_host dml_database dml_table; do
     if ! chat_permissions_mysql "$dml_service" "$dml_role" "$dml_host" "$dml_database" \
       "UPDATE $dml_table SET id = id WHERE 1 = 0" >/dev/null 2>&1; then
       die "ARCH-05 owner DML grant failed for $dml_label"
     fi
     evidence+=("${dml_label}=nonmutating_update_granted")
+    owner_update_count=$((owner_update_count + 1))
   done <<EOF
 core_runtime|mysql|core-runtime|127.0.0.1|$core_database|users
 notification_runtime|mysql|notification-runtime|127.0.0.1|$notification_database|notifications
@@ -229,9 +236,13 @@ notification_migration|mysql|notification-migration|127.0.0.1|$notification_data
 chat_runtime|chat-mysql|chat-runtime|127.0.0.1|$chat_database|chat_messages
 chat_migration|chat-mysql|chat-migration|127.0.0.1|$chat_database|chat_messages
 EOF
+  [[ "$owner_update_count" -eq 5 ]] \
+    || die "ARCH-05 owner UPDATE coverage expected 5 cases, got $owner_update_count"
+  evidence+=("owner_update_cases=$owner_update_count")
 
   # Every non-owner account must be unable to read another owner's schema.
   local foreign_label foreign_service foreign_role foreign_host foreign_database foreign_table foreign_result foreign_update
+  local foreign_select_count=0 foreign_update_count=0
   while IFS='|' read -r foreign_label foreign_service foreign_role foreign_host foreign_database foreign_table; do
     [[ -n "$foreign_label" ]] || continue
     if foreign_result="$(chat_permissions_mysql "$foreign_service" "$foreign_role" "$foreign_host" \
@@ -241,6 +252,7 @@ EOF
     [[ "$foreign_result" =~ ERROR\ (1044|1045|1142) ]] \
       || die "ARCH-05 foreign database read did not fail with an authorization error for $foreign_label"
     evidence+=("${foreign_label}=read_denied")
+    foreign_select_count=$((foreign_select_count + 1))
     if foreign_update="$(chat_permissions_mysql "$foreign_service" "$foreign_role" "$foreign_host" \
       "$foreign_database" "UPDATE $foreign_table SET id = id WHERE 1 = 0" 2>&1)"; then
       die "ARCH-05 foreign database nonmutating update unexpectedly succeeded for $foreign_label"
@@ -248,6 +260,7 @@ EOF
     [[ "$foreign_update" =~ ERROR\ (1044|1045|1142) ]] \
       || die "ARCH-05 foreign database nonmutating update did not fail with an authorization error for $foreign_label"
     evidence+=("${foreign_label}=nonmutating_update_denied")
+    foreign_update_count=$((foreign_update_count + 1))
   done <<EOF
 core_to_notification|mysql|core-runtime|127.0.0.1|$notification_database|notifications
 core_to_chat|mysql|core-runtime|chat-mysql|$chat_database|chat_messages
@@ -260,6 +273,12 @@ chat_to_notification|chat-mysql|chat-runtime|mysql|$notification_database|notifi
 chat_migration_to_core|chat-mysql|chat-migration|mysql|$core_database|users
 chat_migration_to_notification|chat-mysql|chat-migration|mysql|$notification_database|notifications
 EOF
+  [[ "$foreign_select_count" -eq 10 ]] \
+    || die "ARCH-05 foreign SELECT coverage expected 10 cases, got $foreign_select_count"
+  [[ "$foreign_update_count" -eq 10 ]] \
+    || die "ARCH-05 foreign UPDATE coverage expected 10 cases, got $foreign_update_count"
+  evidence+=("foreign_select_cases=$foreign_select_count")
+  evidence+=("foreign_update_cases=$foreign_update_count")
 
   # Keep a single deterministic probe name and remove it before every owner
   # check and again after every successful DDL check.  Notification/chat
@@ -276,6 +295,7 @@ EOF
     || die 'ARCH-05 could not clear the chat DDL probe table'
 
   local ddl_label ddl_service ddl_role ddl_host ddl_database ddl_result
+  local denied_ddl_count=0
   while IFS='|' read -r ddl_label ddl_service ddl_role ddl_host ddl_database; do
     if ddl_result="$(chat_permissions_mysql "$ddl_service" "$ddl_role" "$ddl_host" "$ddl_database" \
       "CREATE TABLE $CHAT_PERMISSIONS_PROBE_TABLE (id INT NOT NULL)" 2>&1)"; then
@@ -286,11 +306,16 @@ EOF
     [[ "$ddl_result" =~ ERROR\ 1142 ]] \
       || die "ARCH-05 runtime DDL did not fail with ERROR 1142 for $ddl_label"
     evidence+=("${ddl_label}=ddl_denied")
+    denied_ddl_count=$((denied_ddl_count + 1))
   done <<EOF
 notification_runtime_ddl|mysql|notification-runtime|127.0.0.1|$notification_database
 chat_runtime_ddl|chat-mysql|chat-runtime|127.0.0.1|$chat_database
 EOF
+  [[ "$denied_ddl_count" -eq 2 ]] \
+    || die "ARCH-05 denied DDL coverage expected 2 cases, got $denied_ddl_count"
+  evidence+=("denied_ddl_cases=$denied_ddl_count")
 
+  local allowed_ddl_count=0
   while IFS='|' read -r ddl_label ddl_service ddl_role ddl_host ddl_database; do
     if ! chat_permissions_mysql "$ddl_service" "$ddl_role" "$ddl_host" "$ddl_database" \
       "CREATE TABLE $CHAT_PERMISSIONS_PROBE_TABLE (id INT NOT NULL)" >/dev/null 2>&1; then
@@ -300,11 +325,15 @@ EOF
       "DROP TABLE IF EXISTS $CHAT_PERMISSIONS_PROBE_TABLE" >/dev/null 2>&1 \
       || die "ARCH-05 could not clean the DDL probe for $ddl_label"
     evidence+=("${ddl_label}=ddl_owner_verified")
+    allowed_ddl_count=$((allowed_ddl_count + 1))
   done <<EOF
 core_effective_migration|mysql|core-migration|127.0.0.1|$core_database
 notification_migration|mysql|notification-migration|127.0.0.1|$notification_database
 chat_migration|chat-mysql|chat-migration|127.0.0.1|$chat_database
 EOF
+  [[ "$allowed_ddl_count" -eq 3 ]] \
+    || die "ARCH-05 allowed migration DDL coverage expected 3 cases, got $allowed_ddl_count"
+  evidence+=("allowed_migration_ddl_cases=$allowed_ddl_count")
   evidence+=("core_runtime_effective_ddl_role=shared_migration_owner")
 
   # Exercise the private HTTP contracts from the actual application
