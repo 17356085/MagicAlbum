@@ -19,6 +19,7 @@ ENV JAVA_TOOL_OPTIONS=${JAVA_BUILD_OPTIONS}
 COPY backend/src /workspace/backend/src
 COPY platform-web/src /workspace/platform-web/src
 COPY chat-domain/src /workspace/chat-domain/src
+COPY chat-service/src/main/resources/db/chat/mysql /workspace/chat-service/src/main/resources/db/chat/mysql
 
 RUN mvn -q -e -pl backend -am package
 

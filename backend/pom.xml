@@ -247,6 +247,18 @@
                 </excludes>
             </resource>
         </resources>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <!-- Compare both migration sets in tests without packaging the chat database in Core. -->
+            <testResource>
+                <directory>${project.basedir}/../chat-service/src/main/resources</directory>
+                <includes>
+                    <include>db/chat/mysql/*.sql</include>
+                </includes>
+            </testResource>
+        </testResources>
         <plugins>
             <!-- Generate Java protobuf and gRPC stubs from the versioned contract. -->
             <plugin>
