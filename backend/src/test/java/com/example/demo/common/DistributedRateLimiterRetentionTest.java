@@ -1,7 +1,6 @@
 package com.example.demo.common;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
@@ -20,14 +19,12 @@ import static org.mockito.Mockito.when;
 class DistributedRateLimiterRetentionTest {
     @Test
     void local_fallback_discards_old_time_buckets() throws Exception {
-        DistributedRateLimiter limiter = new DistributedRateLimiter((StringRedisTemplate) null, false);
+        Clock clock = mock(Clock.class);
+        AtomicReference<Instant> now = new AtomicReference<>(Instant.ofEpochSecond(120));
+        when(clock.instant()).thenAnswer(ignored -> now.get());
+        DistributedRateLimiter limiter = new DistributedRateLimiter(null, false, clock);
         assertThat(limiter.allow("retention-test", "first", 1, 1)).isTrue();
-        long bucket = Instant.now().getEpochSecond();
-        long deadline = System.nanoTime() + 4_000_000_000L;
-        while (Instant.now().getEpochSecond() == bucket && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-        }
-        assertThat(Instant.now().getEpochSecond()).isGreaterThan(bucket);
+        now.set(Instant.ofEpochSecond(121));
         assertThat(limiter.allow("retention-test", "second", 1, 1)).isTrue();
         Field field = DistributedRateLimiter.class.getDeclaredField("localWindows");
         field.setAccessible(true);
