@@ -7,13 +7,13 @@ from pathlib import Path
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import httpx
 import websocket
 
 from chat_cutover_support import ScenarioError, register, require
+from telemetry_support import ancestor_link, request_json, trace_spans
 
 
 SERVICES = {'bluealbum-gateway', 'bluealbum-core'}
@@ -27,29 +27,6 @@ def loopback(value):
     return value
 
 
-def request_json(url, headers=None):
-    with urlopen(Request(url, headers={'Accept': 'application/json', **(headers or {})}), timeout=6) as response:
-        return json.load(response)
-
-
-def service_name(resource):
-    for attribute in resource.get('attributes', []):
-        if attribute.get('key') == 'service.name':
-            return attribute.get('value', {}).get('stringValue')
-    return None
-
-
-def trace_spans(tempo, trace_id):
-    document = request_json(f'{tempo}/api/traces/{trace_id}')
-    spans = []
-    for batch in document.get('batches', document.get('resourceSpans', [])):
-        service = service_name(batch.get('resource', {}))
-        for scope in batch.get('scopeSpans', batch.get('instrumentationLibrarySpans', [])):
-            for span in scope.get('spans', []):
-                spans.append({**span, 'service': service})
-    return spans
-
-
 def trace_links(tempo, trace_id):
     spans = [span for span in trace_spans(tempo, trace_id) if span['service'] in SERVICES]
     gateway_ids = {span['spanId'] for span in spans if span['service'] == 'bluealbum-gateway'}
@@ -57,14 +34,12 @@ def trace_links(tempo, trace_id):
     return len(spans) if linked else None
 
 
-def ancestor_link(spans, span, targets):
-    parents = {item['spanId']: item.get('parentSpanId') for item in spans}
-    parent = span.get('parentSpanId')
-    while parent in parents:
-        if parent in targets:
-            return True
-        parent = parents.pop(parent)
-    return False
+def trace_component_counts(tempo, trace_id):
+    spans = trace_spans(tempo, trace_id)
+    services = {span['service'] for span in spans if span['service']}
+    return {'traceId': trace_id, 'serviceSpanCounts': {
+        service: sum(span['service'] == service for span in spans) for service in sorted(services)
+    }}
 
 
 def chat_auth_link(tempo, trace_id, transport):
@@ -122,7 +97,7 @@ def verify_home_bff(http, gateway, personas):
                 'home BFF public aggregates differ by account')
 
 
-def exercise_traced_chat(gateway, frontend, tempo, transport, home_bff):
+def exercise_traced_chat(gateway, frontend, realtime, tempo, transport, home_bff):
     with httpx.Client(timeout=10, trust_env=False) as http:
         api = gateway + '/api/v1'
         marker = uuid4().hex[:10]
@@ -134,7 +109,18 @@ def exercise_traced_chat(gateway, frontend, tempo, transport, home_bff):
             verify_home_bff(http, gateway, (sending_account, receiver))
 
         auth_trace, message_trace = uuid4().hex, uuid4().hex
-        address = gateway.replace('http://', 'ws://', 1) + '/api/v1/chat/realtime'
+        # Check the public route, then start the traced session on the private Go listener.
+        # This anchors the trace ID at the same process that calls the Java verifier.
+        public_socket = websocket.create_connection(
+            gateway.replace('http://', 'ws://', 1) + '/api/v1/chat/realtime',
+            timeout=8, origin=frontend, http_no_proxy=['127.0.0.1', 'localhost'],
+        )
+        try:
+            public_socket.send(receiver['token'])
+            require(public_socket.recv() == 'ready', 'gateway WebSocket route did not authenticate')
+        finally:
+            public_socket.shutdown()
+        address = realtime.replace('http://', 'ws://', 1) + '/api/v1/chat/realtime'
         socket = websocket.create_connection(
             address, timeout=8, origin=frontend, http_no_proxy=['127.0.0.1', 'localhost'],
             header={'traceparent': traceparent(auth_trace)},
@@ -155,12 +141,17 @@ def exercise_traced_chat(gateway, frontend, tempo, transport, home_bff):
 
     return {
         'sessionTransport': transport,
+        'gatewayWebSocketAuthenticated': True,
         'homeBffPersonaIsolation': home_bff,
         'authTraceId': auth_trace,
-        'authVerifiedSpans': wait_for(lambda: chat_auth_link(tempo, auth_trace, transport)),
+        'authVerifiedSpans': wait_for('Go-to-Java session verification',
+                                     lambda: chat_auth_link(tempo, auth_trace, transport),
+                                     lambda: trace_component_counts(tempo, auth_trace)),
         'goToJavaSessionLink': True,
         'messageTraceId': message_trace,
-        'messageVerifiedSpans': wait_for(lambda: chat_broker_link(tempo, message_trace)),
+        'messageVerifiedSpans': wait_for('Java-to-Go RabbitMQ signal',
+                                        lambda: chat_broker_link(tempo, message_trace),
+                                        lambda: trace_component_counts(tempo, message_trace)),
         'javaRabbitToGoLink': True,
     }
 
@@ -173,7 +164,7 @@ def log_services(loki, request_id, start):
     return sorted(services) if services == SERVICES else None
 
 
-def wait_for(read):
+def wait_for(description, read, diagnose=None):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
@@ -183,7 +174,12 @@ def wait_for(read):
         except (HTTPError, URLError, TimeoutError):
             pass
         time.sleep(1)
-    raise SystemExit('Timed out waiting for private telemetry readback.')
+    if diagnose is not None:
+        try:
+            print(json.dumps(diagnose()))
+        except (HTTPError, URLError, TimeoutError):
+            pass
+    raise SystemExit(f'Timed out waiting for {description} telemetry readback.')
 
 
 def main():
@@ -192,10 +188,13 @@ def main():
     parser.add_argument('--tempo', required=True, type=loopback)
     parser.add_argument('--loki', required=True, type=loopback)
     parser.add_argument('--frontend', type=loopback, help='Also exercise traced chat in an isolated split stack.')
+    parser.add_argument('--realtime', type=loopback, help='The isolated Go listener used for the traced upgrade.')
     parser.add_argument('--chat-transport', choices=['http', 'grpc'], default='http')
     parser.add_argument('--home-bff', action='store_true')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
+    if bool(args.frontend) != bool(args.realtime):
+        parser.error('traced chat needs both --frontend and --realtime')
     start = time.time_ns()
     trace_id = uuid4().hex
     request_id = 'telemetry-smoke-' + uuid4().hex[:16]
@@ -206,15 +205,15 @@ def main():
     if not isinstance(sections.get('items'), list):
         raise SystemExit('Unexpected sections response from the BlueAlbum gateway.')
 
-    spans = wait_for(lambda: trace_links(args.tempo, trace_id))
-    services = wait_for(lambda: log_services(args.loki, request_id, start))
+    spans = wait_for('gateway-to-core HTTP', lambda: trace_links(args.tempo, trace_id))
+    services = wait_for('gateway and core logs', lambda: log_services(args.loki, request_id, start))
     evidence = {
         'status': 'passed', 'traceId': trace_id, 'requestId': request_id,
         'gatewayToCoreParentLink': True, 'verifiedSpans': spans, 'logServices': services,
     }
     if args.frontend:
         evidence['chat'] = exercise_traced_chat(
-            args.gateway, args.frontend, args.tempo, args.chat_transport, args.home_bff,
+            args.gateway, args.frontend, args.realtime, args.tempo, args.chat_transport, args.home_bff,
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')

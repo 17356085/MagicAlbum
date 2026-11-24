@@ -602,12 +602,14 @@ if [[ "$SPLIT_CHAT" == "1" ]]; then
 EOF
 fi
 scale_options=()
-if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+if [[ "$CHAT_REALTIME_CHECK" == 1 || "$TELEMETRY_CHECK" == 1 ]]; then
   cat >>"$OVERRIDE_FILE" <<'EOF'
   chat-realtime:
     ports:
       - "127.0.0.1::8092"
 EOF
+fi
+if [[ "$CHAT_REALTIME_CHECK" == 1 ]]; then
   scale_options=(--scale chat-realtime=2)
 fi
 if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
@@ -627,7 +629,10 @@ compose up -d --wait --wait-timeout 300 "${scale_options[@]}"
 if [[ "$TELEMETRY_CHECK" == 1 ]]; then
   chat_transport=http
   if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then chat_transport=grpc; fi
-  telemetry_args=()
+  realtime_probe="$(compose port --index 1 chat-realtime 8092)"
+  realtime_probe="${realtime_probe//$'\r'/}"
+  [[ "$realtime_probe" =~ ^127\.0\.0\.1:([0-9]+)$ ]] || die 'traced Go listener must be on loopback'
+  telemetry_args=(--realtime "http://$realtime_probe")
   if [[ "${BLUEALBUM_HOME_BFF_ENABLED:-false}" == true ]]; then telemetry_args+=(--home-bff); fi
   "$PYTHON_BIN" "$SCRIPT_DIR/telemetry-runtime.py" \
     --gateway "http://127.0.0.1:$gateway_port" \
