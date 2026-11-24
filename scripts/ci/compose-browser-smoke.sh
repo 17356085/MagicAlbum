@@ -22,6 +22,7 @@ SPLIT_CHAT="${BLUEALBUM_SPLIT_CHAT_CHECK:-0}"
 CUTOVER_MODE="${BLUEALBUM_CHAT_CUTOVER_CHECK:-0}"
 CHAT_REALTIME_CHECK="${BLUEALBUM_CHAT_REALTIME_CHECK:-0}"
 CHAT_BACKUP_CHECK="${BLUEALBUM_CHAT_BACKUP_CHECK:-0}"
+CHAT_AUTH_TIMING_CHECK="${BLUEALBUM_CHAT_AUTH_TIMING_CHECK:-0}"
 CHAT_POLL_LOAD="${BLUEALBUM_CHAT_POLL_LOAD_CHECK:-0}"
 CHAT_GRPC_CHECK="${BLUEALBUM_CHAT_GRPC_CHECK:-0}"
 TELEMETRY_CHECK="${BLUEALBUM_TELEMETRY_CHECK:-0}"
@@ -65,7 +66,18 @@ if [[ "$CHAT_POLL_LOAD" == "1" ]]; then CUTOVER_MODE=1; fi
   printf 'ERROR: BLUEALBUM_CHAT_BACKUP_CHECK must be 0 or 1\n' >&2
   exit 1
 }
-if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+[[ "$CHAT_AUTH_TIMING_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_AUTH_TIMING_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
+  if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
+    printf 'ERROR: run the chat authorization timing check in its own project\n' >&2
+    exit 1
+  fi
+  SPLIT_CHAT=1
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-auth-timing-ci}"
+elif [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" ]]; then
     printf 'ERROR: run the chat backup check in its own project\n' >&2
     exit 1
@@ -147,6 +159,10 @@ if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
   PROJECT="${PROJECT}-realtime"
   source "$SCRIPT_DIR/compose-chat-realtime.sh"
 fi
+if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
+  PROJECT="${PROJECT}-auth-timing"
+  source "$SCRIPT_DIR/compose-chat-permissions.sh"
+fi
 if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   PROJECT="${PROJECT}-backup"
   BACKUP_RESTORE_PROJECT="${PROJECT}-restore"
@@ -168,6 +184,9 @@ COMPOSE_ARGS=(
 )
 if [[ "$SPLIT_CHAT" == "1" ]]; then
   COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.chat.yml")
+fi
+if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.chat-observability.yml")
 fi
 GRPC_FIXTURE_DIR=""
 if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
@@ -315,6 +334,12 @@ if sys.argv[4]:
     properties = root.findall(".//property[@name='realtime_chat_offline_backlog']")
     if [item.get("value") for item in properties] != [sys.argv[4]]:
         raise SystemExit("Browser journey did not verify the realtime chat offline backlog")
+    properties = root.findall(".//property[@name='realtime_chat_connected_signal_loss']")
+    if [item.get("value") for item in properties] != ["ordered_without_reconnect"]:
+        raise SystemExit("Browser journey did not verify signal loss on an open WebSocket")
+    recovery = [item.get("value", "") for item in root.findall(".//property[@name='realtime_chat_connected_recovery_ms']")]
+    if len(recovery) != 1 or not recovery[0].isdecimal() or not 0 < int(recovery[0]) <= 15_000:
+        raise SystemExit("Browser journey did not record recovery within its polling deadline")
 print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }
@@ -380,6 +405,28 @@ trap cleanup EXIT
 assert_project_unused
 
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SCREENSHOT_DIR"
+"$PYTHON_BIN" - "$ARTIFACT_DIR/source-revision.json" "$PROJECT" "$FULL_MODE" "$SPLIT_CHAT" "$CUTOVER_MODE" \
+  "$CHAT_REALTIME_CHECK" "$CHAT_BACKUP_CHECK" "$CHAT_AUTH_TIMING_CHECK" "$CHAT_GRPC_CHECK" \
+  "$TELEMETRY_CHECK" "$COMMENT_EVENTS_CHECK" "${BLUEALBUM_HOME_BFF_ENABLED:-false}" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+output, project, *settings = sys.argv[1:]
+revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+clean = not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+expected = os.environ.get("GITHUB_SHA")
+if expected and (expected != revision or not clean):
+    raise SystemExit("This Compose gate needs a clean checkout of its configured GitHub SHA.")
+keys = ("fullRegression", "splitChat", "cutover", "dualRealtime", "backup",
+        "authorizationTiming", "grpc", "telemetry", "commentEvents", "homeBff")
+Path(output).write_text(json.dumps({
+    "commit": revision, "cleanWorktree": clean, "project": project,
+    "configuration": {key: value in ("1", "true") for key, value in zip(keys, settings, strict=True)},
+}, indent=2) + "\n", encoding="utf-8")
+PY
 [[ ! -e "$ENV_FILE" ]] || die "temporary credential file already exists: $ENV_FILE"
 chat_cutover_admin=''
 if [[ "$CUTOVER_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
@@ -481,6 +528,7 @@ if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
   MSYS2_ARG_CONV_EXCL="/CN=" openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=backend \
     -addext subjectAltName=DNS:backend -keyout "$GRPC_FIXTURE_DIR/tls.key" \
     -out "$GRPC_FIXTURE_DIR/tls.crt" >/dev/null 2>&1
+  chmod 644 "$GRPC_FIXTURE_DIR/tls.crt"
   grpc_mount_dir="$GRPC_FIXTURE_DIR"
   if command -v cygpath >/dev/null 2>&1; then grpc_mount_dir="$(cygpath -am "$GRPC_FIXTURE_DIR")"; fi
   cat >>"$ENV_FILE" <<EOF
@@ -562,7 +610,16 @@ if [[ "$TELEMETRY_CHECK" == 1 ]]; then
     --output "$ARTIFACT_DIR/telemetry-runtime.json"
 fi
 
-if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
+  chat_mysql_id=$(compose ps --quiet chat-mysql)
+  "$PYTHON_BIN" "$SCRIPT_DIR/chat-auth-timing.py" \
+    --api-url "http://127.0.0.1:$gateway_port/api/v1" \
+    --project "$PROJECT" --mysql-container "${chat_mysql_id//$'\r'/}" \
+    --output "$ARTIFACT_DIR/chat-auth-timing-checks.json"
+  verify_split_chat_owner 3
+  verify_chat_permissions
+  exit 0
+elif [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   run_chat_backup
   printf 'Split-chat backup and recovery passed for %s\n' "$PROJECT"
   exit 0

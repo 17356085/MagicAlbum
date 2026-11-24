@@ -109,7 +109,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.search.consumer.backoff-ms=10",
         "app.search.elasticsearch.url=${CONTENT_SEARCH_TEST_ELASTIC_URL}",
         "app.search.elasticsearch.connect-timeout=500ms",
-        "app.search.elasticsearch.read-timeout=2s",
+        "app.search.elasticsearch.read-timeout=${CONTENT_SEARCH_TEST_ELASTIC_TIMEOUT:2s}",
         "app.search.elasticsearch.replicas=0"
 })
 class ContentSearchRuntimeAcceptance {

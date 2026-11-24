@@ -931,6 +931,7 @@ if [[ "$KAFKA_PILOT" == 1 ]]; then
   export CONTENT_SEARCH_TEST_KAFKA_SERVER="127.0.0.1:$KAFKA_PORT"
   export CONTENT_SEARCH_TEST_RABBIT_TIMEOUT=8s
   export CONTENT_SEARCH_TEST_RABBIT_LEASE=45s
+  export CONTENT_SEARCH_TEST_ELASTIC_TIMEOUT=5s
 fi
 
 export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"

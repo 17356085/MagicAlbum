@@ -28,6 +28,7 @@ import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, expect
 
 from tests.api.api_client import ApiClient
+from tests.api.conftest import Seed
 
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:5173").rstrip("/")
@@ -311,44 +312,37 @@ def _verify_search_history(page: Page, query: str) -> None:
 
     page.goto(f"{BASE_URL}/discover", wait_until="domcontentloaded")
     search.click()
-    expect(page.get_by_role("button", name=query, exact=True)).to_be_visible()
+    history_entry = page.get_by_role("button", name=re.compile(r"^帖子\s+" + re.escape(query) + r"$"))
+    expect(history_entry).to_be_visible()
     page.get_by_role("button", name="清除搜索历史").click()
-    expect(page.get_by_role("button", name=query, exact=True)).to_have_count(0)
+    expect(history_entry).to_have_count(0)
 
 
-def _verify_popular_search(page: Page, client_a: ApiClient, client_b: ApiClient) -> None:
+def _verify_popular_search(page: Page, accounts: list[ApiClient]) -> None:
     endpoint = "/search/popular"
-    query = "社区好帖联合验收"
+    query = "社区好帖联合验收 " + "".join(secrets.choice(string.ascii_lowercase) for _ in range(8))
     payload = {"type": "threads", "query": query}
     visitor = ApiClient(API_BASE_URL)
-    temporary_accounts = []
     try:
         _assert_status(_request(visitor, "POST", endpoint, json=payload), (401,), "anonymous search recording")
         for _ in range(3):
-            _assert_status(_request(client_a, "POST", endpoint, json=payload), (204,), "duplicate search recording")
-        _assert_status(_request(client_b, "POST", endpoint, json=payload), (204,), "second searcher")
+            _assert_status(_request(accounts[0], "POST", endpoint, json=payload), (204,), "duplicate search recording")
 
         def ranking():
             response = _request(visitor, "GET", endpoint, params={"type": "threads"})
             _assert_status(response, (200,), "public popular searches")
             return response.json()
 
-        assert query not in ranking()
-        for _ in range(3):
-            account = ApiClient(API_BASE_URL)
-            temporary_accounts.append(account)
-            identity = _new_identity("s")
-            _register_via_api(account, identity)
-            _login_via_api(account, identity)
+        for account in accounts[1:-1]:
             _assert_status(_request(account, "POST", endpoint, json=payload), (204,), "distinct searcher")
+        assert query not in ranking()
+        _assert_status(_request(accounts[-1], "POST", endpoint, json=payload), (204,), "fifth distinct searcher")
         assert query in ranking()
         page.goto(f"{BASE_URL}/discover", wait_until="domcontentloaded")
         page.get_by_role("textbox", name="搜索关键词").click()
         expect(page.get_by_role("button", name=query, exact=True)).to_be_visible()
     finally:
         visitor.close()
-        for account in temporary_accounts:
-            account.close()
 
 
 def _chat_frame_count(page: Page, signal: str) -> int:
@@ -376,7 +370,7 @@ def _send_chat_from_browser(page: Page, endpoint: str, content: str, status: int
 def _verify_realtime_chat(
     page_a: Page, page_b: Page, client_a: ApiClient, client_b: ApiClient,
     user_a_id: int, user_b_id: int, username_b: str,
-) -> None:
+) -> int:
     page_a.goto(f"{BASE_URL}/users/{user_b_id}", wait_until="domcontentloaded")
     with page_a.expect_response(
         lambda response: response.request.method == "PUT"
@@ -395,7 +389,10 @@ def _verify_realtime_chat(
     detail = _json_body(_request(client_a, "GET", f"/chat/direct/{user_b_id}"), "friend contact decision")
     assert detail["mutual"] is False and detail["friend"] is True
     page_b.add_init_script("""(() => {
-        const probe = window.chatRealtimeProbe = { frames: [], socket: null, paused: false, blockedAttempts: 0 };
+        const probe = window.chatRealtimeProbe = {
+            frames: [], socket: null, paused: false, blockedAttempts: 0,
+            suppressChanges: false, suppressedChanges: 0
+        };
         window.WebSocket = class extends window.WebSocket {
             constructor(...args) {
                 const isChat = new URL(args[0], location.href).pathname === '/api/v1/chat/realtime';
@@ -406,7 +403,14 @@ def _verify_realtime_chat(
                 super(...args);
                 if (!isChat) return;
                 probe.socket = this;
-                this.addEventListener('message', event => probe.frames.push(event.data));
+                this.addEventListener('message', event => {
+                    if (probe.suppressChanges && event.data === 'changed') {
+                        probe.suppressedChanges++;
+                        event.stopImmediatePropagation();
+                        return;
+                    }
+                    probe.frames.push(event.data);
+                }, { capture: true });
             }
         };
     })();""")
@@ -457,6 +461,38 @@ def _verify_realtime_chat(
     expect(history).to_have_text([group_message], timeout=10_000)
 
     ready_count = _chat_frame_count(page_b, "ready")
+    changes = _chat_frame_count(page_b, "changed")
+    page_b.evaluate("""() => {
+        const probe = window.chatRealtimeProbe;
+        probe.suppressedSocket = probe.socket;
+        probe.suppressChanges = true;
+    }""")
+    lost_hints = [f"Realtime lost hint {marker} {sequence}" for sequence in (1, 2)]
+    started = time.monotonic()
+    try:
+        sequences = []
+        for content in lost_hints:
+            stored = _request(
+                client_a, "POST", group_messages,
+                json={"content": content, "clientMessageId": str(uuid4())},
+            )
+            _assert_status(stored, (200,), "store group message while the browser drops realtime hints")
+            sequences.append(_json_body(stored, "stored group message")["seq"])
+        assert sequences[1] == sequences[0] + 1
+        page_b.wait_for_function("window.chatRealtimeProbe.suppressedChanges > 0")
+        expect(history).to_have_text([group_message, *lost_hints], timeout=15_000)
+        recovered_ms = round((time.monotonic() - started) * 1000)
+        assert recovered_ms <= 15_000
+        assert page_b.evaluate("""() => {
+            const probe = window.chatRealtimeProbe;
+            return probe.socket === probe.suppressedSocket && probe.socket.readyState === WebSocket.OPEN;
+        }""")
+        assert _chat_frame_count(page_b, "ready") == ready_count
+        assert _chat_frame_count(page_b, "changed") == changes
+    finally:
+        page_b.evaluate("window.chatRealtimeProbe.suppressChanges = false")
+
+    ready_count = _chat_frame_count(page_b, "ready")
     page_b.evaluate("""() => {
         const probe = window.chatRealtimeProbe;
         probe.paused = true;
@@ -474,7 +510,7 @@ def _verify_realtime_chat(
 
     fallback_message = f"Realtime polling fallback {marker}"
     store_group_message(fallback_message)
-    expect(history).to_have_text([group_message, fallback_message], timeout=10_000)
+    expect(history).to_have_text([group_message, *lost_hints, fallback_message], timeout=10_000)
     page_b.wait_for_function("window.chatRealtimeProbe.blockedAttempts > 0")
     assert _chat_frame_count(page_b, "ready") == ready_count
 
@@ -483,13 +519,13 @@ def _verify_realtime_chat(
     try:
         for content in backlog:
             store_group_message(content)
-        expect(history).to_have_text([group_message, fallback_message])
+        expect(history).to_have_text([group_message, *lost_hints, fallback_message])
     finally:
         page_b.evaluate("window.chatRealtimeProbe.paused = false")
         page_b.context.set_offline(False)
 
     _wait_for_chat_frame(page_b, "ready", ready_count)
-    expect(history).to_have_text([group_message, fallback_message, *backlog], timeout=15_000)
+    expect(history).to_have_text([group_message, *lost_hints, fallback_message, *backlog], timeout=15_000)
 
     ready_count = _chat_frame_count(page_b, "ready")
     page_b.evaluate("""() => {
@@ -519,7 +555,7 @@ def _verify_realtime_chat(
         result = _json_body(_request(client_b, "GET", history_path), "history after rejoining")
         assert result["visibleFromSeq"] == fresh["seq"] == missed_while_absent["seq"] + 1
         assert [item["id"] for item in result["items"]] == [fresh["id"]]
-        expect(history).to_have_text([group_message, fallback_message, *backlog])
+        expect(history).to_have_text([group_message, *lost_hints, fallback_message, *backlog])
     finally:
         page_b.evaluate("window.chatRealtimeProbe.paused = false")
         page_b.context.set_offline(False)
@@ -528,6 +564,7 @@ def _verify_realtime_chat(
     expect(history).to_have_text([after_rejoin], timeout=15_000)
 
     changes = _chat_frame_count(page_b, "changed")
+    page_a.bring_to_front()
     recalled = page_a.locator(".messages__bubble").filter(has_text=after_rejoin)
     with page_a.expect_response(
         lambda response: response.request.method == "DELETE"
@@ -535,6 +572,7 @@ def _verify_realtime_chat(
     ) as recalled_response:
         recalled.get_by_role("button", name="撤回", exact=True).click()
     assert recalled_response.value.status == 204
+    page_b.bring_to_front()
     _wait_for_chat_frame(page_b, "changed", changes)
     expect(history).to_have_text(["消息已撤回"], timeout=10_000)
 
@@ -557,6 +595,7 @@ def _verify_realtime_chat(
         assert [item["content"] for item in messages["items"]] == [direct_message]
     finally:
         _assert_status(_request(client_b, "DELETE", block_path), (204,), "recipient removes the test block")
+    return recovered_ms
 
 
 def _read_thread_if_ready(client: ApiClient, thread_id: int, expected_title: str, expected_author: int) -> dict[str, Any] | None:
@@ -699,7 +738,8 @@ def _write_fixture(
 @pytest.mark.auth
 @pytest.mark.slow
 def test_m0_r01_r04_browser_journey(
-    playwright_instance: Playwright, record_testsuite_property: Callable[[str, object], None]
+    playwright_instance: Playwright, record_testsuite_property: Callable[[str, object], None],
+    request: pytest.FixtureRequest,
 ) -> None:
     """Exercise registration, content interaction, notification, report, and isolation paths."""
 
@@ -1015,10 +1055,20 @@ def test_m0_r01_r04_browser_journey(
                 record_testsuite_property("home_bff_browser", "personalized_overview_from_real_services")
             _verify_search_history(page_a, thread_title)
             record_testsuite_property("search_history_browser", "submitted_and_cleared")
-            _verify_popular_search(page_a, client_a, client_b)
-            record_testsuite_property("popular_search_browser", "five_distinct_accounts_required")
+            if os.getenv("BLUEALBUM_FULL_PYTHON_REGRESSION") == "1":
+                api_seed: Seed = request.getfixturevalue("ci_seed")
+                session = request.getfixturevalue("auth_session")
+                fixture_account = ApiClient(API_BASE_URL)
+                try:
+                    fixture_account.set_token(session["access_token"])
+                    _verify_popular_search(page_a, [client_a, client_b, api_seed.owner, api_seed.reader, fixture_account])
+                    record_testsuite_property("popular_search_browser", "five_distinct_accounts_required")
+                finally:
+                    fixture_account.close()
 
-            _verify_realtime_chat(page_a, page_b, client_a, client_b, user_a_id, user_b_id, identity_b.username)
+            recovered_ms = _verify_realtime_chat(page_a, page_b, client_a, client_b, user_a_id, user_b_id, identity_b.username)
+            record_testsuite_property("realtime_chat_connected_signal_loss", "ordered_without_reconnect")
+            record_testsuite_property("realtime_chat_connected_recovery_ms", recovered_ms)
             record_testsuite_property("realtime_chat_offline_backlog", 31)
             record_testsuite_property("realtime_chat_group_rejoin_history", "verified")
             record_testsuite_property("friend_request_browser", "accepted_without_mutual_follow")

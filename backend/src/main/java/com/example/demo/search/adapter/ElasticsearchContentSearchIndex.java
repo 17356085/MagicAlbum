@@ -41,6 +41,7 @@ public final class ElasticsearchContentSearchIndex implements ContentSearchIndex
     private static final Pattern MANAGED_INDEX = Pattern.compile(
             "^" + PREFIX + "[a-z0-9-]+$");
     private static final String DEFAULT_URL = "http://127.0.0.1:9200";
+    private static final Duration INDEX_CREATION_TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_SIZE = 10;
     private static final int MAX_FROM = 10_000;
 
@@ -122,7 +123,8 @@ public final class ElasticsearchContentSearchIndex implements ContentSearchIndex
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("settings", settings);
         body.put("mappings", mappings);
-        HttpResponse<String> response = send("PUT", "/" + index, json(body));
+        // Provisioning waits for the initial shards and is separate from querying the live index.
+        HttpResponse<String> response = send("PUT", "/" + index, json(body), INDEX_CREATION_TIMEOUT);
         requireSuccess(response, "create index");
     }
 
@@ -522,8 +524,12 @@ public final class ElasticsearchContentSearchIndex implements ContentSearchIndex
     }
 
     private HttpResponse<String> send(String method, String path, String body) {
+        return send(method, path, body, readTimeout);
+    }
+
+    private HttpResponse<String> send(String method, String path, String body, Duration timeout) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path))
-                .timeout(readTimeout)
+                .timeout(timeout)
                 .header("Accept", "application/json");
         if (!apiKey.isEmpty()) {
             builder.header("Authorization", "ApiKey " + apiKey);

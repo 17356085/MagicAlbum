@@ -106,3 +106,9 @@ CI 的临时服务使用 loopback 动态端口；停止再启动后必须重新�
 ```bash
 M2_CI_ARTIFACT_DIR=outputs/m2-search-rehearsal bash scripts/ci/content-search-smoke.sh
 ```
+
+## 搜索历史和热门搜索
+
+搜索栏按当前账号或访客身份在本机浏览器保存最近 10 条主动提交的搜索，分别记录帖子和用户类型。可以从搜索栏重新执行或清空自己的历史。[前端历史](../../frontend/src/components/header/searchHistory.ts)
+
+热门搜索按类型汇总最近七个 UTC 日期。同一个账号对同一个规范化关键词每天最多记一次，至少有五个不同账号搜索过的词才可能进入公开榜单，每种类型最多显示十条。服务过滤电子邮箱、链接和长数字标识等词形，并批量清理过期统计。公开接口只返回关键词列表。[热门搜索入口](../../backend/src/main/java/com/example/demo/search/popular/PopularSearchController.java) · [统计规则](../../backend/src/main/java/com/example/demo/search/popular/PopularSearchService.java)

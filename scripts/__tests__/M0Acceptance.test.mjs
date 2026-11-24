@@ -344,6 +344,10 @@ LOG_DIR=${JSON.stringify(join(artifactDirectory, 'logs'))}
 ENV_FILE=${JSON.stringify(join(artifactDirectory, 'ci-runtime.env'))}
 COMPOSE_TOUCHED=1
 CREDENTIALS_CREATED=0
+FULL_CREDENTIALS_CREATED=0
+CHAT_BACKUP_CHECK=0
+GRPC_FIXTURE_DIR=''
+CUTOVER_STATE_OWNED=0
 cleanup
 `, [], {
       PATH: `${fakeBin}${delimiter}${process.env.PATH || ''}`,

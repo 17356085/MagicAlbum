@@ -1,9 +1,9 @@
 name: CI
 
-# 触发条件：推送到 main, master, dev 分支，或提交 Pull Request 时触发
+# Pushes to release branches or M5 candidates, and pull requests to release branches.
 on:
   push:
-    branches: [ main, master, dev ]
+    branches: [ main, master, dev, 'codex/m5-*' ]
   pull_request:
     branches: [ main, master, dev ]
 
@@ -277,6 +277,11 @@ jobs:
           BLUEALBUM_CHAT_REALTIME_CHECK: '1'
         run: bash scripts/ci/compose-browser-smoke.sh
 
+      - name: Verify split-chat authorization timing and credential isolation
+        env:
+          BLUEALBUM_CHAT_AUTH_TIMING_CHECK: '1'
+        run: bash scripts/ci/compose-browser-smoke.sh
+
       - name: Rehearse chat cutover and rollback with moderation recovery
         env:
           BLUEALBUM_CHAT_CUTOVER_CHECK: '1'
@@ -290,12 +295,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: |
+            outputs/m0-ci/source-revision.json
             outputs/m0-ci/junit.xml
             outputs/m0-ci/api-junit.xml
             outputs/m0-ci/selenium-junit.xml
             outputs/m0-ci/ui-junit.xml
             outputs/m0-ci/screenshots/*.png
             outputs/m0-ci/logs/**
+            outputs/split-chat-ci/source-revision.json
             outputs/split-chat-ci/junit.xml
             outputs/split-chat-ci/api-junit.xml
             outputs/split-chat-ci/selenium-junit.xml
@@ -303,9 +310,18 @@ jobs:
             outputs/split-chat-ci/chat-owner-checks.txt
             outputs/split-chat-ci/screenshots/*.png
             outputs/split-chat-ci/logs/**
+            outputs/chat-realtime-ci/source-revision.json
             outputs/chat-realtime-ci/chat-realtime-checks.json
+            outputs/chat-realtime-ci/chat-publisher-metrics.json
             outputs/chat-realtime-ci/chat-owner-checks.txt
             outputs/chat-realtime-ci/logs/**
+            outputs/chat-auth-timing-ci/source-revision.json
+            outputs/chat-auth-timing-ci/chat-auth-timing-checks.json
+            outputs/chat-auth-timing-ci/chat-permissions-checks.txt
+            outputs/chat-auth-timing-ci/chat-permissions-private-endpoints.txt
+            outputs/chat-auth-timing-ci/chat-owner-checks.txt
+            outputs/chat-auth-timing-ci/logs/**
+            outputs/chat-cutover-ci/source-revision.json
             outputs/chat-cutover-ci/chat-cutover-checks.txt
             outputs/chat-cutover-ci/logs/**
 
@@ -348,6 +364,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: |
+            outputs/chat-backup-ci/source-revision.json
             outputs/chat-backup-ci/chat-backup-checks.txt
             outputs/chat-backup-ci/m0-compose-backup-*/verification-summary.json
 
@@ -399,6 +416,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: |
+            outputs/python-full-ci/source-revision.json
             outputs/python-full-ci/full-python-junit.xml
             outputs/python-full-ci/junit.xml
             outputs/python-full-ci/full-collect.txt

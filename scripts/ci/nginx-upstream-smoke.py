@@ -36,11 +36,14 @@ NGINX_CONFIG = FRONTEND_DIR / "nginx.conf"
 DOCKERFILE = FRONTEND_DIR / "Dockerfile"
 DEFAULT_ARTIFACT_DIR = ROOT_DIR / "outputs" / "nginx-proxy-ci"
 TRANSIENT_STATUSES = frozenset({502, 503, 504})
+CHAT_REALTIME_PROBE = "/api/v1/chat/realtime?probe=dns%2Brecovery"
 PROBE_PATHS = (
     "/api/v1/sections?cursor=space%20value&filter=%2Fencoded%3F&plus=a%2Bb",
     "/uploads/avatar/test%2Fobject.png?download=1&name=blue%20album%2Bcover",
     "/api/v1/notifications/stream?lastEventId=42&filter=a%2Bb",
+    CHAT_REALTIME_PROBE,
 )
+EXPECTED_PROXY_DIRECTIVES = 4
 LABEL_KEY = "com.bluealbum.nginx-proxy-ci.run"
 
 
@@ -156,7 +159,8 @@ HTTP_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRed
 def probe(base_url: str, path: str, timeout: float = 3.0) -> ProbeResult:
     """GET one path without ambient HTTP proxy settings or redirect handling."""
 
-    request = urllib.request.Request(base_url + path, method="GET")
+    headers = {"Upgrade": "websocket", "Connection": "Upgrade"} if path == CHAT_REALTIME_PROBE else {}
+    request = urllib.request.Request(base_url + path, method="GET", headers=headers)
     try:
         with HTTP_OPENER.open(request, timeout=timeout) as response:
             return ProbeResult(response.status, response.read(1024 * 1024))
@@ -168,6 +172,11 @@ def probe(base_url: str, path: str, timeout: float = 3.0) -> ProbeResult:
         return ProbeResult(exc.code, body, f"HTTP {exc.code}")
     except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError, OSError) as exc:
         return ProbeResult(None, detail=f"network wait: {type(exc).__name__}: {safe_text(exc, 300)}")
+
+
+def expected_probe_body(phase: str, path: str) -> bytes:
+    upgrade_headers = "|websocket|upgrade" if path == CHAT_REALTIME_PROBE else ""
+    return f"{phase}|{path}{upgrade_headers}".encode()
 
 
 def read_runtime_image(dockerfile: Path) -> str:
@@ -194,8 +203,10 @@ def validate_proxy_config(config_path: Path) -> tuple[str, str]:
         raise GateFailure(f"frontend nginx configuration is missing: {config_path}")
     source = config_path.read_text(encoding="utf-8")
     variable_proxy = re.findall(r"proxy_pass\s+http://\$gateway_upstream\s*;", source)
-    if len(variable_proxy) != 3:
-        raise GateFailure(f"expected exactly three variable gateway proxy_pass directives, found {len(variable_proxy)}")
+    if len(variable_proxy) != EXPECTED_PROXY_DIRECTIVES:
+        raise GateFailure(
+            f"expected exactly {EXPECTED_PROXY_DIRECTIVES} variable gateway proxy_pass directives, found {len(variable_proxy)}"
+        )
     if not re.search(r"\bresolver\s+127\.0\.0\.11\s+valid=5s\s+ipv6=off\s*;", source):
         raise GateFailure("nginx configuration is missing the Docker resolver directive")
     if not re.search(r"\bresolver_timeout\s+2s\s*;", source):
@@ -207,8 +218,12 @@ def validate_proxy_config(config_path: Path) -> tuple[str, str]:
         r"\1http://gateway:9000\2",
         source,
     )
-    if replacements != 3 or "$gateway_upstream" in re.sub(r"\bset\s+\$gateway_upstream\s+gateway:9000\s*;", "", static_source):
-        raise GateFailure("could not derive the three-directive static negative-control configuration")
+    if replacements != EXPECTED_PROXY_DIRECTIVES or "$gateway_upstream" in re.sub(
+        r"\bset\s+\$gateway_upstream\s+gateway:9000\s*;", "", static_source
+    ):
+        raise GateFailure(
+            f"could not derive the {EXPECTED_PROXY_DIRECTIVES}-directive static negative-control configuration"
+        )
     return source, static_source
 
 
@@ -219,6 +234,9 @@ def write_fixture(path: Path, phase: str) -> None:
         "    server_name _;\n"
         "    access_log off;\n"
         "    default_type text/plain;\n"
+        '    location = /api/v1/chat/realtime {\n'
+        f'        return 200 "{phase}|$request_uri|$http_upgrade|$http_connection";\n'
+        '    }\n'
         f'    location / {{ return 200 "{phase}|$request_uri"; }}\n'
         "}\n",
         encoding="utf-8",
@@ -563,7 +581,7 @@ class NginxFlow:
                     break
                 result = probe(self.proxy_url, path, timeout=max(0.05, min(3.0, remaining)))
                 if result.status == 200:
-                    expected = f"{phase}|{path}".encode()
+                    expected = expected_probe_body(phase, path)
                     if result.body != expected:
                         raise ProbeFailure(
                             f"{self.kind} {phase} URI mismatch for {path}: got {safe_text(result.body, 300)}"
@@ -611,7 +629,7 @@ class NginxFlow:
                 result = probe(self.proxy_url, path, timeout=max(0.05, min(3.0, remaining)))
                 observations += 1
                 if result.status == 200:
-                    expected = f"{phase}|{path}".encode()
+                    expected = expected_probe_body(phase, path)
                     if result.body == expected:
                         raise GateFailure(f"static control unexpectedly recovered {path} after the gateway address changed")
                     raise ProbeFailure(f"static control returned a wrong 200 body for {path}")

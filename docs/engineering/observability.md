@@ -66,6 +66,10 @@ docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml 
 现有规则检查核心指标无法采集、实时节点中断、Outbox 积压年龄和失败记录。通过查询 `ALERTS` 可以在隔离环境查看触发及恢复。规则里的时间用于联调，生产阈值和通知渠道需按真实流量与值班安排配置。[告警规则](../../perf/prometheus/microservices-alerts.yml)
 
 叠加搜索配置后，内容 Outbox 提供各投递状态的记录数，以及最早待投递记录自可投递时点起的年龄，使用独立于通知 Outbox 的指标和告警。搜索记录事件成功写入索引时的年龄，并累计失败转投请求、重放成功和隔离成功的次数。这些指标使用固定维度，事件内容和账号标识留在业务系统内。[搜索运维说明](m2-search-operations.md)
+### 聊天实时提示指标
+
+分库部署叠加 `docker-compose.chat-observability.yml` 后，Prometheus 可在 Compose 网络内采集聊天进程的管理端口。聊天提示指标 `bluealbum_chat_realtime_signal_dropped_total` 按 `reason` 标记原因，`queue_full` 表示异步队列已满，`rabbit_failure` 表示 RabbitMQ 发布异常。两类计数用于检查实时提示，浏览器从消息接口补拉已提交的历史。[分库监控配置](../../docker-compose.chat-observability.yml) · [Prometheus 采集](../../perf/prometheus/microservices.yml)
+
 ### OpenTelemetry 链路与 Loki 日志
 
 在隔离部署中使用 `docker-compose.telemetry.yml` 启动 OpenTelemetry Collector、Tempo 和 Loki。它为网关、核心、独立聊天和通知的 Java 进程启用同一个只读 Java agent。原有 Prometheus 继续采集指标。采集器只接收内部 OTLP，Tempo 与 Loki 的查询端口仅绑定本机环回地址。[Compose 配置](../../docker-compose.telemetry.yml) · [Tempo 接收配置](https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/) · [Loki OTLP](https://grafana.com/docs/loki/latest/send-data/otel/)
@@ -81,3 +85,5 @@ python scripts/ci/telemetry-runtime.py --gateway http://127.0.0.1:9000 \
 ```
 
 采集器删除认证头、Cookie、查询参数和数据库语句属性。当前配置使用本机文件存储和 24 小时保留期，应用日志仍需遵守现有敏感字段约定。Go 实时连接和 Go 媒体进程继续使用原有指标及请求 ID，Go span 采集需要另行接入。[采集器配置](../../perf/telemetry/collector.yml)
+
+2026-11-24 的隔离联调从 Tempo 读回网关到核心的父子关系及八个 span，并用同一请求 ID 从 Loki 读回网关和核心日志。报告为 `outputs/architecture-bundled-browser-20261124-v6/telemetry-runtime.json`。
