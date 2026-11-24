@@ -114,6 +114,9 @@ public class MediaUploadRegistrationService {
             outbox.setPreset(PRESET_PREVIEW);
             outbox.setProcessorVersion(PROCESSOR_VERSION);
             outbox.setStatus(MediaRequestOutbox.STATUS_PENDING);
+            MediaTraceContext trace = MediaTraceContext.capture();
+            outbox.setTraceParent(trace.parent());
+            outbox.setTraceState(trace.state());
             // Flush all three writes before returning so a durable outbox
             // constraint failure rolls the status change back as one unit.
             outboxRepository.saveAndFlush(outbox);

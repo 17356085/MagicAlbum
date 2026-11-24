@@ -74,17 +74,18 @@ docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml 
 
 在隔离部署中使用 `docker-compose.telemetry.yml` 启动 OpenTelemetry Collector、Tempo 和 Loki。它为网关、核心、独立聊天和通知的 Java 进程启用同一个只读 Java agent。原有 Prometheus 继续采集指标。采集器只接收内部 OTLP，Tempo 与 Loki 的查询端口仅绑定本机环回地址。[Compose 配置](../../docker-compose.telemetry.yml) · [Tempo 接收配置](https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/) · [Loki OTLP](https://grafana.com/docs/loki/latest/send-data/otel/)
 
-从 OpenTelemetry Java agent 的发布页获取 `opentelemetry-javaagent.jar`，将 `BLUEALBUM_OTEL_AGENT_JAR` 设为该文件的绝对路径。保持隔离环境自己的 `.env` 和宿主端口，用以下命令运行和检查网关到核心的请求。验证要求 Tempo 记录跨进程父子 span，Loki 能检索到同一请求在网关和核心的日志。添加前端地址后，探针还会通过真实 WebSocket 登录并发送私信，检查 Go 到 Java 的会话验证和 Java 经 RabbitMQ 到 Go 的消息提示。[Java agent 发布页](https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/tag/v2.20.1) · [运行验证](../../scripts/ci/telemetry-runtime.py)
+从 OpenTelemetry Java agent 的发布页获取 `opentelemetry-javaagent.jar`，将 `BLUEALBUM_OTEL_AGENT_JAR` 设为该文件的绝对路径。保持隔离环境自己的 `.env` 和宿主端口，用以下命令运行和检查网关到核心的请求。验证要求 Tempo 记录跨进程父子 span，Loki 能检索到同一请求在网关和核心的日志。运行脚本的完整验收会登录公开 WebSocket，再从隔离的 Go 监听端口发起受跟踪的会话校验。发送真实私信后，验证 Java 经 RabbitMQ 到 Go 的消息提示。[Java agent 发布页](https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/tag/v2.20.1) · [运行验证](../../scripts/ci/telemetry-runtime.py)
 
 ```bash
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml \
   -f docker-compose.telemetry.yml up -d --build --wait
 python scripts/ci/telemetry-runtime.py --gateway http://127.0.0.1:9000 \
   --tempo http://127.0.0.1:3200 --loki http://127.0.0.1:3100 \
-  --frontend http://127.0.0.1:5173 \
   --output outputs/telemetry-runtime/checks.json
 ```
 
-采集器删除认证头、Cookie、查询参数和数据库语句属性。当前配置使用本机文件存储和 24 小时保留期，应用日志仍需遵守现有敏感字段约定。Go 实时服务只在遥测配置启用时导出认证和消息提示的有限时长 span，沿途传播 W3C Trace Context。Go 媒体进程由原有指标和请求 ID 覆盖。默认栈的导出保持关闭。[采集器配置](../../perf/telemetry/collector.yml)
+采集器删除认证头、Cookie、查询参数和数据库语句属性。当前配置使用本机文件存储和 24 小时保留期，应用日志仍需遵守现有敏感字段约定。Go 实时服务只在遥测配置启用时导出认证和消息提示的有限时长 span，沿途传播 W3C Trace Context。媒体遥测配置将上传请求的 W3C Trace Context 随媒体任务保存，Go worker 从 RabbitMQ 获取后延续到 Core 回调。两种 Go 服务继续保留原有指标。默认栈的导出保持关闭。[采集器配置](../../perf/telemetry/collector.yml)
 
 2026-11-24 的隔离联调从 Tempo 读回网关到核心的父子关系及八个 span，并用同一请求 ID 从 Loki 读回网关和核心日志。报告为 `outputs/architecture-bundled-browser-20261124-v6/telemetry-runtime.json`。
+
+媒体任务可叠加 `docker-compose.media-telemetry.yml`。该配置复用 Tempo、Loki 和 Collector，媒体任务继续使用独立的 RabbitMQ 队列。CI 用真实上传、异步处理和结果回调生成同一条链路，保存 `media-trace.json`。[媒体遥测配置](../../docker-compose.media-telemetry.yml) · [媒体验收](../../scripts/ci/media-runtime-smoke.py)

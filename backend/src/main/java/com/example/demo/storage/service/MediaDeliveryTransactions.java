@@ -31,7 +31,8 @@ public class MediaDeliveryTransactions {
                 rs.getInt("attempts") + 1,
                 new MediaRequestEnvelope(1, "MEDIA_PROCESSING_REQUESTED", rs.getString("event_id"),
                         rs.getString("asset_id"), rs.getString("job_id"), rs.getInt("job_version"),
-                        rs.getString("preset"), rs.getString("processor_version"), rs.getTimestamp("occurred_at").toInstant())),
+                        rs.getString("preset"), rs.getString("processor_version"), rs.getTimestamp("occurred_at").toInstant()),
+                new MediaTraceContext(rs.getString("trace_parent"), rs.getString("trace_state"))),
                 Timestamp.from(now), Timestamp.from(now));
         if (rows.isEmpty()) return Optional.empty();
         Delivery result = rows.getFirst();
@@ -115,7 +116,8 @@ public class MediaDeliveryTransactions {
         }
     }
 
-    public record Delivery(String eventId, String owner, int attempts, MediaRequestEnvelope envelope) {}
+    public record Delivery(String eventId, String owner, int attempts, MediaRequestEnvelope envelope,
+                           MediaTraceContext traceContext) { }
 
     private static Instant instant(Object value) {
         if (value == null) return null;

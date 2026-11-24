@@ -31,7 +31,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
+
+# ``community-runtime-smoke.py`` and ``summary-runtime-smoke.py`` load this
+# gate with ``importlib`` from the repository root.  In that entry point
+# Python does not add this script's directory to ``sys.path``, so resolve the
+# sibling helper explicitly while preserving the normal direct-script path.
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from telemetry_support import ancestor_link, trace_spans
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -48,6 +59,7 @@ PORT_BINDINGS = {
     "frontend": 80,
     "media-worker": 9091,
     "s3mock": 9090,
+    "tempo": 3200,
 }
 BROKER_PORT_SERVICES = frozenset({"rabbitmq", "rabbitmq-management"})
 
@@ -269,7 +281,8 @@ class HttpApi:
 
 
 class ComposeRuntime:
-    def __init__(self, artifact_dir: Path) -> None:
+    def __init__(self, artifact_dir: Path, telemetry_agent: Path | None = None) -> None:
+        self.telemetry_agent = telemetry_agent
         suffix = f"{int(time.time())}-{secrets.token_hex(4)}"
         self.project = f"bluealbum-m3-{suffix}"
         self.artifact_dir = artifact_dir / self.project
@@ -426,7 +439,7 @@ class ComposeRuntime:
 
     @property
     def compose_prefix(self) -> list[str]:
-        return [
+        prefix = [
             "docker",
             "compose",
             "--project-directory",
@@ -440,12 +453,21 @@ class ComposeRuntime:
             "--file",
             str(self.override_file),
         ]
+        if self.telemetry_agent:
+            prefix += ["--file", str(ROOT_DIR / "docker-compose.media-telemetry.yml")]
+        return prefix
 
     def _child_env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         child = os.environ.copy()
         child["COMPOSE_DISABLE_ENV_FILE"] = "1"
         for key in self.env_values:
             child.pop(key, None)
+        if self.telemetry_agent:
+            child.update({
+                "BLUEALBUM_OTEL_AGENT_JAR": self.telemetry_agent.as_posix(),
+                "BLUEALBUM_TEMPO_PORT": "0",
+                "BLUEALBUM_LOKI_PORT": "0",
+            })
         if extra:
             child.update(extra)
         return child
@@ -860,13 +882,17 @@ class Acceptance:
     def auth_headers(self, identity: Identity) -> dict[str, str]:
         return {"Authorization": f"Bearer {identity.token}"}
 
-    def upload(self, identity: Identity, content: bytes | None = None) -> dict[str, Any]:
+    def upload(self, identity: Identity, content: bytes | None = None,
+               trace_id: str | None = None) -> dict[str, Any]:
+        headers = self.auth_headers(identity)
+        if trace_id:
+            headers["traceparent"] = f"00-{trace_id}-{uuid.uuid4().hex[:16]}-01"
         api = HttpApi(self.gateway)
         try:
             response, body = api.json(
                 "POST",
                 "/api/v1/uploads/images",
-                headers=self.auth_headers(identity),
+                headers=headers,
                 files={"file": ("m3-fixture.png", self.fixture if content is None else content, "image/png")},
             )
             if response.status_code != 200:
@@ -877,6 +903,54 @@ class Acceptance:
             return body
         finally:
             api.close()
+
+    def media_trace_readback(self) -> None:
+        if self.owner is None:
+            raise GateFailure("media trace requires the initialized owner")
+        trace_id = uuid.uuid4().hex
+        asset = self.upload(self.owner, trace_id=trace_id)
+        status = self.poll_succeeded(self.owner, asset["assetId"])
+        if status.get("processingStatus") != "SUCCEEDED":
+            raise GateFailure("media trace upload did not commit the worker result")
+        job_id = str(uuid.UUID(str(asset["jobId"])))
+        stored = self.runtime.sql(f"SELECT trace_parent FROM media_request_outbox WHERE job_id='{job_id}'")
+        if len(stored) != 1 or not stored[0][0].startswith(f"00-{trace_id}-"):
+            raise GateFailure("the upload trace context was not saved with the media outbox")
+
+        port = self.runtime.ports.get("tempo")
+        if not port:
+            raise GateFailure("private Tempo listener was not published")
+        tempo = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 65
+        while time.monotonic() < deadline:
+            try:
+                spans = trace_spans(tempo, trace_id)
+            except (HTTPError, URLError, TimeoutError):
+                time.sleep(1)
+                continue
+            inbound = {span["spanId"] for span in spans if span["service"] == "bluealbum-core"
+                       and "/api/v1/uploads/images" in span["name"]}
+            producers = {span["spanId"] for span in spans if span["service"] == "bluealbum-core"
+                         and (span.get("kind") in (4, "SPAN_KIND_PRODUCER") or "media.jobs.v1" in span["name"])
+                         and ancestor_link(spans, span, inbound)}
+            consumers = {span["spanId"] for span in spans if span["service"] == "bluealbum-media-worker"
+                         and span["name"] == "media.jobs process" and ancestor_link(spans, span, producers)}
+            callbacks = {span["spanId"] for span in spans if span["service"] == "bluealbum-media-worker"
+                         and span["name"] == "media.core.result" and ancestor_link(spans, span, consumers)}
+            callback_received = any(
+                span["service"] == "bluealbum-core" and "/internal/media/v1/jobs/{jobId}/result" in span["name"]
+                and ancestor_link(spans, span, callbacks) for span in spans
+            )
+            if callback_received:
+                evidence = {"status": "passed", "traceId": trace_id, "httpUpload": True,
+                            "javaPublisherToGoConsumer": True, "goCallbackToJava": True,
+                            "persistedWorkerResult": True, "persistedTraceContext": True, "verifiedSpans": len(spans)}
+                (self.runtime.artifact_dir / "media-trace.json").write_text(
+                    json.dumps(evidence, indent=2) + "\n", encoding="utf-8",
+                )
+                return
+            time.sleep(1)
+        raise GateFailure("Tempo did not link the upload, RabbitMQ, worker and Core callback")
 
     def asset_status(self, identity: Identity, asset_id: str) -> tuple[Any, dict[str, Any]]:
         api = HttpApi(self.gateway)
@@ -1795,7 +1869,12 @@ def main(argv: list[str] | None = None) -> int:
         help="parent directory for the per-project checks, JUnit, logs, and screenshots",
     )
     parser.add_argument("--browser-timeout", type=float, default=90.0)
+    parser.add_argument("--telemetry-agent", type=Path, help="Trace the real upload with a local OpenTelemetry Java agent.")
     args = parser.parse_args(argv)
+    if args.telemetry_agent is not None:
+        args.telemetry_agent = args.telemetry_agent.resolve()
+        if not args.telemetry_agent.is_file():
+            parser.error("telemetry agent JAR must exist")
 
     started_at = now_utc()
     reporter = Reporter()
@@ -1806,7 +1885,7 @@ def main(argv: list[str] | None = None) -> int:
     artifact_parent.mkdir(parents=True, exist_ok=True)
     runtime: ComposeRuntime | None = None
     try:
-        runtime = ComposeRuntime(artifact_parent)
+        runtime = ComposeRuntime(artifact_parent, telemetry_agent=args.telemetry_agent)
         if not reporter.run("bootstrap", runtime.bootstrap):
             return 1
         if not reporter.run("build", runtime.build):
@@ -1829,6 +1908,8 @@ def main(argv: list[str] | None = None) -> int:
             ("notification-sse-and-expiry", acceptance.notification_sse),
             ("browser-media-status-ui", acceptance.browser_ui),
         ]
+        if args.telemetry_agent is not None:
+            cases.insert(2, ("media-trace-readback", acceptance.media_trace_readback))
         for name, action in cases:
             if not reporter.run(name, action):
                 # Keep later cases from generating misleading secondary errors;

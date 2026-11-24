@@ -17,7 +17,12 @@ import (
 
 	"github.com/17356085/MagicAlbum/services/media-service/internal/config"
 	"github.com/17356085/MagicAlbum/services/media-service/internal/processor"
+	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
 	"github.com/17356085/MagicAlbum/services/media-service/internal/wire"
+	"go.opentelemetry.io/otel/baggage"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -337,6 +342,68 @@ func TestJSONAcknowledgementsRejectOversizeAndInvalidData(t *testing.T) {
 	t.Run("result/wrong status", func(t *testing.T) {
 		run(t, resultEndpoint, responseCase{name: "wrong status", body: `{"status":"FAILED"}`, wantCause: "unexpected result status"})
 	})
+}
+
+func TestCoreTracePropagationExcludesTokenAndBaggageFromSpan(t *testing.T) {
+	var inbound http.Header
+	client, closeServer := testClient(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		inbound = request.Header.Clone()
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"status":"SUCCEEDED"}`)
+	}), time.Second)
+	defer closeServer()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx := telemetry.WithTracer(context.Background(), provider.Tracer("core-test"))
+	traceID, err := trace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentID, err := trace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = trace.ContextWithRemoteSpanContext(ctx, trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: parentID, TraceFlags: trace.FlagsSampled, Remote: true}))
+	member, err := baggage.NewMember("email", "private@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bag, err := baggage.New(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = baggage.ContextWithBaggage(ctx, bag)
+
+	if response, err := client.Claim(ctx, testEnvelope()); err != nil || response.Status != "SUCCEEDED" {
+		t.Fatalf("claim response=%+v err=%v", response, err)
+	}
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("wanted one core span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Name() != "media.core.claim" || span.SpanKind() != trace.SpanKindClient || span.Parent().SpanID() != parentID || span.SpanContext().TraceID() != traceID {
+		t.Fatalf("unexpected core span: name=%q kind=%v parent=%s trace=%s", span.Name(), span.SpanKind(), span.Parent().SpanID(), span.SpanContext().TraceID())
+	}
+	if len(span.Attributes()) != 0 || len(span.Events()) != 0 || len(span.Links()) != 0 {
+		t.Fatal("core span captured request data")
+	}
+	wantParent := "00-" + traceID.String() + "-" + span.SpanContext().SpanID().String() + "-01"
+	if inbound.Get("traceparent") != wantParent {
+		t.Fatalf("traceparent=%q want %q", inbound.Get("traceparent"), wantParent)
+	}
+	if inbound.Get("baggage") != "" {
+		t.Fatalf("baggage propagated to Core: %q", inbound.Get("baggage"))
+	}
+	if inbound.Get(HeaderServiceToken) == "" || strings.Contains(span.Name(), inbound.Get(HeaderServiceToken)) {
+		t.Fatal("service token appeared in tracing metadata")
+	}
 }
 
 func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -28,16 +29,20 @@ type Publication struct {
 	Body       []byte
 	Persistent bool
 	Mandatory  bool
+	// Headers contains only W3C traceparent/tracestate values. It is kept
+	// separate from Body so retry propagation cannot alter the wire envelope.
+	Headers map[string]string
 }
 
 // Delivery is transport-neutral so processing and ACK ordering can be tested
 // without a live broker. Body is owned by the broker and must be treated as
 // immutable by handlers.
 type Delivery struct {
-	Body  []byte
-	ack   func() error
-	nack  func(bool) error
-	state *deliveryState
+	Body    []byte
+	Headers map[string]string
+	ack     func() error
+	nack    func(bool) error
+	state   *deliveryState
 }
 
 type deliveryState struct {
@@ -228,6 +233,7 @@ func (s *rabbitSession) Consume(ctx context.Context) (<-chan Delivery, error) {
 		for message := range messages {
 			body := append([]byte(nil), message.Body...)
 			delivery := NewDelivery(body, func() error { return message.Ack(false) }, func(requeue bool) error { return message.Nack(false, requeue) })
+			delivery.Headers = traceHeadersFromAMQP(message.Headers)
 			select {
 			case out <- delivery:
 			case <-ctx.Done():
@@ -262,7 +268,7 @@ func (s *rabbitSession) Publish(ctx context.Context, publication Publication) er
 	s.nextTag++
 	expectedTag := s.nextTag
 	err := s.channel.PublishWithContext(ctx, publication.Exchange, publication.RoutingKey, publication.Mandatory, false, amqp.Publishing{
-		ContentType: "application/json", DeliveryMode: mode, Body: append([]byte(nil), publication.Body...),
+		ContentType: "application/json", DeliveryMode: mode, Body: append([]byte(nil), publication.Body...), Headers: amqpTraceHeaders(publication.Headers),
 	})
 	if err != nil {
 		return errors.New("AMQP publish failed")
@@ -314,3 +320,50 @@ func (s *rabbitSession) Close() error {
 
 var _ Broker = RabbitFactory{}
 var _ Session = (*rabbitSession)(nil)
+
+func traceHeadersFromAMQP(headers amqp.Table) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	result := make(map[string]string, 2)
+	for _, key := range []string{"traceparent", "tracestate"} {
+		value, ok := headers[key]
+		if !ok {
+			continue
+		}
+		switch value := value.(type) {
+		case string:
+			if value != "" {
+				result[key] = value
+			}
+		case []byte:
+			if len(value) > 0 {
+				result[key] = string(value)
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func amqpTraceHeaders(headers map[string]string) amqp.Table {
+	if len(headers) == 0 {
+		return nil
+	}
+	result := make(amqp.Table, 2)
+	for _, key := range []string{"traceparent", "tracestate"} {
+		if value := headers[key]; value != "" {
+			result[key] = value
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func extractTraceContext(ctx context.Context, headers map[string]string) context.Context {
+	return telemetry.ExtractTraceContext(ctx, telemetry.TraceHeaders(headers))
+}

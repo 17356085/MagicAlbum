@@ -7,6 +7,7 @@ import (
 
 	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
 	"github.com/17356085/MagicAlbum/services/media-service/internal/wire"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Runtime struct {
@@ -88,7 +89,10 @@ func (r *Runtime) consumeSession(ctx context.Context, session Session, deliverie
 				return errors.New("broker consumer closed")
 			}
 			started := time.Now()
-			outcome := r.Handler.Handle(ctx, delivery.Body)
+			processingCtx := extractTraceContext(ctx, delivery.Headers)
+			processingCtx, processSpan := telemetry.StartSpan(processingCtx, "media.jobs process", trace.WithSpanKind(trace.SpanKindConsumer))
+			outcome := r.Handler.Handle(processingCtx, delivery.Body)
+			processSpan.End()
 			if r.Logger != nil {
 				event := telemetry.Event{Event: "job_handled", Category: outcome.Reason, Duration: time.Since(started)}
 				if envelope, err := wire.ParseEnvelope(delivery.Body); err == nil {
@@ -110,7 +114,7 @@ func (r *Runtime) consumeSession(ctx context.Context, session Session, deliverie
 				}
 				r.log("message_ack", outcome.Reason, 0)
 			case OutcomeRetry:
-				if err := r.retryOrRequeue(ctx, session, &delivery); err != nil {
+				if err := r.retryOrRequeue(processingCtx, session, &delivery); err != nil {
 					return err
 				}
 			case OutcomeQuarantine:
@@ -130,7 +134,7 @@ func (r *Runtime) consumeSession(ctx context.Context, session Session, deliverie
 }
 
 func (r *Runtime) retryOrRequeue(ctx context.Context, session Session, delivery *Delivery) error {
-	publication := Publication{Exchange: RetryExchange, RoutingKey: RetryRoutingKey, Body: append([]byte(nil), delivery.Body...), Persistent: true, Mandatory: true}
+	publication := Publication{Exchange: RetryExchange, RoutingKey: RetryRoutingKey, Body: append([]byte(nil), delivery.Body...), Persistent: true, Mandatory: true, Headers: retryTraceHeaders(ctx)}
 	if err := session.Publish(ctx, publication); err != nil {
 		nackErr := delivery.Nack(true)
 		_ = wait(ctx, r.RetryPause)
@@ -144,6 +148,18 @@ func (r *Runtime) retryOrRequeue(ctx context.Context, session Session, delivery 
 	}
 	r.log("message_retry", "published", 0)
 	return nil
+}
+
+func retryTraceHeaders(ctx context.Context) map[string]string {
+	if ctx == nil {
+		return nil
+	}
+	headers := make(map[string]string, 2)
+	telemetry.InjectTraceContext(ctx, telemetry.TraceHeaders(headers))
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
 }
 
 func (r *Runtime) quarantineOrRequeue(ctx context.Context, session Session, delivery *Delivery, reason string) error {

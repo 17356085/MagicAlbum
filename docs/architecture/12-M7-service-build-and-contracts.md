@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | ARCH-08 | `chat-service` 拥有自己的 Maven 应用、Docker 镜像、配置与聊天专库迁移。两种拓扑共同使用 `chat-domain`，少量 Web 及限流组件由 `platform-web` 提供 | 可仅打包聊天应用及其依赖。模块守卫按源码归属拒绝直接引用 Core。验收默认部署、分库部署、迁移回滚和恢复 |
 | ARCH-12 | 会话验证沿用 Protobuf v1。添加字段时保持现有字段编号和服务身份校验。启用 gRPC 后使用独立凭证，TLS 验证证书身份，超时后当前连接失败关闭 | Java 和 Go 的测试覆盖未知字段、错误身份和调用截止时间。隔离部署通过真实 Go 客户端校验 Java 会话 |
-| ARCH-13 | 遥测配置启用 Go 导出。WebSocket 仅跟踪认证，Java 聊天提交后的 RabbitMQ 信号沿用发布链路，Go 消费后结束处理 span | 从 Tempo 读取网关和 Java 的 HTTP 链路、Go 和 Java 的会话验证链路，以及 Java 经 RabbitMQ 到 Go 的提示链路。从 Loki 比对同一 HTTP 请求的两端日志 |
+| ARCH-13 | 遥测配置启用 Go 导出。WebSocket 仅跟踪认证，Java 聊天提交后的 RabbitMQ 信号沿用发布链路，Go 消费后结束处理 span。上传的追踪上下文随媒体 Outbox 保存，Go worker 延续到结果回调 | 从 Tempo 读取网关和 Java 的 HTTP 链路、Go 和 Java 的会话验证链路，以及 Java 经 RabbitMQ 到 Go 的提示链路。从 Loki 比对同一 HTTP 请求的两端日志。媒体使用真实上传与 Core 结果回调验证同一追踪链路 |
 | ARCH-14 | 首页 BFF 组合公共主题和分区、当前账号资料、关注流和未读数。公共片段可在短时间内复用，认证响应标记为 `private, no-store` | 网关 HTTP 测试复用公共缓存，验证两个账号与匿名访问相互隔离，并演练通知超时和恢复。独立部署核验同一网关上的三类访问 |
 
 [分库 Compose](../../docker-compose.chat.yml) · [聊天应用](../../chat-service/pom.xml) · [Java 依赖规则](../../scripts/Check-JavaArchitecture.mjs) · [BFF HTTP 验收](../../gateway/src/test/java/com/example/gateway/HomeOverviewAuthorizationEndpointTest.java) · [遥测配置](../../docker-compose.telemetry.yml)
@@ -25,3 +25,12 @@ docker build --file chat-service/Dockerfile --tag bluealbum-chat-service:0.1.0 .
 ## 同负载对比
 
 CI 在同一个 Java Core、RabbitMQ 和合成数据环境中，启动使用同一镜像的 HTTP/JSON 与 TLS gRPC Go 节点。两端关闭导出，以相同账号与并发数预热，再以 AB、BA 顺序执行等量 WebSocket 握手。统计连接到收到 `ready` 的吞吐和 p50、p95 延迟，并记录 Go 容器自身的 CPU 用量增量及内存。该比较包含握手及当前部署下的传输成本，资源指标仅覆盖 Go 容器。输出 `chat-auth-load.json`，每轮各保留结果。[负载脚本](../../scripts/ci/chat-auth-load.py) · [CI 验收](../../.github/workflows/ci.yml)
+
+`edfd652` 的专项验收采用 4 个合成账号、8 并发，每种协议两轮各 240 次握手，全部通过。
+
+| Go 到 Java 的会话校验 | 两轮吞吐（握手/秒） | p95（毫秒） | Go 容器 CPU（微秒） | Go 容器峰值内存（字节） |
+| --- | --- | --- | --- | --- |
+| HTTP/JSON | 410.57 / 473.29 | 26.417 / 26.069 | 280,279 / 270,018 | 12,910,592 / 13,156,352 |
+| TLS gRPC | 490.97 / 524.16 | 25.302 / 21.711 | 177,785 / 174,810 | 12,836,864 / 13,008,896 |
+
+同一提交的追踪产物验证了网关到 Core 的 HTTP、Go 到 Java 的 gRPC、沿 RabbitMQ 的聊天信号，以及从媒体上传经持久化 Outbox 到 Go 处理和 Core 回调的追踪父子关系。媒体验收 17 项全部通过。公网 WebSocket 通过网关完成鉴权，gRPC 父子关系从 Go 私有验收入口开始核对。指标适用于该合成环境和短时握手负载。此运行中的社区、摘要任务受动态导入回归影响，随后修复，共同候选版本须复跑这些任务。[专项验收产物](https://github.com/17356085/MagicAlbum/actions/runs/45454481137#artifacts)

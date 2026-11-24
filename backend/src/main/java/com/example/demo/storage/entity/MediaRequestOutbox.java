@@ -50,6 +50,12 @@ public class MediaRequestOutbox {
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
 
+    @Column(name = "trace_parent", length = 55, updatable = false)
+    private String traceParent;
+
+    @Column(name = "trace_state", length = 512, updatable = false)
+    private String traceState;
+
     @Column(nullable = false, length = 16)
     private String status;
 
