@@ -191,6 +191,10 @@ class NotificationPilot:
         self.initial_cursor = 0
         self.post_cutover_cursor = 0
         self.concurrent_event_ids: list[int] = []
+        self.reverse_runtime_id: int | None = None
+        self.reverse_runtime_cursor = 0
+        self.reverse_runtime_read_cursor = 0
+        self.reverse_runtime_max_imported_id = 0
         self.token = jwt_token(self.jwt_secret, self.jwt_issuer, self.user_id)
 
     def record(self, name: str, passed: bool) -> None:
@@ -481,9 +485,12 @@ class NotificationPilot:
             self.fail("notification-events-response")
         return body
 
-    def stream_event(self, cursor: int) -> dict[str, Any]:
+    def stream_event(self, cursor: int, check_prefix: str | None = None) -> dict[str, Any]:
+        def check_name(name: str) -> str:
+            return f"{check_prefix}-{name}" if check_prefix else name
+
         if self.app_port is None:
-            self.fail("notification-application-port")
+            self.fail(check_name("notification-application-port"))
         connection = http.client.HTTPConnection("127.0.0.1", self.app_port, timeout=self.args.http_timeout)
         try:
             connection.request("GET", "/api/v1/notifications/stream", headers={
@@ -492,15 +499,15 @@ class NotificationPilot:
                 "Last-Event-ID": str(cursor),
             })
             response = connection.getresponse()
-            self.expect("sse-http-response", response.status == 200)
+            self.expect(check_name("sse-http-response"), response.status == 200)
             content_type = response.getheader("Content-Type", "")
-            self.expect("sse-event-content-type", content_type.startswith("text/event-stream"))
+            self.expect(check_name("sse-event-content-type"), content_type.startswith("text/event-stream"))
             fields: dict[str, str] = {}
             data: list[str] = []
             while True:
                 line = response.readline()
                 if not line:
-                    self.fail("sse-event-before-close")
+                    self.fail(check_name("sse-event-before-close"))
                 decoded = line.decode("utf-8").rstrip("\r\n")
                 if decoded == "":
                     if data:
@@ -508,7 +515,7 @@ class NotificationPilot:
                             fields["data"] = "\n".join(data)
                             fields["payload"] = json.dumps(json.loads(fields["data"]), separators=(",", ":"))
                         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                            raise PilotFailure("sse-json") from error
+                            raise PilotFailure(check_name("sse-json")) from error
                         return fields
                     fields = {}
                     data = []
@@ -524,7 +531,7 @@ class NotificationPilot:
                 elif key in {"id", "event"}:
                     fields[key] = value
         except (http.client.HTTPException, OSError) as error:
-            raise PilotFailure("sse-request") from error
+            raise PilotFailure(check_name("sse-request")) from error
         finally:
             connection.close()
 
@@ -788,6 +795,141 @@ class NotificationPilot:
             "mysql_reverse_events": counts[2],
         })
 
+    def verify_reverse_runtime(self) -> None:
+        """Exercise the copied MySQL database after the PostgreSQL cutover state."""
+
+        if (
+            self.reverse_mysql is None
+            or self.first_id is None
+            or self.second_id is None
+            or self.post_cutover_id is None
+            or self.post_cutover_cursor <= 0
+            or len(self.concurrent_event_ids) != 2
+        ):
+            self.fail("mysql-reverse-runtime-state")
+
+        self.start_app(self.reverse_mysql, "local")
+        self.record("mysql-reverse-runtime-application-ready", True)
+
+        imported = self.list_notifications()
+        imported_state = {str(item.get("id")): item.get("read") for item in imported}
+        self.expect(
+            "mysql-reverse-http-readback",
+            len(imported) == 3
+            and imported_state.get(str(self.first_id)) is True
+            and imported_state.get(str(self.second_id)) is False
+            and imported_state.get(str(self.post_cutover_id)) is False,
+        )
+
+        imported_ids = [self.first_id, self.second_id, self.post_cutover_id, *self.concurrent_event_ids]
+        self.reverse_runtime_max_imported_id = max(imported_ids)
+        previous_postgres_cursor = self.post_cutover_cursor
+        payload = {
+            "eventId": str(uuid.uuid4()), "userId": self.user_id, "type": "system",
+            "title": f"{self.marker}-mysql-reverse-runtime", "content": "synthetic MySQL after reverse copy",
+            "threadId": 810004, "targetId": 810014, "targetType": "thread",
+        }
+        created = self.post_internal(payload)
+        self.reverse_runtime_id = int(created["id"])
+        events = self.list_events(after=previous_postgres_cursor)
+        self.expect(
+            "mysql-reverse-new-notification",
+            len(events) == 1 and int(events[0]["notificationId"]) == self.reverse_runtime_id,
+        )
+        self.reverse_runtime_cursor = int(events[0]["cursor"])
+        self.expect(
+            "mysql-reverse-generated-id-and-cursor",
+            self.reverse_runtime_id > self.reverse_runtime_max_imported_id
+            and self.reverse_runtime_cursor == previous_postgres_cursor + 1
+            and int(self.reverse_mysql.scalar(
+                f"SELECT next_sequence FROM notification_stream_cursor WHERE user_id={self.user_id};"
+            )) == self.reverse_runtime_cursor,
+        )
+
+        stream = self.stream_event(previous_postgres_cursor, check_prefix="mysql-reverse")
+        try:
+            stream_payload = json.loads(stream["data"])
+        except (KeyError, json.JSONDecodeError) as error:
+            raise PilotFailure("mysql-reverse-sse-payload") from error
+        self.expect(
+            "mysql-reverse-sse-resume",
+            stream.get("event") == "notification"
+            and stream.get("id") == str(self.reverse_runtime_cursor)
+            and stream_payload.get("notificationId") == str(self.reverse_runtime_id)
+            and stream_payload.get("kind") == "created",
+        )
+
+        replay = self.post_internal(payload)
+        self.expect("mysql-reverse-idempotent-replay", int(replay["id"]) == self.reverse_runtime_id)
+        replay_events = self.list_events(after=previous_postgres_cursor)
+        self.expect(
+            "mysql-reverse-idempotent-replay-no-event",
+            len(replay_events) == 1
+            and int(replay_events[0]["notificationId"]) == self.reverse_runtime_id
+            and self.reverse_mysql.count("notifications") == 6
+            and self.reverse_mysql.count("notification_stream_event") == 7
+            and int(self.reverse_mysql.scalar(
+                f"SELECT next_sequence FROM notification_stream_cursor WHERE user_id={self.user_id};"
+            )) == self.reverse_runtime_cursor,
+        )
+
+        conflict_payload = dict(payload)
+        conflict_payload["title"] = f"{self.marker}-mysql-reverse-runtime-conflict"
+        try:
+            self.http_request(
+                "POST", "/notifications/internal", expected=409, token=None,
+                body=conflict_payload, service=True,
+            )
+        except PilotFailure:
+            self.fail("mysql-reverse-idempotency-conflict")
+        self.record("mysql-reverse-idempotency-conflict", True)
+
+        read = self.http_request(
+            "PATCH", f"/notifications/{self.reverse_runtime_id}/read", expected=200, token=self.token,
+        )
+        self.expect("mysql-reverse-mark-read", isinstance(read, dict) and read.get("read") is True)
+        read_events = self.list_events(after=self.reverse_runtime_cursor)
+        self.expect(
+            "mysql-reverse-read-event",
+            len(read_events) == 1
+            and int(read_events[0]["notificationId"]) == self.reverse_runtime_id
+            and read_events[0].get("kind") == "read"
+            and int(read_events[0]["cursor"]) == self.reverse_runtime_cursor + 1,
+        )
+        self.reverse_runtime_read_cursor = int(read_events[0]["cursor"])
+        self.expect(
+            "mysql-reverse-cursor-after-read",
+            int(self.reverse_mysql.scalar(
+                f"SELECT next_sequence FROM notification_stream_cursor WHERE user_id={self.user_id};"
+            )) == self.reverse_runtime_read_cursor,
+        )
+        self.counts.update({
+            "mysql_reverse_runtime_notifications": self.reverse_mysql.count("notifications"),
+            "mysql_reverse_runtime_events": self.reverse_mysql.count("notification_stream_event"),
+            "mysql_reverse_runtime_cursor": self.reverse_runtime_read_cursor,
+        })
+
+        self.stop_app()
+        self.start_app(self.reverse_mysql, "local")
+        self.record("mysql-reverse-restart-application-ready", True)
+        restarted = self.list_notifications()
+        restarted_state = {str(item.get("id")): item.get("read") for item in restarted}
+        self.expect(
+            "mysql-reverse-restart-readback",
+            len(restarted) == 4
+            and restarted_state.get(str(self.first_id)) is True
+            and restarted_state.get(str(self.second_id)) is False
+            and restarted_state.get(str(self.post_cutover_id)) is False
+            and restarted_state.get(str(self.reverse_runtime_id)) is True,
+        )
+        self.expect(
+            "mysql-reverse-restart-cursor",
+            int(self.reverse_mysql.scalar(
+                f"SELECT next_sequence FROM notification_stream_cursor WHERE user_id={self.user_id};"
+            )) == self.reverse_runtime_read_cursor,
+        )
+        self.stop_app()
+
     def run(self) -> None:
         self.require_inputs()
         self.mysql = self.start_database("mysql", "source")
@@ -817,6 +959,7 @@ class NotificationPilot:
         self.stop_app()
         self.run_copy(self.postgres, self.reverse_mysql, "reverse")
         self.verify_reverse_copy()
+        self.verify_reverse_runtime()
 
     def cleanup(self) -> None:
         self.stop_app()
@@ -872,6 +1015,13 @@ class NotificationPilot:
                 "initialCursor": self.initial_cursor,
                 "postCutoverCursor": self.post_cutover_cursor,
                 "concurrentNotificationIds": self.concurrent_event_ids,
+                "reverseRuntime": {
+                    "previousPostgresCursor": self.post_cutover_cursor,
+                    "maxImportedNotificationId": self.reverse_runtime_max_imported_id or None,
+                    "newNotificationId": self.reverse_runtime_id,
+                    "newNotificationCursor": self.reverse_runtime_cursor or None,
+                    "postMarkReadCursor": self.reverse_runtime_read_cursor or None,
+                },
             },
             "checkNames": [check["name"] for check in self.checks],
             "checks": self.checks,

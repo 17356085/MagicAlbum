@@ -45,4 +45,24 @@ class KafkaContentEventConfigurationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("below the 30-second SQL lease");
     }
+
+    @Test
+    void kafka_delivery_retry_defaults_are_bounded() {
+        KafkaContentEventProperties properties = new KafkaContentEventProperties();
+
+        properties.validate();
+
+        assertThat(properties.getRetryInitialSeconds()).isEqualTo(5);
+        assertThat(properties.getMaxAttempts()).isEqualTo(6);
+    }
+
+    @Test
+    void kafka_delivery_max_attempts_must_be_between_one_and_twenty() {
+        KafkaContentEventProperties properties = new KafkaContentEventProperties();
+        properties.setMaxAttempts(21);
+
+        assertThatThrownBy(properties::validate)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max-attempts must be between 1 and 20");
+    }
 }

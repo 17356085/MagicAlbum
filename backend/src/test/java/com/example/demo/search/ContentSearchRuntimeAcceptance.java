@@ -16,11 +16,14 @@ import com.example.demo.threads.dto.ThreadSearchDocument;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.event.dto.ContentEventMessage;
 import com.example.demo.threads.event.entity.ContentEventStatus;
+import com.example.demo.threads.event.kafka.KafkaContentEventProperties;
+import com.example.demo.threads.event.kafka.KafkaContentEventPublisher;
 import com.example.demo.threads.event.port.ContentEventPublisher.Code;
 import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.example.demo.threads.event.repo.ContentEventOutboxRepository;
 import com.example.demo.threads.event.service.ContentEventOutboxService;
 import com.example.demo.threads.event.service.ContentEventPublisherTransport;
+import com.example.demo.threads.event.service.ContentKafkaOutbox;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.threads.service.ThreadSearchProjectionService;
 import com.example.demo.threads.service.ThreadService;
@@ -32,6 +35,20 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.GetResponse;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Binding;
@@ -58,6 +75,7 @@ import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +84,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -97,6 +116,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.content.events.kafka.enabled=${CONTENT_SEARCH_TEST_KAFKA_ENABLED:false}",
         "app.content.events.kafka.bootstrap-servers=${CONTENT_SEARCH_TEST_KAFKA_SERVER:127.0.0.1:9092}",
         "app.content.events.kafka.send-timeout=2s",
+        "app.content.events.kafka.max-block-timeout=1s",
+        "app.content.events.kafka.max-attempts=3",
+        "app.content.events.kafka.retry-initial-seconds=1",
         "app.search.kafka-pilot.rabbit-index=tongpin-threads-v11111111111111111111111111111111",
         "app.search.kafka-pilot.kafka-index=tongpin-threads-v22222222222222222222222222222222",
         "app.content.events.max-attempts=2",
@@ -117,6 +139,9 @@ class ContentSearchRuntimeAcceptance {
     private static final String FAILED = "content.search.failed.v1";
     private static final String QUARANTINE = "content.search.quarantine.v1";
     private static final String RABBIT_INDEX = "tongpin-threads-v11111111111111111111111111111111";
+    private static final String KAFKA_ADMIN = "/api/v1/admin/content-events/kafka";
+    private static final String BACKLOG_TITLE = "KafkaPilotBacklogNeedle ";
+    private static final int BACKLOG_SIZE = 8;
     private static final String KAFKA_INDEX = "tongpin-threads-v22222222222222222222222222222222";
     @Autowired ThreadService threads;
     @Autowired ThreadRepository threadRepository;
@@ -125,6 +150,9 @@ class ContentSearchRuntimeAcceptance {
     @Autowired ContentEventOutboxRepository events;
     @Autowired ContentEventOutboxService outbox;
     @Autowired ContentEventPublisherTransport publisher;
+    @Autowired(required = false) ContentKafkaOutbox kafkaOutbox;
+    @Autowired(required = false) KafkaContentEventProperties kafkaProperties;
+    @Autowired(required = false) KafkaContentEventPublisher kafkaPublisher;
     @Autowired ContentSearchConsumer consumer;
     @Autowired ContentSearchEventDecoder decoder;
     @Autowired ContentSearchProjection projection;
@@ -184,23 +212,94 @@ class ContentSearchRuntimeAcceptance {
         assertThatThrownBy(() -> rebuild.activatePilotIndex(KAFKA_INDEX, RABBIT_INDEX))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(index.activeIndex()).contains(RABBIT_INDEX);
-        awaitCondition(() -> confirmedDeliveries(document.eventId(), false) == 1);
+        long deliveryId = deliveryId(document.eventId());
+        awaitCondition(() -> kafkaOutbox.diagnostics().failedDeliveries().stream()
+                .anyMatch(failed -> failed.id() == deliveryId && failed.attemptCount() == 3));
+        var terminal = prometheus.find("bluealbum.content.kafka.outbox.rows").tag("status", "failed").gauge();
+        assertThat(terminal).isNotNull();
+        assertThat(terminal.value()).isEqualTo(1.0);
+        assertThat(kafkaOutbox.diagnostics().failed()).isEqualTo(1);
+        var mvc = MockMvcBuilders.webAppContextSetup(web).build();
+        mvc.perform(post(KAFKA_ADMIN + "/" + deliveryId + "/replay"))
+                .andExpect(status().isUnauthorized());
+        var principal = new TestingAuthenticationToken(author.user(), null, "ROLE_USER");
+        mvc.perform(post(KAFKA_ADMIN + "/" + deliveryId + "/replay").principal(principal))
+                .andExpect(status().isForbidden());
+        governance.bootstrapAdmin(author.user());
+        mvc.perform(get(KAFKA_ADMIN + "/diagnostics").principal(principal))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failed").value(1))
+                .andExpect(jsonPath("$.failedDeliveries[0].id").value(deliveryId))
+                .andExpect(jsonPath("$.failedDeliveries[0].attemptCount").value(3))
+                .andExpect(jsonPath("$.failedDeliveries[0].errorCode").isString());
+        for (int number = 1; number <= BACKLOG_SIZE; number++) {
+            create(author, BACKLOG_TITLE + number, "Committed while Kafka was offline");
+        }
+        publishPending();
+        consumeAll();
+        assertThat(kafkaOutbox.deliveryCounts().pending() + kafkaOutbox.deliveryCounts().inFlight()).isPositive();
         evidence("kafka_outage", Map.of("eventId", document.eventId(), "rabbitStillWorks", true,
-                "kafkaPending", true, "staleCutoverPrevented", true));
+                "kafkaPending", true, "staleCutoverPrevented", true, "terminalAttempts", 3,
+                "terminalGauge", terminal.value(), "backlogWrites", BACKLOG_SIZE, "unauthorizedReplayDenied", true));
     }
 
     @Test
     void kafka_pilot_recovers_then_switches_and_returns_to_rabbit() throws Exception {
         phase("kafka_recovery");
         long id = search.list("KafkaPilotOutageNeedle", null, null, 1, 10).getContent().getFirst().getId();
+        ThreadSearchDocument submitted = owner.read(id).orElseThrow();
+        long deliveryId = deliveryId(submitted.eventId());
+        long adminUser = jdbc.queryForObject("SELECT id FROM users WHERE email = ?", Long.class,
+                "m2-kafka-outage@example.test");
+        var principal = new TestingAuthenticationToken(adminUser, null, "ROLE_USER");
+        var mvc = MockMvcBuilders.webAppContextSetup(web).build();
+        assertThat(kafkaOutbox.diagnostics().failedDeliveries()).anyMatch(failed -> failed.id() == deliveryId);
+        assertThat(index.read(KAFKA_INDEX, id)).isEmpty();
+        mvc.perform(post(KAFKA_ADMIN + "/" + deliveryId + "/replay").principal(principal))
+                .andExpect(status().isNoContent());
+        mvc.perform(post(KAFKA_ADMIN + "/" + deliveryId + "/replay").principal(principal))
+                .andExpect(status().isNotFound());
         ThreadSearchDocument recovered = awaitBothCarriers(id);
-        assertThat(rebuild.activatePilotIndex(KAFKA_INDEX, RABBIT_INDEX).verified()).isGreaterThanOrEqualTo(2);
+        assertThat(recovered.eventId()).isEqualTo(submitted.eventId());
+        List<Long> delayedThreads = jdbc.queryForList("SELECT id FROM threads WHERE title LIKE ?", Long.class,
+                BACKLOG_TITLE + "%");
+        assertThat(delayedThreads).hasSize(BACKLOG_SIZE);
+        for (long delayed : delayedThreads) {
+            ThreadSearchDocument delayedDocument = owner.read(delayed).orElseThrow();
+            long delayedDelivery = deliveryId(delayedDocument.eventId());
+            // A backlog entry may itself have exhausted retries before the broker recovered.
+            if (kafkaOutbox.diagnostics().failedDeliveries().stream().anyMatch(failed -> failed.id() == delayedDelivery)) {
+                mvc.perform(post(KAFKA_ADMIN + "/" + delayedDelivery + "/replay").principal(principal))
+                        .andExpect(status().isNoContent());
+            }
+            awaitBothCarriers(delayed);
+        }
+        assertThat(rebuild.activatePilotIndex(KAFKA_INDEX, RABBIT_INDEX).verified())
+                .isGreaterThanOrEqualTo(BACKLOG_SIZE + 2L);
         assertThat(index.activeIndex()).contains(KAFKA_INDEX);
         Actor author = actor("kafka-cutover");
         long later = create(author, "KafkaPilotAfterCutoverNeedle", "Committed after the pilot index switch");
         publishPending();
         consumeAll();
-        awaitBothCarriers(later);
+        var firstVersion = awaitBothCarriers(later);
+        UpdateThreadRequest edit = new UpdateThreadRequest();
+        edit.setTitle("KafkaPilotAfterCutoverNeedle updated");
+        edit.setContent("Updated after the pilot index switch");
+        edit.setTags(List.of());
+        threads.update(author.user(), later, edit);
+        publishPending();
+        consumeAll();
+        var revised = awaitBothCarriers(later);
+        assertThat(revised.version()).isGreaterThan(firstVersion.version());
+        byte[] invalid = "invalid synthetic Kafka envelope".getBytes(StandardCharsets.UTF_8);
+        RecordMetadata invalidPosition = publishInvalidKafkaRecord(revised, invalid);
+        kafkaPublisher.publish(message(revised));
+        kafkaPublisher.publish(message(firstVersion));
+        awaitKafkaGroupAtEnd();
+        assertKafkaQuarantine(invalidPosition, invalid);
+        assertThat(index.read(KAFKA_INDEX, later)).contains(revised);
+        assertThat(index.read(RABBIT_INDEX, later)).contains(revised);
+        assertThat(kafkaOutbox.deliveryCounts().failed()).isZero();
         index.refresh(KAFKA_INDEX);
         assertThat(search.list("KafkaPilotAfterCutoverNeedle", null, null, 1, 10).getContent())
                 .extracting(dto -> dto.getId()).containsExactly(later);
@@ -209,24 +308,102 @@ class ContentSearchRuntimeAcceptance {
         assertThat(search.list("KafkaPilotAfterCutoverNeedle", null, null, 1, 10).getContent())
                 .extracting(dto -> dto.getId()).containsExactly(later);
         evidence("kafka_recovery", Map.of("replayedEventId", recovered.eventId(), "verifiedDocuments", verified,
-                "cutoverAndRollback", true, "postCutoverWriteRetained", true));
+                "cutoverAndRollback", true, "postCutoverWriteRetained", true, "backlogDrained", BACKLOG_SIZE,
+                "duplicateAndLateVersionConsumed", true, "consumerGroupAtEnd", true,
+                "invalidEnvelopeQuarantined", true));
+    }
+
+    @Test
+    void kafka_pilot_replays_retained_history_after_restart() throws Exception {
+        phase("kafka_replay");
+        awaitKafkaGroupAtEnd();
+        long verified = rebuild.activatePilotIndex(KAFKA_INDEX, RABBIT_INDEX).verified();
+        assertThat(verified).isGreaterThanOrEqualTo(BACKLOG_SIZE + 3L);
+        var result = search.list("KafkaPilotAfterCutoverNeedle", null, null, 1, 10).getContent();
+        assertThat(result).hasSize(1);
+        var projected = owner.read(result.getFirst().getId()).orElseThrow();
+        assertThat(index.read(KAFKA_INDEX, projected.id())).contains(projected);
+        assertThat(index.read(RABBIT_INDEX, projected.id())).contains(projected);
+        assertThat(rebuild.activatePilotIndex(RABBIT_INDEX, KAFKA_INDEX).verified()).isEqualTo(verified);
+        evidence("kafka_replay", Map.of("retainedTopicReplayed", true, "reconciledDocuments", verified,
+                "consumerGroupAtEnd", true, "activeAfterRollback", RABBIT_INDEX));
+    }
+
+    private long deliveryId(String eventId) {
+        return jdbc.queryForObject("SELECT id FROM content_event_outbox WHERE event_id = ?", Long.class, eventId);
+    }
+
+    private RecordMetadata publishInvalidKafkaRecord(ThreadSearchDocument document, byte[] payload) throws Exception {
+        try (var producer = new KafkaProducer<>(Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaProperties.getBootstrapServers(),
+                ProducerConfig.ACKS_CONFIG, "all",
+                ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000), new StringSerializer(), new ByteArraySerializer())) {
+            var key = KafkaContentEventPublisher.aggregateKey(message(document));
+            return producer.send(new ProducerRecord<>(kafkaProperties.getTopic(), key, payload)).get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private void assertKafkaQuarantine(RecordMetadata source, byte[] payload) {
+        try (var isolatedReader = new KafkaConsumer<>(Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaProperties.getBootstrapServers(),
+                ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false), new StringDeserializer(), new ByteArrayDeserializer())) {
+            var partition = new TopicPartition(source.topic() + ".quarantine", 0);
+            isolatedReader.assign(List.of(partition));
+            isolatedReader.seekToBeginning(List.of(partition));
+            String sourceKey = source.topic() + ":" + source.partition() + ":" + source.offset();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+            do {
+                for (var retained : isolatedReader.poll(Duration.ofMillis(400))) {
+                    if (sourceKey.equals(retained.key())) {
+                        assertThat(retained.value()).containsExactly(payload);
+                        assertThat(new String(retained.headers().lastHeader("error-code").value(), StandardCharsets.US_ASCII))
+                                .isEqualTo("INVALID_ENVELOPE");
+                        return;
+                    }
+                }
+            } while (System.nanoTime() < deadline);
+            throw new AssertionError("The invalid Kafka envelope was not retained under its broker coordinates");
+        }
+    }
+
+    private void awaitKafkaGroupAtEnd() throws Exception {
+        try (Admin broker = Admin.create(Map.of(
+                AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaProperties.getBootstrapServers(),
+                AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 4000))) {
+            String topic = kafkaProperties.getTopic();
+            var descriptions = broker.describeTopics(List.of(topic)).allTopicNames().get(4, TimeUnit.SECONDS);
+            var latestRequests = descriptions.get(topic).partitions().stream().collect(Collectors.toMap(
+                    partition -> new TopicPartition(topic, partition.partition()), partition -> OffsetSpec.latest()));
+            var ends = broker.listOffsets(latestRequests).all().get(4, TimeUnit.SECONDS);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(35);
+            do {
+                var offsets = broker.listConsumerGroupOffsets(kafkaProperties.getGroupId())
+                        .partitionsToOffsetAndMetadata().get(4, TimeUnit.SECONDS);
+                if (ends.entrySet().stream().allMatch(entry -> entry.getValue().offset() == 0
+                        || (offsets.containsKey(entry.getKey())
+                        && offsets.get(entry.getKey()).offset() >= entry.getValue().offset()))) {
+                    return;
+                }
+                Thread.sleep(150);
+            } while (System.nanoTime() < deadline);
+            throw new AssertionError("Kafka consumer did not commit through the injected recovery records");
+        }
     }
 
     private ThreadSearchDocument awaitBothCarriers(long id) throws InterruptedException {
         ThreadSearchDocument document = owner.read(id).orElseThrow();
         awaitCondition(() -> index.read(KAFKA_INDEX, id).filter(document::equals).isPresent()
-                && confirmedDeliveries(document.eventId(), true) == 1);
+                && confirmedDeliveries(document.eventId()) == 1);
         assertThat(index.read(RABBIT_INDEX, id)).contains(document);
         return document;
     }
 
-    private long confirmedDeliveries(String eventId, boolean confirmed) {
-        String confirmation = confirmed ? "IS NOT NULL" : "IS NULL AND delivery.last_error IS NOT NULL";
+    private long confirmedDeliveries(String eventId) {
         return jdbc.queryForObject("""
                 SELECT COUNT(*) FROM content_event_kafka_delivery delivery
                 JOIN content_event_outbox event ON event.id = delivery.outbox_id
-                WHERE event.event_id = ? AND delivery.published_at
-                """ + confirmation, Long.class, eventId);
+                WHERE event.event_id = ? AND delivery.published_at IS NOT NULL
+                """, Long.class, eventId);
     }
 
     private void awaitCondition(java.util.function.BooleanSupplier condition) throws InterruptedException {

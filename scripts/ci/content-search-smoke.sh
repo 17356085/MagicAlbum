@@ -705,7 +705,7 @@ write_checks() {
   local credential_status="$3"
   local original_status="$4"
   local phases=(pipeline index_outage outage recovery)
-  if [[ "$KAFKA_PILOT" == 1 ]]; then phases=(kafka_pipeline kafka_outage kafka_recovery); fi
+  if [[ "$KAFKA_PILOT" == 1 ]]; then phases=(kafka_pipeline kafka_outage kafka_recovery kafka_replay); fi
   local args=() phase
   for phase in "${phases[@]}"; do
     args+=("$phase" "${ROUND_EXIT[$phase]:--1}" "${ROUND_TESTS[$phase]:--1}"
@@ -858,6 +858,10 @@ else
 fi
 
 assert_artifact_root_is_empty
+if [[ "$KAFKA_PILOT" == 1 ]]; then
+  git -C "$ROOT_DIR" rev-parse HEAD > "$ARTIFACT_ROOT/source-revision.txt" \
+    || die 'cannot record the Kafka pilot source revision'
+fi
 RUN_ID="$(random_hex 5)"
 MYSQL_NAME="bluealbum-m2-mysql-$RUN_ID"
 RABBIT_NAME="bluealbum-m2-rabbit-$RUN_ID"
@@ -955,11 +959,34 @@ if [[ "$KAFKA_PILOT" == 1 ]]; then
     /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 \
     --create --if-not-exists --topic content.events.v1 --partitions 3 --replication-factor 1 \
     || die 'cannot initialize the isolated Kafka pilot topic'
+  docker exec --env 'KAFKA_HEAP_OPTS=-Xms32m -Xmx96m' "$KAFKA_NAME" \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 \
+    --create --if-not-exists --topic content.events.v1.quarantine --partitions 1 --replication-factor 1 \
+    || die 'cannot initialize the isolated Kafka quarantine topic'
   run_maven_phase kafka_pipeline kafka_pilot_primes_indexes_and_compares_same_event
   stop_role kafka
   run_maven_phase kafka_outage kafka_pilot_outage_preserves_rabbit_delivery_and_refuses_stale_cutover
   start_role kafka
+  docker exec --env 'KAFKA_HEAP_OPTS=-Xms32m -Xmx96m' "$KAFKA_NAME" \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 \
+    --describe --topic content.events.v1 >/dev/null \
+    || die 'Kafka pilot topic did not become ready after restart'
   run_maven_phase kafka_recovery kafka_pilot_recovers_then_switches_and_returns_to_rabbit
+  assert_owned_container kafka
+  docker exec --env 'KAFKA_HEAP_OPTS=-Xms32m -Xmx96m' "$KAFKA_NAME" \
+    /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server 127.0.0.1:19092 \
+    --group content-search-v1 --topic content.events.v1 --reset-offsets --to-earliest --execute \
+    > "$ARTIFACT_ROOT/kafka-offset-reset.txt" \
+    || die 'cannot reset the isolated, stopped search consumer to the earliest retained offsets'
+  python - "$ARTIFACT_ROOT/kafka-offset-reset.txt" <<'PYCODE'
+import pathlib
+import sys
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+offsets = [line.split()[2:4] for line in lines if line.split()[:2] == ["content-search-v1", "content.events.v1"]]
+if sorted(offsets) != [["0", "0"], ["1", "0"], ["2", "0"]]:
+    raise SystemExit("Kafka did not reset all three retained partitions")
+PYCODE
+  run_maven_phase kafka_replay kafka_pilot_replays_retained_history_after_restart
 else
   run_maven_phase pipeline pipeline_replay_order_visibility_and_rebuild
   stop_role es

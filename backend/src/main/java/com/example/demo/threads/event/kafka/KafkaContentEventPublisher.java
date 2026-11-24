@@ -5,10 +5,16 @@ import com.example.demo.threads.event.port.ContentEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -19,11 +25,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Confirmed Kafka adapter for the stable content-event envelope.
  *
  * <p>The producer key is {@code aggregateType + ":" + aggregateId}, so all
- * versions of one aggregate remain ordered in one Kafka partition. The event
- * id is never regenerated: the JSON payload contains the original id on every
+ * versions of one aggregate are routed to the same Kafka partition. A retry can
+ * publish an earlier version after a later one. The original event id is preserved on every
  * retry.</p>
  */
 public class KafkaContentEventPublisher implements ContentEventPublisher {
+    private static final int QUARANTINE_COPY_LIMIT = 8192;
+
     private final Producer<String, byte[]> producer;
     private final ObjectMapper objectMapper;
     private final String topic;
@@ -76,7 +84,32 @@ public class KafkaContentEventPublisher implements ContentEventPublisher {
         }
 
         String key = aggregateKey(event);
-        ProducerRecord<String, byte[]> record = new ProducerRecord<>(topic, key, payload);
+        sendConfirmed(new ProducerRecord<>(topic, key, payload));
+    }
+
+    public void quarantine(ConsumerRecord<String, byte[]> source, String errorCode) {
+        if (closed.get() || !topic.equals(source.topic())) {
+            throw new ContentEventPublisher.PublishException(ContentEventPublisher.Code.TRANSPORT);
+        }
+        byte[] body = source.value() == null ? new byte[0] : source.value();
+        byte[] retained = body.length <= QUARANTINE_COPY_LIMIT ? body : Arrays.copyOf(body, QUARANTINE_COPY_LIMIT);
+        String coordinate = source.topic() + ":" + source.partition() + ":" + source.offset();
+        var record = new ProducerRecord<String, byte[]>(topic + ".quarantine", coordinate, retained);
+        record.headers().add("error-code", errorCode.getBytes(StandardCharsets.US_ASCII));
+        record.headers().add("original-sha256", sha256(body).getBytes(StandardCharsets.US_ASCII));
+        record.headers().add("original-byte-count", Integer.toString(body.length).getBytes(StandardCharsets.US_ASCII));
+        sendConfirmed(record);
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private void sendConfirmed(ProducerRecord<String, byte[]> record) {
         try {
             Future<?> confirmation = producer.send(record);
             confirmation.get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);

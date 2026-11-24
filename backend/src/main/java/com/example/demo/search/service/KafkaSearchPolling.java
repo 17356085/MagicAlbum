@@ -1,6 +1,8 @@
 package com.example.demo.search.service;
 
+import com.example.demo.threads.event.kafka.KafkaContentEventPublisher;
 import com.example.demo.threads.event.kafka.KafkaContentEventReader;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,17 +21,26 @@ public class KafkaSearchPolling {
     }
 
     @Bean
-    PilotSearchConsumer pilotSearchConsumer(KafkaContentEventReader reader, ContentSearchEventDecoder decoder,
-                                            ContentSearchProjection projection, ContentSearchPilotIndexes indexes) {
-        return new PilotSearchConsumer(reader, decoder, projection, indexes.kafka());
+    PilotSearchConsumer pilotSearchConsumer(KafkaContentEventReader reader, KafkaContentEventPublisher publisher,
+                                            ContentSearchEventDecoder decoder, ContentSearchProjection projection,
+                                            ContentSearchPilotIndexes indexes, MeterRegistry metrics) {
+        return new PilotSearchConsumer(reader, publisher, decoder, projection, indexes.kafka(), metrics);
     }
 
-    record PilotSearchConsumer(KafkaContentEventReader reader, ContentSearchEventDecoder decoder,
-                               ContentSearchProjection projection, String index) {
+    record PilotSearchConsumer(KafkaContentEventReader reader, KafkaContentEventPublisher publisher,
+                               ContentSearchEventDecoder decoder, ContentSearchProjection projection,
+                               String index, MeterRegistry metrics) {
         @Scheduled(fixedDelayString = "${app.search.kafka-pilot.poll-delay-ms:1000}",
                 scheduler = "kafkaSearchScheduler")
         public void poll() {
-            reader.pollAndProcess(body -> projection.applyTo(index, decoder.decode(body)));
+            reader.pollRecords(record -> {
+                try {
+                    projection.applyTo(index, decoder.decode(record.value()));
+                } catch (InvalidContentEventException invalid) {
+                    publisher.quarantine(record, invalid.getMessage());
+                    metrics.counter("bluealbum.content.kafka.search.quarantined").increment();
+                }
+            });
         }
     }
 }
