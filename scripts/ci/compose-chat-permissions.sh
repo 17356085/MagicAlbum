@@ -56,7 +56,7 @@ chat_permissions_mysql() {
         exit 64
         ;;
     esac
-    MYSQL_PWD="$db_password" exec mysql --protocol=tcp --connect-timeout=5 \
+    MYSQL_PWD="$db_password" exec mysql --protocol=tcp --connect-timeout=5 --raw \
       -h "$2" -u "$db_user" "$3" -Nse "$4"
   ' sh "$role" "$host" "$database" "$statement" </dev/null
 }
@@ -186,7 +186,7 @@ verify_chat_permissions() {
 
   # Six effective (configured-account, owned-schema) pairs.  Core runtime and
   # migration intentionally remain one account in this Compose profile.
-  local pair_label pair_service pair_role pair_host pair_database pair_table pair_result pair_grants
+  local pair_label pair_service pair_role pair_host pair_database pair_table pair_result pair_grants escaped_database
   local owner_select_count=0
   while IFS='|' read -r pair_label pair_service pair_role pair_host pair_database pair_table; do
     [[ -n "$pair_label" ]] || continue
@@ -198,7 +198,10 @@ verify_chat_permissions() {
     pair_grants="$(chat_permissions_mysql "$pair_service" "$pair_role" "$pair_host" "$pair_database" \
       'SHOW GRANTS FOR CURRENT_USER()')" \
       || die "ARCH-05 could not inspect the effective grant for $pair_label"
-    [[ "$pair_grants" == *"$pair_database"* ]] \
+    # SHOW GRANTS preserves the escapes that make underscores literal in MySQL schema grants.
+    escaped_database=${pair_database//_/'\_'}
+    [[ "$pair_grants" == *" ON \`$pair_database\`.* TO "* || \
+       "$pair_grants" == *" ON \`$escaped_database\`.* TO "* ]] \
       || die "ARCH-05 effective grant was not scoped to the owned schema for $pair_label"
     [[ "$pair_grants" == *SELECT* || "$pair_grants" == *'ALL PRIVILEGES'* ]] \
       || die "ARCH-05 effective grant did not include SELECT for $pair_label"
