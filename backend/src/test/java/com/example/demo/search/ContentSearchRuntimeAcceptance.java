@@ -369,6 +369,7 @@ class ContentSearchRuntimeAcceptance {
     private void awaitKafkaGroupAtEnd() throws Exception {
         try (Admin broker = Admin.create(Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaProperties.getBootstrapServers(),
+                AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 2000,
                 AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 4000))) {
             String topic = kafkaProperties.getTopic();
             var descriptions = broker.describeTopics(List.of(topic)).allTopicNames().get(4, TimeUnit.SECONDS);
