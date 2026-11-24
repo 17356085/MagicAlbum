@@ -19,7 +19,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-/** Explicit allow-list for components shared from the backend jar. */
+/** Explicit imports for the shared chat domain and web support. */
 @Configuration(proxyBeanMethods = false)
 @Import({ChatController.class, ChatService.class, ChatRepository.class, ChatChangePublisher.class,
         DistributedRateLimiter.class, GlobalExceptionHandler.class, PerfMetricsSecurityConfig.class})

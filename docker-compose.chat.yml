@@ -30,11 +30,13 @@ services:
       retries: 12
 
   chat-service:
-    image: ${COMPOSE_PROJECT_NAME}-backend:local
+    build:
+      context: .
+      dockerfile: chat-service/Dockerfile
+    image: ${BLUEALBUM_CHAT_SERVICE_IMAGE:-${COMPOSE_PROJECT_NAME}-chat-service:local}
     pull_policy: never
     restart: unless-stopped
     environment:
-      BLUEALBUM_PROCESS: chat
       SPRING_PROFILES_ACTIVE: local
       SERVER_PORT: 8083
       CHAT_DB_NAME: ${CHAT_DB_NAME:-bluealbum_chat}

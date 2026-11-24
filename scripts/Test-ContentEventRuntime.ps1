@@ -169,9 +169,9 @@ function Invoke-MavenRound([string]$Name, [string]$TestSelector, [string]$Report
         if (Test-Path -LiteralPath $sourceReport) { Remove-Item -LiteralPath $sourceReport -Force }
     }
     $arguments = @(
-        '-pl', 'backend',
+        '-pl', 'backend', '-am',
         "-Dtest=$TestSelector",
-        '-Dsurefire.failIfNoSpecifiedTests=true',
+        '-Dsurefire.failIfNoSpecifiedTests=false',
         'test'
     )
     $roundStarted = [DateTime]::UtcNow

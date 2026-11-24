@@ -57,7 +57,7 @@ function Invoke-SummaryAcceptance([string]$TestClass, [string]$LogName) {
     $taskTestStart = [DateTime]::UtcNow
     $taskLogWriter = [IO.StreamWriter]::new((Join-Path $taskOutput $LogName), $false, [Text.UTF8Encoding]::new($false))
     try {
-        & $Maven -pl backend "-Dtest=$TestClass" test 2>&1 | ForEach-Object {
+        & $Maven -pl backend -am -Dsurefire.failIfNoSpecifiedTests=false "-Dtest=$TestClass" test 2>&1 | ForEach-Object {
             # Sanitize before writing; credentials are never passed as command arguments.
             $taskSafeLine = ([string]$_).Replace($taskValues['AI_API_KEY'], '[REDACTED]')
             $taskLogWriter.WriteLine($taskSafeLine)

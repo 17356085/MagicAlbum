@@ -325,6 +325,49 @@ jobs:
             outputs/chat-cutover-ci/chat-cutover-checks.txt
             outputs/chat-cutover-ci/logs/**
 
+  independent-chat-contracts:
+    name: Independently built chat, Java and Go contracts, and traces
+    runs-on: ubuntu-latest
+    needs: [repository, frontend, backend, media-kernel, python-tests]
+    timeout-minutes: 40
+    env:
+      BLUEALBUM_HOME_BFF_ENABLED: 'true'
+      BLUEALBUM_CHAT_GRPC_CHECK: '1'
+      BLUEALBUM_CHAT_RPC_LOAD_CHECK: '1'
+      BLUEALBUM_TELEMETRY_CHECK: '1'
+      M0_CI_ARTIFACT_DIR: outputs/m7-chat-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - name: Install contract acceptance dependencies
+        run: python -m pip install -r tests/requirements.txt
+      - name: Fetch and verify the pinned OpenTelemetry Java agent
+        run: |
+          file="$RUNNER_TEMP/opentelemetry-javaagent.jar"
+          curl --fail --retry 3 --silent --show-error --location --output "$file" \
+            https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.20.1/opentelemetry-javaagent.jar
+          echo "d94e9fc648cab37e540571352937acc06b8014182ddbd2d93a6c08641c84e48e  $file" | sha256sum --check
+          echo "BLUEALBUM_OTEL_AGENT_JAR=$file" >> "$GITHUB_ENV"
+      - name: Verify split deployment, home BFF, TLS gRPC and trace propagation
+        run: bash scripts/ci/compose-browser-smoke.sh
+      - name: Upload independent deployment and contract evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-chat-contracts-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            outputs/m7-chat-ci/source-revision.json
+            outputs/m7-chat-ci/telemetry-runtime.json
+            outputs/m7-chat-ci/chat-auth-load.json
+            outputs/m7-chat-ci/chat-owner-checks.txt
+            outputs/m7-chat-ci/logs/**
+
   chat-backup-rehearsal:
     name: Restore split chat, core, and notification state
     runs-on: ubuntu-latest

@@ -17,6 +17,14 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	tracingContext, shutdownTracing := configureTracing(ctx)
+	defer func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownContext); err != nil {
+			log.Print("chat realtime tracing shutdown failed")
+		}
+	}()
 
 	core, err := url.Parse(env("CHAT_REALTIME_CORE_URL", "http://127.0.0.1:8080"))
 	if err != nil || core.Host == "" || (core.Scheme != "http" && core.Scheme != "https") || core.User != nil {
@@ -36,7 +44,7 @@ func main() {
 	}
 
 	clients := &hub{clients: make(map[int64]map[chan struct{}]struct{})}
-	go consumeChanges(ctx, brokerURL(), clients)
+	go consumeChanges(tracingContext, brokerURL(), clients)
 	coreClient := &http.Client{
 		Timeout: 3 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -54,7 +62,7 @@ func main() {
 	}()
 	server := &http.Server{
 		Addr:              env("CHAT_REALTIME_ADDR", "127.0.0.1:8092"),
-		Handler:           realtimeHandler(ctx, clients, origins, verify),
+		Handler:           realtimeHandler(tracingContext, clients, origins, verify),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {

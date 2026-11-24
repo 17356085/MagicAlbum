@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const sourceExtensions = new Set(['.ts', '.tsx', '.js', '.vue'])
 const skippedDirectories = new Set(['node_modules', 'target', 'dist', 'build', '.git', 'coverage', '__pycache__', '.pytest_cache'])
-const moduleNames = ['backend', 'gateway', 'notification-service']
+const moduleNames = ['platform-web', 'chat-domain', 'backend', 'chat-service', 'gateway', 'notification-service']
 const requiredEntries = [
   'README.md', 'CONTRIBUTING.md', 'PRODUCT.md', '.editorconfig', 'pom.xml',
   'frontend/package.json', 'frontend/tsconfig.json', 'frontend/src/App.vue',

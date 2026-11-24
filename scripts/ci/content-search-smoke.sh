@@ -614,8 +614,8 @@ run_maven_phase() {
   set +e
   (
     cd -- "$ROOT_DIR" || exit 125
-    "$MAVEN_COMMAND" -pl backend "-Dtest=${REPORT_CLASS}#${method}" \
-      -Dsurefire.failIfNoSpecifiedTests=true test
+    "$MAVEN_COMMAND" -pl backend -am "-Dtest=${REPORT_CLASS}#${method}" \
+      -Dsurefire.failIfNoSpecifiedTests=false test
   ) >"$raw_log" 2>&1
   maven_exit=$?
   set -e

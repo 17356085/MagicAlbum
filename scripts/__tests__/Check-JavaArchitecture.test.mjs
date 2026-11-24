@@ -146,6 +146,37 @@ test('allows a content-owned event to use content entities without a whitelist',
   }
 })
 
+test('enforces Maven module ownership across shared Java package names', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bluealbum-chat-build-ownership-'))
+  try {
+    writeDomainConfig(root)
+    write(root, 'platform-web/src/main/java/com/example/demo/common/Shared.java',
+      'package com.example.demo.common; class Shared {}')
+    write(root, 'backend/src/main/java/com/example/demo/common/CoreOnly.java',
+      'package com.example.demo.common; class CoreOnly {}')
+    write(root, 'chat-domain/src/main/java/com/example/demo/chat/service/Directory.java',
+      'package com.example.demo.chat.service; class Directory {}')
+    write(root, 'chat-domain/src/main/java/com/example/demo/chat/service/BadDependency.java', `
+      package com.example.demo.chat.service;
+      import com.example.demo.common.CoreOnly;
+      class BadDependency { CoreOnly entry; }
+    `)
+    write(root, 'chat-service/src/main/java/com/example/chatprocess/ChatApplication.java', `
+      package com.example.chatprocess;
+      import com.example.demo.common.Shared;
+      import com.example.demo.chat.service.Directory;
+      class ChatApplication { Shared shared; Directory directory; }
+    `)
+    const result = checkJavaArchitecture(root)
+    assert.equal(result.files, 5)
+    assert.deepEqual(result.errors, [
+      'chat-domain/src/main/java/com/example/demo/chat/service/BadDependency.java: cross-application dependency',
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('fails when no Java production sources are inspected', () => {
   const root = mkdtempSync(join(tmpdir(), 'bluealbum-empty-java-'))
   try {

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const changeExchange = "chat.realtime.changed.v1"
@@ -66,10 +69,34 @@ func readChanges(ctx context.Context, endpoint string, clients *hub) error {
 			if !open {
 				return errors.New("chat broker delivery channel closed")
 			}
-			var recipients []int64
-			if len(delivery.Body) <= 2048 && json.Unmarshal(delivery.Body, &recipients) == nil {
-				clients.notify(recipients)
-			}
+			notifyDelivery(ctx, clients, delivery)
 		}
 	}
+}
+
+func notifyDelivery(ctx context.Context, clients *hub, delivery amqp.Delivery) {
+	var recipients []int64
+	if len(delivery.Body) > 2048 || json.Unmarshal(delivery.Body, &recipients) != nil {
+		return
+	}
+	tracer := tracerForContext(ctx)
+	if tracer == noopTracer {
+		clients.notify(recipients)
+		return
+	}
+	carrier := propagation.MapCarrier{}
+	for _, field := range traceContextPropagator.Fields() {
+		switch value := delivery.Headers[field].(type) {
+		case string:
+			carrier.Set(field, value)
+		case []byte:
+			carrier.Set(field, string(value))
+		}
+	}
+	parent := traceContextPropagator.Extract(ctx, carrier)
+	_, span := tracer.Start(parent, "chat.realtime.changed process", trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.destination.name", changeExchange)))
+	defer span.End()
+	clients.notify(recipients)
 }

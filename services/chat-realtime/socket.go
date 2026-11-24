@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/net/websocket"
 )
 
@@ -30,7 +32,11 @@ func sessionVerifier(endpoint string, client *http.Client) verifier {
 		if err != nil {
 			return session{}, err
 		}
+		ctx, span := tracerForContext(ctx).Start(ctx, "chat.session.verify", trace.WithSpanKind(trace.SpanKindClient))
+		defer span.End()
+		request = request.WithContext(ctx)
 		request.Header.Set("Authorization", "Bearer "+token)
+		injectTraceContext(ctx, request.Header)
 		response, err := client.Do(request)
 		if err != nil {
 			return session{}, err
@@ -105,8 +111,16 @@ func serveSocket(ctx context.Context, clients *hub, verify verifier, conn *webso
 	if err := websocket.Message.Receive(conn, &token); err != nil || token == "" {
 		return
 	}
-	identity, err := verify(ctx, token)
-	if err != nil || identity.UserID <= 0 || identity.ExpiresAt <= time.Now().Unix() {
+	authContext := extractTraceContext(ctx, conn.Request().Header)
+	authContext, span := tracerForContext(authContext).Start(authContext, "chat.realtime.authenticate",
+		trace.WithSpanKind(trace.SpanKindServer))
+	identity, err := verify(authContext, token)
+	valid := err == nil && identity.UserID > 0 && identity.ExpiresAt > time.Now().Unix()
+	if !valid {
+		span.SetStatus(codes.Error, "session rejected")
+	}
+	span.End()
+	if !valid {
 		return
 	}
 	expiration := time.Unix(identity.ExpiresAt, 0)

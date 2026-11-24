@@ -26,6 +26,12 @@ CHAT_AUTH_TIMING_CHECK="${BLUEALBUM_CHAT_AUTH_TIMING_CHECK:-0}"
 CHAT_POLL_LOAD="${BLUEALBUM_CHAT_POLL_LOAD_CHECK:-0}"
 CHAT_GRPC_CHECK="${BLUEALBUM_CHAT_GRPC_CHECK:-0}"
 TELEMETRY_CHECK="${BLUEALBUM_TELEMETRY_CHECK:-0}"
+RPC_LOAD_CHECK="${BLUEALBUM_CHAT_RPC_LOAD_CHECK:-0}"
+[[ "$RPC_LOAD_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_RPC_LOAD_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$RPC_LOAD_CHECK" == 1 ]]; then CHAT_GRPC_CHECK=1; fi
 COMMENT_EVENTS_CHECK="${BLUEALBUM_COMMENT_EVENTS_CHECK:-0}"
 [[ "$CHAT_GRPC_CHECK" =~ ^[01]$ ]] || {
   printf 'ERROR: BLUEALBUM_CHAT_GRPC_CHECK must be 0 or 1\n' >&2
@@ -358,6 +364,16 @@ cleanup() {
     cleanup_chat_backup || cleanup_status=1
   fi
   if (( COMPOSE_TOUCHED == 1 )); then
+    if [[ "$RPC_LOAD_CHECK" == 1 ]]; then
+      local load_nodes
+      load_nodes="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
+        --filter "label=com.docker.compose.service=chat-realtime" \
+        --filter 'label=com.docker.compose.oneoff=True')" || cleanup_status=1
+      if [[ -n "$load_nodes" ]]; then
+        mapfile -t load_node_ids <<< "$load_nodes"
+        docker rm -f "${load_node_ids[@]}" >"$LOG_DIR/rpc-load-cleanup.log" 2>&1 || cleanup_status=1
+      fi
+    fi
     compose logs --no-color --timestamps --tail=500 >"$LOG_DIR/compose.log" 2>&1 || cleanup_status=1
     compose down --volumes --remove-orphans >"$LOG_DIR/compose-down.log" 2>&1 || cleanup_status=1
 
@@ -410,7 +426,7 @@ assert_project_unused
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SCREENSHOT_DIR"
 "$PYTHON_BIN" - "$ARTIFACT_DIR/source-revision.json" "$PROJECT" "$FULL_MODE" "$SPLIT_CHAT" "$CUTOVER_MODE" \
   "$CHAT_REALTIME_CHECK" "$CHAT_BACKUP_CHECK" "$CHAT_AUTH_TIMING_CHECK" "$CHAT_GRPC_CHECK" \
-  "$TELEMETRY_CHECK" "$COMMENT_EVENTS_CHECK" "${BLUEALBUM_HOME_BFF_ENABLED:-false}" <<'PY'
+  "$TELEMETRY_CHECK" "$COMMENT_EVENTS_CHECK" "${BLUEALBUM_HOME_BFF_ENABLED:-false}" "$RPC_LOAD_CHECK" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -424,7 +440,7 @@ expected = os.environ.get("GITHUB_SHA")
 if expected and (expected != revision or not clean):
     raise SystemExit("This Compose gate needs a clean checkout of its configured GitHub SHA.")
 keys = ("fullRegression", "splitChat", "cutover", "dualRealtime", "backup",
-        "authorizationTiming", "grpc", "telemetry", "commentEvents", "homeBff")
+        "authorizationTiming", "grpc", "telemetry", "commentEvents", "homeBff", "rpcLoad")
 Path(output).write_text(json.dumps({
     "commit": revision, "cleanWorktree": clean, "project": project,
     "configuration": {key: value in ("1", "true") for key, value in zip(keys, settings, strict=True)},
@@ -601,16 +617,38 @@ fi
 COMPOSE_TOUCHED=1
 compose config --quiet
 services=(backend notification-service chat-realtime gateway frontend)
+if [[ "$SPLIT_CHAT" == "1" ]]; then
+  services+=(chat-service)
+fi
 for service in "${services[@]}"; do
   compose build "$service"
 done
 compose up -d --wait --wait-timeout 300 "${scale_options[@]}"
 if [[ "$TELEMETRY_CHECK" == 1 ]]; then
+  chat_transport=http
+  if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then chat_transport=grpc; fi
+  telemetry_args=()
+  if [[ "${BLUEALBUM_HOME_BFF_ENABLED:-false}" == true ]]; then telemetry_args+=(--home-bff); fi
   "$PYTHON_BIN" "$SCRIPT_DIR/telemetry-runtime.py" \
     --gateway "http://127.0.0.1:$gateway_port" \
     --tempo "http://127.0.0.1:$telemetry_tempo_port" \
     --loki "http://127.0.0.1:$telemetry_loki_port" \
-    --output "$ARTIFACT_DIR/telemetry-runtime.json"
+    --frontend "http://127.0.0.1:$frontend_port" --chat-transport "$chat_transport" \
+    --output "$ARTIFACT_DIR/telemetry-runtime.json" "${telemetry_args[@]}"
+fi
+
+if [[ "$RPC_LOAD_CHECK" == 1 ]]; then
+  # Separate temporary listeners let both transports reach the same Java Core and RabbitMQ.
+  rpc_run=(run --detach --no-deps --publish '127.0.0.1::8092' --env OTEL_TRACES_EXPORTER=none)
+  http_node="$(compose "${rpc_run[@]}" --name "$PROJECT-rpc-load-http" \
+    --env CHAT_REALTIME_GRPC_ADDR= --env CHAT_REALTIME_GRPC_CREDENTIAL= chat-realtime)"
+  grpc_node="$(compose "${rpc_run[@]}" --name "$PROJECT-rpc-load-grpc" chat-realtime)"
+  "$PYTHON_BIN" "$SCRIPT_DIR/chat-auth-load.py" \
+    --gateway "http://127.0.0.1:$gateway_port" --frontend "http://127.0.0.1:$frontend_port" \
+    --project "$PROJECT" --http-container "${http_node//$'\r'/}" --grpc-container "${grpc_node//$'\r'/}" \
+    --output "$ARTIFACT_DIR/chat-auth-load.json"
+  if [[ "$TELEMETRY_CHECK" == 1 ]]; then verify_split_chat_owner 1; fi
+  exit 0
 fi
 
 if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then

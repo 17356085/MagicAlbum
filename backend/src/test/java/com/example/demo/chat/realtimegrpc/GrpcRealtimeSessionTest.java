@@ -15,6 +15,7 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.MetadataUtils;
 import java.net.ServerSocket;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -42,6 +43,10 @@ class GrpcRealtimeSessionTest {
             assertEquals(42L, response.getUserId());
             assertEquals(tokens.getSessionFromToken(token).expiresAt(), response.getExpiresAt());
 
+            VerifySessionResponse additiveResponse = authenticated.verifySession(requestWithUnknownField(token));
+            assertEquals(42L, additiveResponse.getUserId());
+            assertEquals(tokens.getSessionFromToken(token).expiresAt(), additiveResponse.getExpiresAt());
+
             StatusRuntimeException missingCredential = assertThrows(StatusRuntimeException.class,
                     () -> stub(channel, null).verifySession(request(token)));
             assertEquals(Status.Code.UNAUTHENTICATED, missingCredential.getStatus().getCode());
@@ -50,6 +55,10 @@ class GrpcRealtimeSessionTest {
                     () -> stub(channel, "wrong-credential-1234567890-abcdefgh")
                             .verifySession(request(token)));
             assertEquals(Status.Code.UNAUTHENTICATED, wrongCredential.getStatus().getCode());
+
+            StatusRuntimeException duplicateCredential = assertThrows(StatusRuntimeException.class,
+                    () -> duplicateCredentialStub(channel).verifySession(request(token)));
+            assertEquals(Status.Code.UNAUTHENTICATED, duplicateCredential.getStatus().getCode());
 
             StatusRuntimeException invalidToken = assertThrows(StatusRuntimeException.class,
                     () -> authenticated.verifySession(request("not-a-jwt")));
@@ -73,10 +82,28 @@ class GrpcRealtimeSessionTest {
         return VerifySessionRequest.newBuilder().setToken(token).build();
     }
 
+    private static VerifySessionRequest requestWithUnknownField(String token) throws Exception {
+        byte[] encoded = request(token).toByteArray();
+        byte[] additiveField = {(byte) 0x98, 0x06, 0x01};
+        byte[] withUnknownField = Arrays.copyOf(encoded, encoded.length + additiveField.length);
+        System.arraycopy(additiveField, 0, withUnknownField, encoded.length, additiveField.length);
+        VerifySessionRequest parsed = VerifySessionRequest.parseFrom(withUnknownField);
+        assertNotNull(parsed.getUnknownFields().getField(99));
+        return parsed;
+    }
+
     private static VerifySessionGrpc.VerifySessionBlockingStub stub(ManagedChannel channel, String credential) {
         if (credential == null) return VerifySessionGrpc.newBlockingStub(channel);
         Metadata metadata = new Metadata();
         metadata.put(CREDENTIAL_METADATA, credential);
+        return VerifySessionGrpc.newBlockingStub(channel)
+                .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+    }
+
+    private static VerifySessionGrpc.VerifySessionBlockingStub duplicateCredentialStub(ManagedChannel channel) {
+        Metadata metadata = new Metadata();
+        metadata.put(CREDENTIAL_METADATA, CREDENTIAL);
+        metadata.put(CREDENTIAL_METADATA, CREDENTIAL);
         return VerifySessionGrpc.newBlockingStub(channel)
                 .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
     }

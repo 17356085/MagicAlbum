@@ -1,8 +1,15 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const MODULES = ['backend', 'gateway', 'notification-service']
+const MODULES = {
+  'platform-web': { boundary: 'com.example.demo.', dependencies: [] },
+  'chat-domain': { boundary: 'com.example.demo.', dependencies: ['platform-web'] },
+  backend: { boundary: 'com.example.demo.', dependencies: ['platform-web', 'chat-domain'] },
+  'chat-service': { boundary: 'com.example.chatprocess.', dependencies: ['platform-web', 'chat-domain'] },
+  gateway: { boundary: 'com.example.gateway.', dependencies: [] },
+  'notification-service': { boundary: 'com.example.notification.', dependencies: [] },
+}
 const CONFIG_RELATIVE_PATH = join('config', 'java-domain-couplings.json')
 const DEFAULT_DOMAIN_CONFIG = {
   domainRoots: {},
@@ -19,8 +26,18 @@ function walk(path) {
 }
 
 function applicationBoundary(module) {
-  return module === 'backend' ? 'com.example.demo.'
-    : module === 'gateway' ? 'com.example.gateway.' : 'com.example.notification.'
+  return MODULES[module].boundary
+}
+
+function owningModules(target, owners, packageOwners) {
+  if (target.endsWith('.*') && packageOwners.has(target.slice(0, -2))) {
+    return packageOwners.get(target.slice(0, -2))
+  }
+  // Resolve nested types and static member imports to their top-level source.
+  for (let qualified = target; qualified.includes('.'); qualified = qualified.slice(0, qualified.lastIndexOf('.'))) {
+    if (owners.has(qualified)) return [owners.get(qualified)]
+  }
+  return []
 }
 
 function normalizePath(path) {
@@ -99,7 +116,12 @@ export function domainCouplingViolation(sourcePackage, target, module, sourceFil
 // Enforces declared source dependencies. It does not analyze reflection or runtime wiring.
 export function dependencyViolation(sourcePackage, target, module, options = {}) {
   const boundary = applicationBoundary(module)
-  if (target.startsWith('com.example.') && target !== boundary.slice(0, -1)
+  const normalizedOptions = typeof options === 'string' ? { sourceFile: options } : options
+  const targetModules = normalizedOptions.targetModules ?? []
+  if (targetModules.some(owner => owner !== module && !MODULES[module].dependencies.includes(owner))) {
+    return 'cross-application dependency'
+  }
+  if (targetModules.length === 0 && target.startsWith('com.example.') && target !== boundary.slice(0, -1)
       && !target.startsWith(boundary)) return 'cross-application dependency'
   const sourceParts = sourcePackage.split('.')
   const targetParts = target.split('.')
@@ -111,7 +133,6 @@ export function dependencyViolation(sourcePackage, target, module, options = {})
       || target.startsWith('org.springframework.web.'))) return 'repository depends on web layer'
   if (sourceParts.includes('service') && (targetParts.includes('controller')
       || target.startsWith('org.springframework.web.bind.annotation.'))) return 'service depends on controller layer'
-  const normalizedOptions = typeof options === 'string' ? { sourceFile: options } : options
   return domainCouplingViolation(
     sourcePackage,
     target,
@@ -128,7 +149,10 @@ export function checkJavaArchitecture(root) {
   let dependencies = 0
   const { config, error: configError } = readDomainConfig(projectRoot)
   if (configError) errors.push(configError)
-  for (const module of MODULES) {
+  const owners = new Map()
+  const packageOwners = new Map()
+  const sources = []
+  for (const module of Object.keys(MODULES)) {
     for (const file of walk(join(projectRoot, module, 'src/main/java'))) {
       files += 1
       // Skip strings and comments, preserving newlines for line-oriented import matching.
@@ -141,16 +165,25 @@ export function checkJavaArchitecture(root) {
         continue
       }
       const sourceFile = normalizePath(relative(projectRoot, file))
-      // Match imports and explicit qualified application references as well as wildcard imports.
-      const targets = new Set([...text.matchAll(/^\s*import\s+(?:static\s+)?([\w.*]+)\s*;/gm)].map(match => match[1]))
-      for (const match of text.matchAll(/\bcom\.example\.[\w.]+/g)) {
-        if (match[0] !== sourcePackage) targets.add(match[0])
-      }
-      for (const target of targets) {
-        dependencies += 1
-        const violation = dependencyViolation(sourcePackage, target, module, { sourceFile, config })
-        if (violation) errors.push(`${sourceFile}: ${violation}`)
-      }
+      const qualified = sourcePackage + '.' + basename(file, '.java')
+      if (owners.has(qualified)) errors.push(sourceFile + ': duplicate Java source type ' + qualified)
+      owners.set(qualified, module)
+      if (!packageOwners.has(sourcePackage)) packageOwners.set(sourcePackage, new Set())
+      packageOwners.get(sourcePackage).add(module)
+      sources.push({ module, sourcePackage, sourceFile, text })
+    }
+  }
+  for (const { module, sourcePackage, sourceFile, text } of sources) {
+    // Match imports and explicit qualified application references as well as wildcard imports.
+    const targets = new Set([...text.matchAll(/^\s*import\s+(?:static\s+)?([\w.*]+)\s*;/gm)].map(match => match[1]))
+    for (const match of text.matchAll(/\bcom\.example\.[\w.]+/g)) {
+      if (match[0] !== sourcePackage) targets.add(match[0])
+    }
+    for (const target of targets) {
+      dependencies += 1
+      const targetModules = target.startsWith('com.example.') ? [...owningModules(target, owners, packageOwners)] : []
+      const violation = dependencyViolation(sourcePackage, target, module, { sourceFile, config, targetModules })
+      if (violation) errors.push(`${sourceFile}: ${violation}`)
     }
   }
   if (files === 0) errors.push('No Java production sources inspected')

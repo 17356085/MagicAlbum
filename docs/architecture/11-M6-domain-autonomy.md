@@ -17,9 +17,13 @@
 ```bash
 node scripts/Check-Repository.mjs
 node scripts/Check-JavaArchitecture.mjs
-mvn -B -pl backend '-Dtest=ChatIntegrationTest,RemoteChatDirectoryTest,AdminAccessServiceTest,GovernanceServiceTest,SectionCacheRaceTest,UserFollow*Test,ThreadService*Test,ThreadRepositoryDataJpaTest,PostService*Test' test
+mvn -B -pl backend,chat-service -am -Dsurefire.failIfNoSpecifiedTests=false '-Dtest=ChatIntegrationTest,RemoteChatDirectoryTest,AdminAccessServiceTest,GovernanceServiceTest,SectionCacheRaceTest,UserFollow*Test,ThreadService*Test,ThreadRepositoryDataJpaTest,PostService*Test' test
 bash scripts/ci/compose-browser-smoke.sh
 BLUEALBUM_SPLIT_CHAT_CHECK=1 bash scripts/ci/compose-browser-smoke.sh
 ```
 
 两种拓扑的浏览器报告都记录 `friend_removal_browser=peer_follow_preserved`。完整门禁继续覆盖 M5 的实时恢复、两秒授权、切流回退和备份恢复。[CI 配置](../../.github/workflows/ci.yml)
+
+## 验收结果
+
+提交 `168fa9d91c85ab2ed52593b668faafec40768777` 的 14 项 CI 门禁均通过。两种聊天拓扑的浏览器验收都确认了单向关注保留，完整 Python 回归通过 148 项。Java 领域规则的例外清单由 37 条减至 29 条。[M6 同版本验收](https://github.com/17356085/MagicAlbum/actions/runs/45396326553)

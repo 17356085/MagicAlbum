@@ -74,16 +74,17 @@ docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml 
 
 在隔离部署中使用 `docker-compose.telemetry.yml` 启动 OpenTelemetry Collector、Tempo 和 Loki。它为网关、核心、独立聊天和通知的 Java 进程启用同一个只读 Java agent。原有 Prometheus 继续采集指标。采集器只接收内部 OTLP，Tempo 与 Loki 的查询端口仅绑定本机环回地址。[Compose 配置](../../docker-compose.telemetry.yml) · [Tempo 接收配置](https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/) · [Loki OTLP](https://grafana.com/docs/loki/latest/send-data/otel/)
 
-从 OpenTelemetry Java agent 的发布页获取 `opentelemetry-javaagent.jar`，将 `BLUEALBUM_OTEL_AGENT_JAR` 设为该文件的绝对路径。保持隔离环境自己的 `.env` 和宿主端口，用以下命令运行和检查网关到核心的请求。验证同时要求 Tempo 有跨进程父子 span，以及 Loki 能检索到同一请求在两个服务的日志。[Java agent 发布页](https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/tag/v2.20.1) · [运行验证](../../scripts/ci/telemetry-runtime.py)
+从 OpenTelemetry Java agent 的发布页获取 `opentelemetry-javaagent.jar`，将 `BLUEALBUM_OTEL_AGENT_JAR` 设为该文件的绝对路径。保持隔离环境自己的 `.env` 和宿主端口，用以下命令运行和检查网关到核心的请求。验证要求 Tempo 记录跨进程父子 span，Loki 能检索到同一请求在网关和核心的日志。添加前端地址后，探针还会通过真实 WebSocket 登录并发送私信，检查 Go 到 Java 的会话验证和 Java 经 RabbitMQ 到 Go 的消息提示。[Java agent 发布页](https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/tag/v2.20.1) · [运行验证](../../scripts/ci/telemetry-runtime.py)
 
 ```bash
 docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml \
   -f docker-compose.telemetry.yml up -d --build --wait
 python scripts/ci/telemetry-runtime.py --gateway http://127.0.0.1:9000 \
   --tempo http://127.0.0.1:3200 --loki http://127.0.0.1:3100 \
+  --frontend http://127.0.0.1:5173 \
   --output outputs/telemetry-runtime/checks.json
 ```
 
-采集器删除认证头、Cookie、查询参数和数据库语句属性。当前配置使用本机文件存储和 24 小时保留期，应用日志仍需遵守现有敏感字段约定。Go 实时连接和 Go 媒体进程继续使用原有指标及请求 ID，Go span 采集需要另行接入。[采集器配置](../../perf/telemetry/collector.yml)
+采集器删除认证头、Cookie、查询参数和数据库语句属性。当前配置使用本机文件存储和 24 小时保留期，应用日志仍需遵守现有敏感字段约定。Go 实时服务只在遥测配置启用时导出认证和消息提示的有限时长 span，沿途传播 W3C Trace Context。Go 媒体进程由原有指标和请求 ID 覆盖。默认栈的导出保持关闭。[采集器配置](../../perf/telemetry/collector.yml)
 
 2026-11-24 的隔离联调从 Tempo 读回网关到核心的父子关系及八个 span，并用同一请求 ID 从 Loki 读回网关和核心日志。报告为 `outputs/architecture-bundled-browser-20261124-v6/telemetry-runtime.json`。
