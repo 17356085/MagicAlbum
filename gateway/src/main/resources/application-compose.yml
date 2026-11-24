@@ -1,3 +1,8 @@
+home:
+  bff:
+    core-base-url: ${HOME_BFF_CORE_BASE_URL:http://backend:8080}
+    notification-base-url: ${HOME_BFF_NOTIFICATION_BASE_URL:http://notification-service:8081}
+
 spring:
   cloud:
     nacos:
@@ -13,12 +18,14 @@ spring:
               uri: http://notification-service:8081
               predicates:
                 - Path=/api/v1/notifications/stream
+                - Method=GET,HEAD
               metadata:
                 response-timeout: 65000
             - id: notification-service-api
               uri: http://notification-service:8081
               predicates:
-                - Path=/api/v1/notifications/**
+                - Path=/api/v1/notifications,/api/v1/notifications/events
+                - Method=GET,HEAD
             - id: bluealbum-ai-api
               uri: http://backend:8080
               predicates:
@@ -29,3 +36,19 @@ spring:
               uri: http://backend:8080
               predicates:
                 - Path=/api/v1/**,/uploads/**
+            - id: chat-realtime
+              order: -1
+              uri: ${CHAT_REALTIME_GATEWAY_URI:ws://chat-realtime:8092}
+              predicates:
+                - Path=/api/v1/chat/realtime
+            - id: notification-service-read
+              order: -1
+              uri: http://notification-service:8081
+              predicates:
+                - Path=/api/v1/notifications/{id}/read
+                - Method=PATCH
+            - id: chat-service-api
+              order: -2
+              uri: ${CHAT_SERVICE_GATEWAY_URI:http://backend:8080}
+              predicates:
+                - Path=/api/v1/chat/conversations/**,/api/v1/chat/direct/**,/api/v1/chat/groups/**,/api/v1/chat/settings

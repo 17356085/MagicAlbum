@@ -59,15 +59,16 @@ Invoke-RestMethod -Method Get -Uri 'http://localhost:8080/api/v1/admin/search/st
 | --- | --- | --- |
 | GET | `/api/v1/admin/search/status` | 查看当前 alias、ready 和暂停状态 |
 | POST | `/api/v1/admin/search/rebuild` | 创建新物理索引、扫描、校验并切换 alias |
+| POST | `/api/v1/admin/search/rollback?index=<旧物理索引名>` | 补齐并验证旧索引，再将搜索别名切回该索引 |
 | POST | `/api/v1/admin/search/failed/replay?limit=10` | 重放失败内容事件，`limit` 由服务端限制 |
 | GET | `/api/v1/admin/content-events/diagnostics` | 查看内容事件 outbox 诊断 |
 | POST | `/api/v1/admin/content-events/{id}/retry` | 手动重试指定内容事件 |
 
 `POST /api/v1/admin/search/rebuild` 会先取得数据库中的单例 content-search control 行并暂停内容写入。暂停通过持久化行锁跨实例生效，会等待已经开始的共享 writer 事务提交；不能只依靠某一个 backend 进程的内存标记。重建期间会持续维护租约，按 owner 投影扫描全部帖子（包括隐藏和删除墓碑），刷新并逐项核对新索引。全部扫描和校验成功后，才在同一独占 gate 事务中执行 alias 切换；释放 gate 前不会允许新的内容写入。旧物理索引保留，不会由重建流程自动删除。
 
-重建失败、租约过期或 alias 结果需要人工核对时，不要把“请求返回”当作切换已经完成的证据。先读取 status，并结合 Elasticsearch 实际 alias 和数据库 owner 结果判断。当前没有承诺一个管理员直接 alias 回退 API。
+回切与重建使用同一数据库写入门禁。目标须为仍存在的 `tongpin-threads-v` 物理索引，后缀使用重建生成的 32 位十六进制名称。回切会把当前 MySQL 投影补写到旧索引，逐条核对新增内容、版本和墓碑，然后切换别名并记录当前索引。提交前核验失败时继续使用原别名。请求当前别名已指向的物理索引返回 `409`。可在运维窗口通过 status 和 Elasticsearch 的实际别名核对切换结果。
 
-alias 切换请求或数据库提交响应丢失时，重建会在原维护租约内读取实际 alias，核对它是否已经指向逐项验证过的新索引，再补齐数据库状态；不会重复发出切换请求。如果结果仍无法确认，就把当前维护任务的搜索状态设为未就绪，保留旧物理索引并回退数据库。后续读取若发现数据库指针与实际 alias 不一致，也会按原指针条件使状态失效，避免覆盖另一轮已经完成的重建。依赖恢复后，管理员应检查 status 并重新执行完整 rebuild；这里不承诺跨数据库与 Elasticsearch 的分布式原子提交。
+别名切换请求或数据库提交响应丢失时，重建和回切都会在原维护租约内读取实际别名。若已指向逐项验证过的目标索引，系统补齐数据库状态。结果仍无法确认时，当前维护任务将搜索状态设为未就绪并回退数据库。后续读取若发现数据库指针与实际别名不一致，也会按原指针条件使状态失效，避免覆盖另一轮已经完成的重建。依赖恢复后，管理员可检查 status 并执行完整重建。
 
 ## 失败队列与隔离
 
@@ -99,3 +100,9 @@ docker compose -f docker-compose.yml -f docker-compose.search.yml -f docker-comp
 提交 `434e577` 的真实 MySQL、RabbitMQ、Elasticsearch 四阶段 CI 与浏览器链路已通过，完整证据与首次失败记录见交付记录。持久化 gate 已验证同库并发事务的等待与晚提交重建，没有进行多进程压力测试；当前不能据此声称已经生产上线。静态检查同时覆盖：合并配置可解析、backend 保留基础依赖并等待 Elasticsearch healthy、ES 没有 published port、命名卷存在、健康检查等待 yellow、以及管理员路径与 Java 控制器一致。
 
 CI 的临时服务使用 loopback 动态端口；停止再启动后必须重新读取映射，而不能沿用初次创建的地址。Docker 的 [端口查询说明](https://docs.docker.com/reference/cli/docker/container/port/) 和 [Moby API 端口分配说明](https://github.com/moby/moby/blob/master/api/docs/v1.24.md) 是该检查的依据。验收脚本应同时核对容器 ID、运行标签和原匿名卷，并记录端口历史；读取新端口不能变成重建空数据容器来绕过恢复验证。
+
+本机可用新的输出目录重复演练并保留此前报告。以下命令在 Bash 下执行，目录应为空并位于仓库 `outputs` 内。
+
+```bash
+M2_CI_ARTIFACT_DIR=outputs/m2-search-rehearsal bash scripts/ci/content-search-smoke.sh
+```

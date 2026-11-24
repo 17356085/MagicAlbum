@@ -8,7 +8,6 @@ import com.example.demo.governance.repo.CommunityAuditRepository;
 import com.example.demo.governance.repo.CommunityModeratorScopeRepository;
 import com.example.demo.governance.repo.CommunityPostingRestrictionRepository;
 import com.example.demo.governance.repo.CommunityStateRepository;
-import com.example.demo.governance.repo.SectionGovernanceRepository;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.sections.entity.Section;
 import com.example.demo.sections.repo.SectionRepository;
@@ -16,7 +15,6 @@ import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -56,7 +54,6 @@ class SectionCacheRaceTest {
 
     private final UserRepository userRepository = mock(UserRepository.class);
     private final SectionRepository sectionRepository = mock(SectionRepository.class);
-    private final SectionGovernanceRepository sectionGovernanceRepository = mock(SectionGovernanceRepository.class);
     private final CommunityStateRepository stateRepository = mock(CommunityStateRepository.class);
     private final CommunityAdminRoleRepository adminRoleRepository = mock(CommunityAdminRoleRepository.class);
     private final CommunityModeratorScopeRepository moderatorScopeRepository = mock(CommunityModeratorScopeRepository.class);
@@ -64,14 +61,12 @@ class SectionCacheRaceTest {
     private final CommunityAuditRepository auditRepository = mock(CommunityAuditRepository.class);
     private final StringRedisTemplate redis = mock(StringRedisTemplate.class);
     private final ValueOperations<String, String> values = mock(ValueOperations.class);
-    private final ObjectProvider<StringRedisTemplate> redisProvider = mock(ObjectProvider.class);
     private final Map<String, String> entries = new ConcurrentHashMap<>();
     private GovernanceService governance;
 
     @BeforeEach
     void setUp() {
         when(redis.opsForValue()).thenReturn(values);
-        when(redisProvider.getIfAvailable()).thenReturn(redis);
         when(values.get(anyString())).thenAnswer(invocation -> entries.get(invocation.getArgument(0)));
         doAnswer(invocation -> {
             entries.put(invocation.getArgument(0), invocation.getArgument(1));
@@ -84,7 +79,7 @@ class SectionCacheRaceTest {
         when(stateRepository.findByIdForUpdate(CommunityState.SINGLETON_ID))
                 .thenReturn(Optional.of(new CommunityState()));
         when(adminRoleRepository.existsById(7L)).thenReturn(true);
-        when(sectionGovernanceRepository.findBySlug(anyString())).thenReturn(Optional.empty());
+        when(sectionRepository.findBySlug(anyString())).thenReturn(Optional.empty());
         when(auditRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(sectionRepository.save(any(Section.class))).thenAnswer(invocation -> {
             Section section = invocation.getArgument(0);
@@ -94,9 +89,10 @@ class SectionCacheRaceTest {
             }
             return section;
         });
-        governance = new GovernanceService(userRepository, sectionRepository, sectionGovernanceRepository,
+        SectionAdministration sectionAdministration = new SectionAdministration(sectionRepository, redis);
+        governance = new GovernanceService(userRepository, sectionAdministration,
                 stateRepository, adminRoleRepository, moderatorScopeRepository,
-                restrictionRepository, auditRepository, redisProvider);
+                restrictionRepository, auditRepository);
         entries.put(RedisKeys.sectionsListGeneration(), INITIAL_GENERATION);
     }
 

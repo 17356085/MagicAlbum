@@ -7,6 +7,16 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACT_ROOT="$ROOT_DIR/outputs/m2-search-ci"
+KAFKA_PILOT="${M2_CI_KAFKA_PILOT:-0}"
+ROLES=(mysql rabbit es)
+if [[ "$KAFKA_PILOT" == 1 ]]; then
+  ROLES+=(kafka)
+  ARTIFACT_ROOT="$ROOT_DIR/outputs/m2-search-kafka-pilot"
+  if [[ -n "${MSYSTEM:-}" ]]; then
+    # Docker requires the Kafka container paths verbatim under Git Bash.
+    export MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL:+$MSYS2_ARG_CONV_EXCL;}/var/lib/kafka/data;KAFKA_LOG_DIRS=;/opt/kafka/bin/"
+  fi
+fi
 
 RUN_ID=""
 MYSQL_NAME=""
@@ -16,6 +26,7 @@ MYSQL_PORT=""
 RABBIT_PORT=""
 ES_PORT=""
 ES_URL=""
+KAFKA_PORT=""
 SEARCH_DATABASE=""
 MYSQL_ROOT_PASSWORD=""
 RABBIT_USERNAME=""
@@ -46,7 +57,7 @@ declare -A ROUND_FAILURES=()
 declare -A ROUND_ERRORS=()
 declare -A ROUND_SKIPPED=()
 
-for role in mysql rabbit es; do
+for role in "${ROLES[@]}"; do
   CONTAINER_ID[$role]=""
   CONTAINER_VOLUMES[$role]=""
   CONTAINER_STARTED[$role]=0
@@ -323,12 +334,16 @@ refresh_container_port() {
     mysql) target='3306/tcp' ;;
     rabbit) target='5672/tcp' ;;
     es) target='9200/tcp' ;;
+    kafka) target='9092/tcp' ;;
     *) die "cannot refresh port for unknown container role: $role" ;;
   esac
   port="$(container_port "${CONTAINER_NAME[$role]}" "$target")" \
     || die "cannot refresh published port for $role container"
   record_container_port "$role" "$port" \
     || die "cannot record refreshed $role loopback port"
+  if [[ "$role" == kafka && "$port" != "$KAFKA_PORT" ]]; then
+    die 'Kafka must restart on the same advertised host port'
+  fi
   case "$role" in
     mysql)
       MYSQL_PORT="$port"
@@ -506,7 +521,7 @@ save_service_logs() {
   local log_directory="$ARTIFACT_ROOT/service-logs"
   local role status=0
   mkdir -p -- "$log_directory" || return 1
-  for role in mysql rabbit es; do
+  for role in "${ROLES[@]}"; do
     if [[ "${CONTAINER_STARTED[$role]}" == 1 ]]; then
       sanitize_docker_logs "${CONTAINER_NAME[$role]}" "$log_directory/${role}.log" || status=1
     fi
@@ -689,23 +704,22 @@ write_checks() {
   local cleanup_status="$2"
   local credential_status="$3"
   local original_status="$4"
+  local phases=(pipeline index_outage outage recovery)
+  if [[ "$KAFKA_PILOT" == 1 ]]; then phases=(kafka_pipeline kafka_outage kafka_recovery); fi
+  local args=() phase
+  for phase in "${phases[@]}"; do
+    args+=("$phase" "${ROUND_EXIT[$phase]:--1}" "${ROUND_TESTS[$phase]:--1}"
+      "${ROUND_FAILURES[$phase]:--1}" "${ROUND_ERRORS[$phase]:--1}" "${ROUND_SKIPPED[$phase]:--1}")
+  done
   python - "$output" "$RUN_ID" "$runtime_status" "$cleanup_status" "$credential_status" "$original_status" \
-    "${ROUND_EXIT[pipeline]:--1}" "${ROUND_TESTS[pipeline]:--1}" "${ROUND_FAILURES[pipeline]:--1}" "${ROUND_ERRORS[pipeline]:--1}" "${ROUND_SKIPPED[pipeline]:--1}" \
-    "${ROUND_EXIT[index_outage]:--1}" "${ROUND_TESTS[index_outage]:--1}" "${ROUND_FAILURES[index_outage]:--1}" "${ROUND_ERRORS[index_outage]:--1}" "${ROUND_SKIPPED[index_outage]:--1}" \
-    "${ROUND_EXIT[outage]:--1}" "${ROUND_TESTS[outage]:--1}" "${ROUND_FAILURES[outage]:--1}" "${ROUND_ERRORS[outage]:--1}" "${ROUND_SKIPPED[outage]:--1}" \
-    "${ROUND_EXIT[recovery]:--1}" "${ROUND_TESTS[recovery]:--1}" "${ROUND_FAILURES[recovery]:--1}" "${ROUND_ERRORS[recovery]:--1}" "${ROUND_SKIPPED[recovery]:--1}" \
-    "$FAILURE_MESSAGE" <<'PY'
+    "$FAILURE_MESSAGE" "${args[@]}" <<'PY'
 import json
 import pathlib
 import sys
 
 (
     output, run_id, runtime, cleanup, credentials, original,
-    pipeline_exit, pipeline_tests, pipeline_failures, pipeline_errors, pipeline_skipped,
-    index_exit, index_tests, index_failures, index_errors, index_skipped,
-    outage_exit, outage_tests, outage_failures, outage_errors, outage_skipped,
-    recovery_exit, recovery_tests, recovery_failures, recovery_errors, recovery_skipped,
-    failure,
+    failure, *phases,
 ) = sys.argv[1:]
 
 def number(value):
@@ -726,12 +740,7 @@ payload = {
     "CleanupSucceeded": cleanup == "true",
     "CredentialFileRemaining": credentials == "true",
     "OriginalExitCode": number(original),
-    "Rounds": {
-        "pipeline": round_payload(pipeline_exit, pipeline_tests, pipeline_failures, pipeline_errors, pipeline_skipped),
-        "index_outage": round_payload(index_exit, index_tests, index_failures, index_errors, index_skipped),
-        "outage": round_payload(outage_exit, outage_tests, outage_failures, outage_errors, outage_skipped),
-        "recovery": round_payload(recovery_exit, recovery_tests, recovery_failures, recovery_errors, recovery_skipped),
-    },
+    "Rounds": {phases[i]: round_payload(*phases[i + 1:i + 6]) for i in range(0, len(phases), 6)},
     "Failure": failure,
 }
 pathlib.Path(output).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -750,7 +759,7 @@ cleanup() {
     save_service_logs || cleanup_status=1
   fi
 
-  for role in mysql rabbit es; do
+  for role in "${ROLES[@]}"; do
     if [[ "${CONTAINER_STARTED[$role]}" == 1 ]]; then
       name="${CONTAINER_NAME[$role]}"
       expected_id="${CONTAINER_ID[$role]}"
@@ -783,7 +792,7 @@ cleanup() {
   if [[ $? -ne 0 ]]; then
     cleanup_status=1
   else
-    for role in mysql rabbit es; do
+    for role in "${ROLES[@]}"; do
       while IFS= read -r volume; do
         [[ -n "$volume" ]] || continue
         remaining="$(docker volume ls -q --filter "name=^${volume}$" 2>/dev/null)"
@@ -826,6 +835,22 @@ require_command docker
 require_command curl
 require_command openssl
 require_command python
+[[ "$KAFKA_PILOT" =~ ^[01]$ ]] || die 'M2_CI_KAFKA_PILOT must be 0 or 1'
+if [[ -n "${M2_CI_ARTIFACT_DIR:-}" ]]; then
+  ARTIFACT_ROOT="$(python - "$ROOT_DIR" "$M2_CI_ARTIFACT_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+outputs = root / "outputs"
+candidate = (root / sys.argv[2]).resolve()
+if candidate == outputs or not candidate.is_relative_to(outputs):
+    raise SystemExit("Search smoke artifacts must be stored under workspace outputs")
+print(candidate.as_posix())
+PY
+  )"
+  ARTIFACT_ROOT="${ARTIFACT_ROOT//$'\r'/}"
+fi
 if [[ "$MAVEN_COMMAND" == */* ]]; then
   [[ -x "$MAVEN_COMMAND" ]] || die "Maven executable is unavailable: $MAVEN_COMMAND"
 else
@@ -883,6 +908,31 @@ capture_container_metadata mysql "$MYSQL_NAME" "$MYSQL_PORT" 512
 capture_container_metadata rabbit "$RABBIT_NAME" "$RABBIT_PORT" 384
 capture_container_metadata es "$ES_NAME" "$ES_PORT" 1024
 
+export CONTENT_SEARCH_TEST_KAFKA_ENABLED=false
+if [[ "$KAFKA_PILOT" == 1 ]]; then
+  KAFKA_NAME="bluealbum-m2-kafka-$RUN_ID"
+  KAFKA_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+  KAFKA_PORT="${KAFKA_PORT//$'\r'/}"
+  run_container kafka "$KAFKA_NAME" \
+    --publish "127.0.0.1:$KAFKA_PORT:9092" --memory 640m --memory-swap 640m \
+    --volume /var/lib/kafka/data --env 'KAFKA_HEAP_OPTS=-Xms160m -Xmx320m' \
+    --env KAFKA_NODE_ID=1 --env KAFKA_PROCESS_ROLES=broker,controller \
+    --env KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+    --env KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:29093 --env KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL \
+    --env KAFKA_LISTENERS=EXTERNAL://:9092,INTERNAL://:19092,CONTROLLER://:29093 \
+    --env KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT \
+    --env "KAFKA_ADVERTISED_LISTENERS=EXTERNAL://127.0.0.1:$KAFKA_PORT,INTERNAL://127.0.0.1:19092" \
+    --env KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+    --env KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS=3 \
+    --env KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 --env KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+    --env KAFKA_LOG_DIRS=/var/lib/kafka/data apache/kafka:4.0.0
+  capture_container_metadata kafka "$KAFKA_NAME" "$KAFKA_PORT" 640
+  export CONTENT_SEARCH_TEST_KAFKA_ENABLED=true
+  export CONTENT_SEARCH_TEST_KAFKA_SERVER="127.0.0.1:$KAFKA_PORT"
+  export CONTENT_SEARCH_TEST_RABBIT_TIMEOUT=8s
+  export CONTENT_SEARCH_TEST_RABBIT_LEASE=45s
+fi
+
 export CONTENT_SEARCH_TEST_DATASOURCE_URL="jdbc:mysql://127.0.0.1:$MYSQL_PORT/$SEARCH_DATABASE?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
 export CONTENT_SEARCH_TEST_DATABASE="$SEARCH_DATABASE"
 export CONTENT_SEARCH_TEST_DB_USERNAME=root
@@ -899,18 +949,30 @@ export MAVEN_OPTS='-Xmx512m -XX:ActiveProcessorCount=2'
 write_test_environment
 
 wait_for_services
-run_maven_phase pipeline pipeline_replay_order_visibility_and_rebuild
-stop_role es
-run_maven_phase index_outage index_outage_quarantines_and_keeps_owner_results
-stop_role rabbit
-run_maven_phase outage outage_keeps_events_and_uses_database
-start_role rabbit
-start_role es
-export CONTENT_SEARCH_TEST_PHASE=recovery
-export CONTENT_SEARCH_TEST_EVIDENCE_DIRECTORY="$ARTIFACT_ROOT/recovery"
-write_test_environment
-wait_for_services
-run_maven_phase recovery recovery_replays_pending_and_failed_events
+if [[ "$KAFKA_PILOT" == 1 ]]; then
+  docker exec --env 'KAFKA_HEAP_OPTS=-Xms32m -Xmx96m' "$KAFKA_NAME" \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:19092 \
+    --create --if-not-exists --topic content.events.v1 --partitions 3 --replication-factor 1 \
+    || die 'cannot initialize the isolated Kafka pilot topic'
+  run_maven_phase kafka_pipeline kafka_pilot_primes_indexes_and_compares_same_event
+  stop_role kafka
+  run_maven_phase kafka_outage kafka_pilot_outage_preserves_rabbit_delivery_and_refuses_stale_cutover
+  start_role kafka
+  run_maven_phase kafka_recovery kafka_pilot_recovers_then_switches_and_returns_to_rabbit
+else
+  run_maven_phase pipeline pipeline_replay_order_visibility_and_rebuild
+  stop_role es
+  run_maven_phase index_outage index_outage_quarantines_and_keeps_owner_results
+  stop_role rabbit
+  run_maven_phase outage outage_keeps_events_and_uses_database
+  start_role rabbit
+  start_role es
+  export CONTENT_SEARCH_TEST_PHASE=recovery
+  export CONTENT_SEARCH_TEST_EVIDENCE_DIRECTORY="$ARTIFACT_ROOT/recovery"
+  write_test_environment
+  wait_for_services
+  run_maven_phase recovery recovery_replays_pending_and_failed_events
+fi
 
 RUNTIME_SUCCEEDED=true
 printf 'M2 search runtime acceptance completed for run %s\n' "$RUN_ID"

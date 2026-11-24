@@ -1,5 +1,7 @@
 package com.example.demo.moderation.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.example.demo.moderation.model.ReportAction;
 import com.example.demo.moderation.model.ReportReason;
 import com.example.demo.moderation.model.ReportStatus;
 import com.example.demo.moderation.model.ReportTargetType;
@@ -8,6 +10,19 @@ import java.time.Instant;
 
 public class ReportResponse {
     private String resolutionReason;
+    private String chatEvidence;
+    private ReportAction pendingAction;
+    private Boolean chatEvidenceUnavailable;
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public String getChatEvidence() { return chatEvidence; }
+    public void setChatEvidence(String chatEvidence) { this.chatEvidence = chatEvidence; }
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public ReportAction getPendingAction() { return pendingAction; }
+    public void setPendingAction(ReportAction pendingAction) { this.pendingAction = pendingAction; }
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Boolean getChatEvidenceUnavailable() { return chatEvidenceUnavailable; }
+    public void setChatEvidenceUnavailable(Boolean unavailable) { this.chatEvidenceUnavailable = unavailable; }
 
     public String getResolutionReason() { return resolutionReason; }
     public void setResolutionReason(String resolutionReason) { this.resolutionReason = resolutionReason; }

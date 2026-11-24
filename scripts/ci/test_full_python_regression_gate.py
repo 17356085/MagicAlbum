@@ -45,7 +45,7 @@ class FullPythonRegressionGateTests(unittest.TestCase):
         source = SMOKE.read_text(encoding="utf-8")
         self.assertIn("--collect-only -q -p no:cacheprovider tests", source)
         self.assertIn("--maxfail=0 -n0", source)
-        self.assertIn("validate_junit \"$FULL_JUNIT_FILE\" 143", source)
+        self.assertIn("validate_junit \"$FULL_JUNIT_FILE\" 148", source)
         self.assertIn("--seed-count 11", source)
         self.assertIn("--verify-admin-and-seed", source)
         self.assertIn("wait_for_gateway_api", source)

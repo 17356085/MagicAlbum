@@ -275,7 +275,7 @@ function updateReportDialogVisibility(open: boolean): void {
                 />
               </div>
             </div>
-            <div v-if="group.items.length > childPageSize" class="mt-3 flex flex-wrap items-center justify-end gap-2 text-xs">
+            <div v-if="group.items.length > childPageSize" class="ui-pagination-controls mt-3 justify-end text-xs">
               <button
                 type="button"
                 class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50"
@@ -284,18 +284,20 @@ function updateReportDialogVisibility(open: boolean): void {
               >
                 上一页
               </button>
-              <span class="ui-muted text-sm">第</span>
-              <input
-                type="text"
-                aria-label="回复页码"
-                class="ui-field min-h-11 w-16 py-1 text-center text-sm"
-                inputmode="numeric"
-                :value="groupPageMap[group.root.id] || 1"
-                @input="emit('update-group-page-input', group.root.id, $event)"
-                @keyup.enter="emit('clamp-group-page', group.root.id, group.items.length)"
-                @blur="emit('clamp-group-page', group.root.id, group.items.length)"
-              />
-              <span class="ui-muted text-sm">/ {{ Math.max(1, Math.ceil(group.items.length / childPageSize)) }} 页</span>
+              <label class="ui-page-position ui-muted text-sm">
+                <span>第</span>
+                <input
+                  type="text"
+                  aria-label="回复页码"
+                  class="ui-field min-h-11 py-1 text-center text-sm"
+                  inputmode="numeric"
+                  :value="groupPageMap[group.root.id] || 1"
+                  @input="emit('update-group-page-input', group.root.id, $event)"
+                  @keyup.enter="emit('clamp-group-page', group.root.id, group.items.length)"
+                  @blur="emit('clamp-group-page', group.root.id, group.items.length)"
+                />
+                <span>/ {{ Math.max(1, Math.ceil(group.items.length / childPageSize)) }} 页</span>
+              </label>
               <button
                 type="button"
                 class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50"
@@ -309,20 +311,22 @@ function updateReportDialogVisibility(open: boolean): void {
         </li>
       </ul>
 
-      <div v-if="hasPagination" class="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
+      <div v-if="hasPagination" class="ui-pagination-controls justify-end border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
         <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50" :disabled="page <= 1" @click="emit('go-prev-page')">上一页</button>
-        <span class="ui-muted text-sm">第</span>
-        <input
-          type="text"
-          aria-label="评论页码"
-          class="ui-field min-h-11 w-16 py-1 text-center text-sm"
-          inputmode="numeric"
-          :value="page"
-          @input="emit('update:page-input', $event)"
-          @keyup.enter="emit('apply-page-input')"
-          @blur="emit('apply-page-input')"
-        />
-        <span class="ui-muted text-sm">/ {{ pageCount }} 页</span>
+        <label class="ui-page-position ui-muted text-sm">
+          <span>第</span>
+          <input
+            type="text"
+            aria-label="评论页码"
+            class="ui-field min-h-11 py-1 text-center text-sm"
+            inputmode="numeric"
+            :value="page"
+            @input="emit('update:page-input', $event)"
+            @keyup.enter="emit('apply-page-input')"
+            @blur="emit('apply-page-input')"
+          />
+          <span>/ {{ pageCount }} 页</span>
+        </label>
         <button type="button" class="ui-button min-h-11 px-3 py-2 text-xs disabled:opacity-50" :disabled="page >= pageCount" @click="emit('go-next-page')">下一页</button>
       </div>
     </div>

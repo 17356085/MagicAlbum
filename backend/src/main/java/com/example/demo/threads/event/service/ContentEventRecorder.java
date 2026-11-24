@@ -7,6 +7,7 @@ import com.example.demo.threads.event.repo.ContentEventOutboxRepository;
 import com.example.demo.threads.maintenance.service.ContentWriteGateService;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +25,9 @@ public class ContentEventRecorder {
     private final ContentEventOutboxRepository repository;
     private final ContentWriteGateService contentWriteGateService;
     private final Clock clock;
+
+    @Value("${app.content.events.kafka.enabled:false}")
+    private boolean kafkaEnabled;
 
     @Autowired
     public ContentEventRecorder(ContentEventOutboxRepository repository,
@@ -77,7 +81,11 @@ public class ContentEventRecorder {
         event.setStatus(ContentEventStatus.PENDING);
         event.setAttempts(0);
         event.setAvailableAt(occurredAt);
-        return repository.save(event);
+        ContentEventOutbox saved = repository.save(event);
+        if (kafkaEnabled) {
+            repository.queueKafkaDelivery(saved.getId());
+        }
+        return saved;
     }
 
     static String normalizeRequestId(String value) {

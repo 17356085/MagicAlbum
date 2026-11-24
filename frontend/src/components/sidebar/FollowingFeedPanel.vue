@@ -51,6 +51,7 @@ import { formatRelativeTime } from '@/composables/time'
 import { normalizeImageUrl } from '@/utils/image'
 import type { Id } from '@/types'
 
+const props = defineProps<{ preferHomeOverview?: boolean }>()
 const authStore = useAuthStore()
 const { isLoggedIn, user } = storeToRefs(authStore)
 const followCollapsed = ref(false)
@@ -143,7 +144,9 @@ async function loadFeedItems(): Promise<void> {
       return
     }
     if (!isCurrentRequest(request)) return
-    const page = await listFollowingFeed({ page: 1, size: 4 })
+    const page = await (props.preferHomeOverview
+      ? listFollowingFeed({ page: 1, size: 4 }, true)
+      : listFollowingFeed({ page: 1, size: 4 }))
     if (isCurrentRequest(request)) feedItems.value = page.items
   } catch (_) {
     if (isCurrentRequest(request)) {

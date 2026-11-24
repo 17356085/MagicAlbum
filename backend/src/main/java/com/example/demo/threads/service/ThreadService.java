@@ -242,6 +242,13 @@ public class ThreadService {
         return list(q, null, sectionId, page, size);
     }
 
+    public void requireNormalThread(Long threadId) {
+        ThreadReadState state = threadRepository.findReadStateById(threadId).orElse(null);
+        if (state == null || !"NORMAL".equals(state.status())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
+        }
+    }
+
     @Transactional(readOnly = true)
     public Page<ThreadDto> listFollowing(Long userId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 20);

@@ -333,7 +333,7 @@ onUnmounted(() => {
       <AppHeader />
 
     <main id="main-content" tabindex="-1" class="community-layout mx-auto grid w-full min-w-0 max-w-7xl grid-cols-1 items-start gap-8 px-4 py-6 sm:px-6 md:py-8">
-      <div tabindex="0" aria-label="社区侧栏" class="community-sidebar-scroll ui-scroll hidden min-w-0 lg:sticky lg:top-24 lg:block lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
+      <div tabindex="0" aria-label="社区侧栏" class="community-sidebar-scroll ui-scroll ui-scroll-on-interaction hidden min-w-0 lg:sticky lg:top-24 lg:block lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
         <SidebarLeft />
       </div>
       <div class="min-w-0">

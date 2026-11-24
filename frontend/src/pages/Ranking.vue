@@ -191,36 +191,40 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="ui-page ranking-page space-y-4">
-    <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">排行榜</h1>
-        <p class="ui-description hidden lg:block">看看社区里正在获得回应和关注的帖子。</p>
-      </div>
-    </header>
+  <section class="ui-page ranking-page">
+    <h1 class="sr-only">排行榜</h1>
     <div class="ui-panel overflow-hidden" data-testid="ranking-filters">
-      <div class="flex flex-wrap items-center gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-        <div class="flex min-w-0 flex-1 gap-2 overflow-x-auto ui-scroll pb-1">
-        <button
-          type="button"
-          class="ui-button shrink-0"
-          :aria-pressed="!sectionId"
-          :class="!sectionId ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
-          @click="changeSection(null)"
+      <div class="flex flex-col gap-3 px-4 py-3">
+        <select
+          class="ui-field lg:hidden"
+          aria-label="排行榜分区"
+          :value="sectionId ?? ''"
+          @change="changeSection(($event.target as HTMLSelectElement).value || null)"
         >
-          全区
-        </button>
-        <button
-          v-for="section in sections"
-          :key="section.id"
-          type="button"
-          class="ui-button shrink-0"
-          :aria-pressed="String(sectionId || '') === String(section.id)"
-          :class="String(sectionId || '') === String(section.id) ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
-          @click="changeSection(section.id)"
-        >
-          {{ section.name }}
-        </button>
+          <option value="">全区</option>
+          <option v-for="section in sections" :key="section.id" :value="String(section.id)">{{ section.name }}</option>
+        </select>
+        <div class="hidden flex-wrap gap-2 lg:flex" role="group" aria-label="排行榜分区">
+          <button
+            type="button"
+            class="ui-button max-w-full"
+            :aria-pressed="!sectionId"
+            :class="!sectionId ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
+            @click="changeSection(null)"
+          >
+            全区
+          </button>
+          <button
+            v-for="section in sections"
+            :key="section.id"
+            type="button"
+            class="ui-button max-w-full"
+            :aria-pressed="String(sectionId) === String(section.id)"
+            :class="String(sectionId) === String(section.id) ? 'border-[var(--ui-accent)] bg-[var(--ui-accent-soft)] text-[var(--ui-accent)]' : ''"
+            @click="changeSection(section.id)"
+          >
+            {{ section.name }}
+          </button>
         </div>
         <span v-if="sectionsLoading" class="text-xs text-[var(--ui-muted)]" role="status">正在加载分区...</span>
         <div v-if="sectionsError" class="flex items-center gap-2 text-sm text-[var(--ui-danger)]" data-testid="sections-error" role="alert">
@@ -229,12 +233,12 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-    <div v-if="loading" class="ui-panel ui-empty" role="status">正在加载...</div>
-    <div v-else-if="error" class="ui-error" data-testid="ranking-error" role="alert">
+    <div v-if="loading" class="ui-panel ui-empty mt-4" role="status">正在加载...</div>
+    <div v-else-if="error" class="ui-error mt-4" data-testid="ranking-error" role="alert">
       <span>{{ error }}</span>
       <button type="button" class="ui-button ml-3" @click="retryRanking">重试排行榜</button>
     </div>
-    <div v-else class="space-y-4">
+    <div v-else class="mt-4 space-y-4">
       <div v-if="items.length === 0" class="ui-panel p-6 text-center text-[var(--ui-muted)]">暂无排行数据</div>
       <div
         v-if="topOne"
@@ -391,7 +395,7 @@ onUnmounted(() => {
       </div>
       <div v-if="items.length || page > 1 || total > 0" class="ui-panel overflow-hidden flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
-        <div class="ranking-pagination flex items-center gap-2">
+        <div class="ranking-pagination ui-pagination-controls">
           <button
             type="button"
             class="ui-button"
@@ -400,16 +404,19 @@ onUnmounted(() => {
           >
             上一页
           </button>
-          <span class="hidden text-sm text-[var(--ui-muted)] lg:inline">第</span>
-          <input
-            v-model="inputPage"
-            class="ui-field hidden w-16 text-center md:block"
-            aria-label="页码"
-            inputmode="numeric"
-            @keyup.enter="goToInputPage"
-            @blur="goToInputPage"
-          />
-          <span class="text-sm text-[var(--ui-muted)]"><span class="lg:hidden">{{ page }}</span> / {{ totalPages }} 页</span>
+          <span class="ui-page-position ui-muted text-sm md:hidden">{{ page }} / {{ totalPages }} 页</span>
+          <label class="ui-page-position ui-muted hidden text-sm md:inline-flex">
+            <span>第</span>
+            <input
+              v-model="inputPage"
+              class="ui-field text-center"
+              aria-label="页码"
+              inputmode="numeric"
+              @keyup.enter="goToInputPage"
+              @blur="goToInputPage"
+            />
+            <span>/ {{ totalPages }} 页</span>
+          </label>
           <button
             type="button"
             class="ui-button"

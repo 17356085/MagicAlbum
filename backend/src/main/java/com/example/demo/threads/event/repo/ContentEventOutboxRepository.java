@@ -30,6 +30,13 @@ public interface ContentEventOutboxRepository extends JpaRepository<ContentEvent
 
     Optional<ContentEventOutbox> findFirstByStatusOrderByAvailableAtAscIdAsc(ContentEventStatus status);
 
+    @Modifying(flushAutomatically = true)
+    @Query(value = """
+            INSERT INTO content_event_kafka_delivery(outbox_id, available_at)
+            VALUES (:outboxId, UTC_TIMESTAMP(6))
+            """, nativeQuery = true)
+    void queueKafkaDelivery(@Param("outboxId") Long outboxId);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update ContentEventOutbox outbox

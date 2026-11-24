@@ -15,13 +15,15 @@ public class ContentSearchReplayService {
     private static final String FAILED_QUEUE = "content.search.failed.v1";
     private final ConnectionFactory connections;
     private final ContentEventPublisherTransport publisher;
-    private final ContentSearchConsumer consumer;
+    private final ContentSearchEventDecoder decoder;
+    private final ContentSearchPipelineMetrics metrics;
 
     public ContentSearchReplayService(ConnectionFactory connections, ContentEventPublisherTransport publisher,
-                                     ContentSearchConsumer consumer) {
+                                     ContentSearchEventDecoder decoder, ContentSearchPipelineMetrics metrics) {
         this.connections = connections;
         this.publisher = publisher;
-        this.consumer = consumer;
+        this.decoder = decoder;
+        this.metrics = metrics;
     }
 
     public ReplayResult replay(int limit) {
@@ -41,17 +43,19 @@ public class ContentSearchReplayService {
                     break;
                 }
                 try {
-                    var event = consumer.decode(failed.getBody());
+                    var event = decoder.decode(failed.getBody());
                     publisher.publish(event);
                     // The original DLQ delivery is retained until the replacement is confirmed and routable.
                     channel.basicAck(failed.getEnvelope().getDeliveryTag(), false);
                     published++;
+                    metrics.replayed();
                 } catch (RuntimeException failure) {
                     if (failure instanceof InvalidContentEventException) {
                         try {
                             publisher.quarantine(failed.getBody());
                             channel.basicAck(failed.getEnvelope().getDeliveryTag(), false);
                             quarantined++;
+                            metrics.quarantined();
                             continue;
                         } catch (RuntimeException quarantineFailure) {
                             failureCode = "QUARANTINE_UNAVAILABLE";

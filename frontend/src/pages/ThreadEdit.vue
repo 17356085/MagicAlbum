@@ -371,7 +371,6 @@ onUnmounted(() => {
         <div class="flex min-w-0 items-center gap-2">
           <h1 class="ui-title truncate">编辑帖子</h1>
         </div>
-        <p class="ui-description hidden lg:block">修改标题、分区和正文内容。</p>
       </div>
       <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 lg:hidden">
         <button type="button" class="ui-button-primary min-h-12 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="submit">

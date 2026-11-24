@@ -73,7 +73,10 @@
                 </div>
                 <p class="text-sm leading-6 text-[var(--ui-ink)]">{{ report.detail || '未提供补充说明' }}</p>
                 <p v-if="report.resolutionReason" class="text-sm leading-6 text-[var(--ui-muted)]">处理理由：{{ report.resolutionReason }}</p>
-                <div class="flex flex-wrap items-center gap-3 text-xs">
+                  <p v-if="report.chatEvidence" class="whitespace-pre-wrap rounded-lg bg-[var(--ui-subtle)] p-3 text-sm">{{ report.chatEvidence }}</p>
+                  <p v-if="report.chatEvidenceUnavailable" class="text-sm text-[var(--ui-muted)]">聊天证据暂不可用。</p>
+                  <p v-if="report.pendingAction" class="text-sm text-[var(--ui-muted)]">正在等待聊天服务确认{{ actionLabel(report.pendingAction) }}。</p>
+                  <div class="flex flex-wrap items-center gap-3 text-xs">
                   <RouterLink v-if="threadPath(report)" :to="threadPath(report) || ''" class="font-medium text-[var(--ui-accent)] underline underline-offset-2 hover:no-underline">查看相关帖子</RouterLink>
                   <span class="text-[var(--ui-muted)]">目标 #{{ report.targetId }}</span>
                   <span v-if="report.reviewerId !== null && report.reviewerId !== undefined" class="text-[var(--ui-muted)]">处理人 #{{ report.reviewerId }}</span>
@@ -102,9 +105,9 @@
 
         <nav v-if="!loading && !reportsError && totalPages > 1" class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between" aria-label="举报列表分页">
           <span class="text-[var(--ui-muted)]">共 {{ total }} 条举报</span>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="ui-pagination-controls">
             <button type="button" class="ui-button" :disabled="currentPage <= 1 || loading || pendingReportId !== null" @click="goToPage(currentPage - 1)">上一页</button>
-            <span class="min-w-20 text-center text-[var(--ui-muted)]">第 {{ currentPage }} / {{ totalPages }} 页</span>
+            <span class="ui-page-position ui-muted">第 {{ currentPage }} / {{ totalPages }} 页</span>
             <button type="button" class="ui-button" :disabled="currentPage >= totalPages || loading || pendingReportId !== null" @click="goToPage(currentPage + 1)">下一页</button>
           </div>
         </nav>
@@ -140,7 +143,7 @@ const statusOptions: Array<{ value: AdminReportStatus; label: string }> = [
   { value: 'DISMISSED', label: '已驳回' },
   { value: 'RESTORED', label: '已恢复' },
 ]
-const targetTypeLabels: Record<string, string> = { THREAD: '帖子', POST: '评论' }
+const targetTypeLabels: Record<string, string> = { THREAD: '帖子', POST: '评论', CHAT_MESSAGE: '聊天消息' }
 const reasonLabels: Record<string, string> = { SPAM: '垃圾内容', HARASSMENT: '骚扰或辱骂', ABUSE: '辱骂或骚扰', ILLEGAL: '违规内容', ADULT: '不当内容', COPYRIGHT: '侵权内容', OTHER: '其他' }
 const statusLabels: Record<string, string> = { PENDING: '待处理', DISMISSED: '已驳回', HIDDEN: '已隐藏', RESTORED: '已恢复', RESOLVED: '已处理' }
 
@@ -225,7 +228,9 @@ function targetTypeLabel(value: string | null | undefined): string { const key =
 function reasonLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return reasonLabels[key] || String(value || '未说明') }
 function statusLabel(value: string | null | undefined): string { const key = String(value || '').toUpperCase(); return statusLabels[key] || String(value || '未知状态') }
 function actionLabel(action: AdminReportAction): string { return action === 'HIDE' ? '隐藏内容' : action === 'RESTORE' ? '恢复内容' : '驳回举报' }
-function canResolve(report: AdminReport): boolean { return report.status === 'PENDING' || report.status === 'HIDDEN' }
+function canResolve(report: AdminReport): boolean {
+  return !report.pendingAction && (report.status === 'PENDING' || report.status === 'HIDDEN')
+}
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return '时间未知'
@@ -376,14 +381,16 @@ async function submitResolution(report: AdminReport): Promise<void> {
   actionError.value = ''
   reasonError.value = ''
   try {
-    await resolveAdminReport(report.id, active.action, reason)
+    const result = await resolveAdminReport(report.id, active.action, reason)
     if (!ensureCurrentSession(snapshot, run)) return
     const refreshed = await loadReports(run, snapshot)
     if (!ensureCurrentSession(snapshot, run)) return
     if (adminState.value === 'denied') return
     activeResolution.value = null
     resolutionReason.value = ''
-    feedback.value = refreshed ? `${actionLabel(active.action)}成功，列表已刷新。` : `${actionLabel(active.action)}成功，但列表刷新失败，请重试。`
+    feedback.value = result?.pendingAction
+      ? '已提交审核操作，等待聊天服务确认。'
+      : refreshed ? `${actionLabel(active.action)}成功，列表已刷新。` : `${actionLabel(active.action)}成功，但列表刷新失败，请重试。`
   } catch (error) {
     if (ensureCurrentSession(snapshot, run)) {
       if (errorStatus(error) === 403) {

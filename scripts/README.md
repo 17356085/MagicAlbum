@@ -16,14 +16,20 @@
 | 入口 | 范围 |
 | --- | --- |
 | `Test-ComposeRuntime.ps1` | 完整 Compose、API/浏览器、重启和独立恢复；`-IncludeStageFixtures` 增加权限、摘要与通知夹具 |
-| `Test-ComposeBackup.ps1` | 停止源业务写入后比较两库与上传文件，恢复到独立项目 |
+| `Test-ComposeBackup.ps1` | 停止源业务写入后比较数据库与上传文件，恢复到独立项目。`-IncludeSplitChat` 同时验证聊天专库 |
 | `Test-ContentEventRuntime.ps1` | 真实 MySQL 内容事件事务与升级 |
-| `Test-NotificationRuntime.ps1` | 独立通知数据库、投递、幂等、隔离与恢复 |
+| `Test-NotificationRuntime.ps1` | 通知库共享账号切换、跨库拒绝、Flyway 升级、停机补投、幂等、收件人隔离和 SSE 游标补拉 |
+| `ci/notification-postgres-pilot.py` | 用隔离的 MySQL 和 PostgreSQL 对照通知数据、幂等、并发游标、SSE 补拉与反向迁移 |
+| `ci/content-search-smoke.sh` | 真实内容搜索链路。设置 `M2_CI_KAFKA_PILOT=1` 验证两条事件链路的故障、恢复、索引切换与回退 |
+| `Test-ChatDataMigration.ps1` | 独立 MySQL 里复制聊天的五张表，核对权限、校验和与水位，再模拟目标写入后反向对账 |
+| `Test-ChatRealtimeRuntime.ps1` | 用临时 RabbitMQ 验证两个 Go 实例的推送扇出、账号隔离与重连 |
 | `Test-PhoneUniqueness.ps1` | 手机号约束和并发注册专项，参数及要求见工程手册 |
 | `Test-PerfServices.ps1` | 性能实验依赖健康检查，不代表容量压测达标 |
 | `Test-ExternalSummary.ps1` | 显式真实模型验收，使用私有配置并可能产生费用；不属于默认离线回归 |
 
 `ci/` 包含 Nginx 地址恢复、内容搜索、社区治理、Go 媒体/SSE、受控摘要及浏览器回归。完整 Python 回归与原 mandatory16 分别执行，具体准备条件见[测试说明](../tests/README.md)和[CI 配置](../.github/workflows/ci.yml)。
+
+`ci/compose-browser-smoke.sh` 的可选验收可与 `BLUEALBUM_FULL_PYTHON_REGRESSION=1` 联用。用 `BLUEALBUM_CHAT_GRPC_CHECK=1` 启动分库聊天及私有 TLS 核验，用 `BLUEALBUM_HOME_BFF_ENABLED=true` 启用首页组合，用 `BLUEALBUM_COMMENT_EVENTS_CHECK=1` 检查评论通知队列，用 `BLUEALBUM_TELEMETRY_CHECK=1` 和本机 `BLUEALBUM_OTEL_AGENT_JAR` 验证跨进程链路和日志。各选项使用同一个隔离栈，默认验收继续使用原有配置。[通信决策](../docs/architecture/09-工程规范与决策.md) · [链路与日志手册](../docs/engineering/observability.md#opentelemetry-链路与-loki-日志)
 
 ## 不依赖业务服务的检查
 

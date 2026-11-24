@@ -12,6 +12,7 @@ import com.example.demo.moderation.model.ReportStatus;
 import com.example.demo.moderation.service.ContentReportService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -59,7 +60,7 @@ public class ContentReportController {
         else governance.requireManager(adminId);
         Page<ReportResponse> result = governance == null ? reportService.list(status, page, size)
                 : reportService.listForReviewer(adminId, status, page, size);
-        return ResponseEntity.ok(new ReportPageResponse(
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore().cachePrivate()).body(new ReportPageResponse(
                 result.getContent(),
                 result.getNumber() + 1,
                 result.getSize(),
@@ -75,7 +76,9 @@ public class ContentReportController {
         Long adminId = currentUserIdOrNull();
         if (governance == null) adminAccessService.requireAdmin(adminId);
         else governance.requireManager(adminId);
-        return ResponseEntity.ok(reportService.resolve(adminId, reportId, request));
+        var response = reportService.resolve(adminId, reportId, request);
+        return ResponseEntity.status(response.getPendingAction() == null ? HttpStatus.OK : HttpStatus.ACCEPTED)
+                .body(response);
     }
 
     private Long currentUserId() {

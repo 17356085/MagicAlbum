@@ -71,6 +71,11 @@ public class JwtTokenProvider {
     }
 
     public Long getUserIdFromToken(String token) {
+        Session session = getSessionFromToken(token);
+        return session == null ? null : session.userId();
+    }
+
+    public Session getSessionFromToken(String token) {
         try {
             var claims = Jwts.parser()
                     .verifyWith(getKey())
@@ -83,11 +88,13 @@ public class JwtTokenProvider {
                 return null;
             }
             long userId = Long.parseLong(sub);
-            return userId > 0 ? userId : null;
+            return userId > 0 ? new Session(userId, claims.getExpiration().toInstant().getEpochSecond()) : null;
         } catch (Exception e) {
             return null;
         }
     }
+
+    public record Session(long userId, long expiresAt) {}
 
     private boolean isObviousPlaceholder(String value) {
         String normalized = value.toLowerCase(Locale.ROOT);

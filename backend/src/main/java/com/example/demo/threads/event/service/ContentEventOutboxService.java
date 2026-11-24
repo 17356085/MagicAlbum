@@ -4,6 +4,7 @@ import com.example.demo.threads.event.config.ContentEventProperties;
 import com.example.demo.threads.event.dto.ContentEventMessage;
 import com.example.demo.threads.event.entity.ContentEventOutbox;
 import com.example.demo.threads.event.entity.ContentEventStatus;
+import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.example.demo.threads.event.repo.ContentEventOutboxRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -150,17 +151,20 @@ public class ContentEventOutboxService {
         return repository.countByStatus(status);
     }
 
-    public Diagnostics getDiagnostics() {
+    public long oldestPendingAgeSeconds() {
         Instant now = clock.instant();
+        return repository
+                .findFirstByStatusOrderByAvailableAtAscIdAsc(ContentEventStatus.PENDING)
+                .map(row -> ageSeconds(row.getAvailableAt(), now))
+                .orElse(0L);
+    }
+
+    public Diagnostics getDiagnostics() {
         Map<ContentEventStatus, Long> counts = new EnumMap<>(ContentEventStatus.class);
         for (ContentEventStatus status : ContentEventStatus.values()) {
             counts.put(status, repository.countByStatus(status));
         }
-        long oldestPendingAgeSeconds = repository
-                .findFirstByStatusOrderByAvailableAtAscIdAsc(ContentEventStatus.PENDING)
-                .map(row -> ageSeconds(row.getAvailableAt(), now))
-                .orElse(0L);
-        return new Diagnostics(Map.copyOf(counts), oldestPendingAgeSeconds);
+        return new Diagnostics(Map.copyOf(counts), oldestPendingAgeSeconds());
     }
 
     private List<Delivery> claim(String owner, int limit) {
@@ -226,7 +230,7 @@ public class ContentEventOutboxService {
                 : row.getAvailableAt();
     }
 
-    private static ContentEventMessage toMessage(ContentEventOutbox event) {
+    static ContentEventMessage toMessage(ContentEventOutbox event) {
         return new ContentEventMessage(
                 event.getEventId(),
                 event.getSchemaVersion(),
@@ -267,7 +271,7 @@ public class ContentEventOutboxService {
     }
 
     private static String failureCode(Throwable failure) {
-        if (failure instanceof ContentEventPublisherTransport.PublishException publishException) {
+        if (failure instanceof PublishException publishException) {
             return publishException.code().name();
         }
         if (failure == null) {

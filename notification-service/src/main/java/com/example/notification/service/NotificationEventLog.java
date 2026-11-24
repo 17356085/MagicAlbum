@@ -1,5 +1,6 @@
 package com.example.notification.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -13,13 +14,21 @@ import java.util.List;
 @Service
 public class NotificationEventLog {
     private final JdbcTemplate jdbc;
+    private final NotificationStreamCursorDialect cursorDialect;
 
-    public NotificationEventLog(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    @Autowired
+    public NotificationEventLog(JdbcTemplate jdbc, NotificationStreamCursorDialect cursorDialect) {
+        this.jdbc = jdbc;
+        this.cursorDialect = cursorDialect;
+    }
+
+    public NotificationEventLog(JdbcTemplate jdbc) {
+        this(jdbc, new MySqlNotificationStreamCursorDialect());
+    }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void append(Long userId, Long notificationId, String kind) {
-        jdbc.update("INSERT INTO notification_stream_cursor(user_id,next_sequence) VALUES (?,0) "
-                + "ON DUPLICATE KEY UPDATE next_sequence=next_sequence", userId);
+        cursorDialect.ensureCursor(jdbc, userId);
         Long previous = jdbc.queryForObject("SELECT next_sequence FROM notification_stream_cursor WHERE user_id=? FOR UPDATE", Long.class, userId);
         long sequence = Math.addExact(previous == null ? 0 : previous, 1);
         jdbc.update("UPDATE notification_stream_cursor SET next_sequence=? WHERE user_id=?", sequence, userId);

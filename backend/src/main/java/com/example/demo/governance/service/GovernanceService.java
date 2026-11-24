@@ -1,6 +1,5 @@
 package com.example.demo.governance.service;
 
-import com.example.demo.common.RedisKeys;
 import com.example.demo.governance.dto.AuditView;
 import com.example.demo.governance.dto.SectionRequest;
 import com.example.demo.governance.dto.SectionView;
@@ -15,23 +14,15 @@ import com.example.demo.governance.repo.CommunityAuditRepository;
 import com.example.demo.governance.repo.CommunityModeratorScopeRepository;
 import com.example.demo.governance.repo.CommunityPostingRestrictionRepository;
 import com.example.demo.governance.repo.CommunityStateRepository;
-import com.example.demo.governance.repo.SectionGovernanceRepository;
-import com.example.demo.sections.entity.Section;
-import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -58,49 +49,28 @@ public class GovernanceService {
     private static final Pattern SECTION_SLUG = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
 
     private final UserRepository userRepository;
-    private final SectionRepository sectionRepository;
-    private final SectionGovernanceRepository sectionGovernanceRepository;
+    private final SectionAdministration sectionAdministration;
     private final CommunityStateRepository stateRepository;
     private final CommunityAdminRoleRepository adminRoleRepository;
     private final CommunityModeratorScopeRepository moderatorScopeRepository;
     private final CommunityPostingRestrictionRepository restrictionRepository;
     private final CommunityAuditRepository auditRepository;
-    private StringRedisTemplate redisTemplate;
 
-    /** Constructor retained for focused unit tests that do not need Redis. */
     public GovernanceService(UserRepository userRepository,
-                             SectionRepository sectionRepository,
-                             SectionGovernanceRepository sectionGovernanceRepository,
+                             SectionAdministration sectionAdministration,
                              CommunityStateRepository stateRepository,
                              CommunityAdminRoleRepository adminRoleRepository,
                              CommunityModeratorScopeRepository moderatorScopeRepository,
                              CommunityPostingRestrictionRepository restrictionRepository,
                              CommunityAuditRepository auditRepository) {
         this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
-        this.sectionRepository = Objects.requireNonNull(sectionRepository, "sectionRepository");
-        this.sectionGovernanceRepository = Objects.requireNonNull(sectionGovernanceRepository,
-                "sectionGovernanceRepository");
+        this.sectionAdministration = Objects.requireNonNull(sectionAdministration, "sectionAdministration");
         this.stateRepository = Objects.requireNonNull(stateRepository, "stateRepository");
         this.adminRoleRepository = Objects.requireNonNull(adminRoleRepository, "adminRoleRepository");
         this.moderatorScopeRepository = Objects.requireNonNull(moderatorScopeRepository,
                 "moderatorScopeRepository");
         this.restrictionRepository = Objects.requireNonNull(restrictionRepository, "restrictionRepository");
         this.auditRepository = Objects.requireNonNull(auditRepository, "auditRepository");
-    }
-
-    @Autowired
-    public GovernanceService(UserRepository userRepository,
-                             SectionRepository sectionRepository,
-                             SectionGovernanceRepository sectionGovernanceRepository,
-                             CommunityStateRepository stateRepository,
-                             CommunityAdminRoleRepository adminRoleRepository,
-                             CommunityModeratorScopeRepository moderatorScopeRepository,
-                             CommunityPostingRestrictionRepository restrictionRepository,
-                             CommunityAuditRepository auditRepository,
-                             ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
-        this(userRepository, sectionRepository, sectionGovernanceRepository, stateRepository,
-                adminRoleRepository, moderatorScopeRepository, restrictionRepository, auditRepository);
-        this.redisTemplate = redisTemplateProvider == null ? null : redisTemplateProvider.getIfAvailable();
     }
 
     /**
@@ -187,8 +157,8 @@ public class GovernanceService {
     @Transactional
     public void assertCanWrite(Long actor, Long sectionId) {
         lockActor(actor);
-        Section section = sectionId == null ? null
-                : sectionGovernanceRepository.findByIdForWriting(sectionId).orElse(null);
+        SectionAdministration.SectionView section = sectionId == null ? null
+                : sectionAdministration.findByIdForWriting(sectionId).orElse(null);
         if (section == null) {
             throw failure(HttpStatus.NOT_FOUND, "Section not found");
         }
@@ -199,7 +169,7 @@ public class GovernanceService {
                 throw failure(HttpStatus.FORBIDDEN, "Posting is restricted");
             }
         }
-        if (readArchived(section)) {
+        if (section.archived()) {
             throw failure(HttpStatus.FORBIDDEN, "Section is archived");
         }
     }
@@ -301,8 +271,7 @@ public class GovernanceService {
         User target = lockUser(targetUserId);
         Set<Long> sectionIds = normalizeSectionIds(requestedSectionIds);
         if (!sectionIds.isEmpty()) {
-            List<Section> sections = sectionRepository.findAllById(sectionIds);
-            Set<Long> found = sections.stream().map(Section::getId).collect(java.util.stream.Collectors.toSet());
+            Set<Long> found = sectionAdministration.findExistingIds(sectionIds);
             if (found.size() != sectionIds.size()) {
                 throw failure(HttpStatus.NOT_FOUND, "Section not found");
             }
@@ -342,39 +311,37 @@ public class GovernanceService {
     @Transactional(readOnly = true)
     public List<SectionView> listSections(Long actor) {
         requireAdmin(actor);
-        return sectionRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"))
-                .stream().map(this::toSectionView).toList();
+        return sectionAdministration.listAll().stream().map(GovernanceService::toSectionView).toList();
     }
 
     @Transactional
     public SectionView createSection(Long actor, SectionRequest request) {
         lockAndRequireManager(actor);
         SectionValues values = normalizeSectionRequest(request, false, null);
-        ensureSlugAvailable(values.slug(), null);
-        Section section = new Section();
-        applySectionValues(section, values);
-        Section saved = sectionRepository.save(section);
-        sectionRepository.flush();
-        auditInternal(actor, "SECTION_CREATED", "SECTION", saved.getId(), values.reason());
-        invalidateSectionsCacheAfterCommit();
-        return toSectionView(saved);
+        try {
+            SectionAdministration.SectionView saved = sectionAdministration.create(toSectionSettings(values));
+            auditInternal(actor, "SECTION_CREATED", "SECTION", saved.id(), values.reason());
+            return toSectionView(saved);
+        } catch (SectionAdministration.SlugAlreadyExistsException conflict) {
+            throw failure(HttpStatus.CONFLICT, "Section slug already exists");
+        }
     }
 
     @Transactional
     public SectionView updateSection(Long actor, Long sectionId, SectionRequest request) {
         lockAndRequireManager(actor);
         SectionValues values = normalizeSectionRequest(request, true, sectionId);
-        Section section = sectionGovernanceRepository.findByIdForUpdate(sectionId).orElse(null);
-        if (section == null) {
-            throw failure(HttpStatus.NOT_FOUND, "Section not found");
+        try {
+            SectionAdministration.SectionView saved = sectionAdministration
+                    .update(sectionId, toSectionSettings(values)).orElse(null);
+            if (saved == null) {
+                throw failure(HttpStatus.NOT_FOUND, "Section not found");
+            }
+            auditInternal(actor, "SECTION_UPDATED", "SECTION", saved.id(), values.reason());
+            return toSectionView(saved);
+        } catch (SectionAdministration.SlugAlreadyExistsException conflict) {
+            throw failure(HttpStatus.CONFLICT, "Section slug already exists");
         }
-        ensureSlugAvailable(values.slug(), sectionId);
-        applySectionValues(section, values);
-        Section saved = sectionRepository.save(section);
-        sectionRepository.flush();
-        auditInternal(actor, "SECTION_UPDATED", "SECTION", saved.getId(), values.reason());
-        invalidateSectionsCacheAfterCommit();
-        return toSectionView(saved);
     }
 
     @Transactional(readOnly = true)
@@ -392,9 +359,9 @@ public class GovernanceService {
                 access.postingRestricted(), access.restrictedUntil());
     }
 
-    public SectionView toSectionView(Section section) {
-        return new SectionView(section.getId(), section.getName(), section.getSlug(), section.getDescription(),
-                section.getRules(), Boolean.TRUE.equals(section.getVisible()), readArchived(section));
+    private static SectionView toSectionView(SectionAdministration.SectionView section) {
+        return new SectionView(section.id(), section.name(), section.slug(), section.description(),
+                section.rules(), section.visible(), section.archived());
     }
 
     private CommunityState lockPolicyRow() {
@@ -508,24 +475,9 @@ public class GovernanceService {
                 normalizeReason(request.reason()));
     }
 
-    private void applySectionValues(Section section, SectionValues values) {
-        section.setName(values.name());
-        section.setSlug(values.slug());
-        section.setDescription(values.description());
-        section.setRules(values.rules());
-        section.setVisible(values.visible());
-        if (values.archived() != null) {
-            writeArchived(section, values.archived());
-        }
-    }
-
-    private void ensureSlugAvailable(String slug, Long sectionId) {
-        Optional<Section> duplicate = sectionId == null
-                ? sectionGovernanceRepository.findBySlug(slug)
-                : sectionGovernanceRepository.findBySlugAndIdNot(slug, sectionId);
-        if (duplicate.isPresent()) {
-            throw failure(HttpStatus.CONFLICT, "Section slug already exists");
-        }
+    private SectionAdministration.SectionSettings toSectionSettings(SectionValues values) {
+        return new SectionAdministration.SectionSettings(values.name(), values.slug(), values.description(),
+                values.rules(), values.visible(), values.archived());
     }
 
     private String normalizeSlug(String value) {
@@ -561,38 +513,6 @@ public class GovernanceService {
             throw failure(HttpStatus.BAD_REQUEST, field + " is invalid");
         }
         return normalized;
-    }
-
-    private boolean readArchived(Section section) {
-        return Boolean.TRUE.equals(section.getArchived());
-    }
-
-    private void writeArchived(Section section, boolean archived) {
-        section.setArchived(archived);
-    }
-
-    private void invalidateSectionsCacheAfterCommit() {
-        if (redisTemplate == null) {
-            return;
-        }
-        Runnable invalidate = () -> {
-            try {
-                redisTemplate.opsForValue().set(
-                        RedisKeys.sectionsListGeneration(), UUID.randomUUID().toString());
-            } catch (RuntimeException ignored) {
-                // Cache is an optimization; a Redis outage must not roll back DB governance.
-            }
-        };
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    invalidate.run();
-                }
-            });
-        } else {
-            invalidate.run();
-        }
     }
 
     private static ResponseStatusException failure(HttpStatus status, String message) {

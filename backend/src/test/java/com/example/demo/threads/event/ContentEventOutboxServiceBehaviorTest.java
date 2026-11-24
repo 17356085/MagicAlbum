@@ -5,6 +5,8 @@ import com.example.demo.threads.event.dto.ContentEventMessage;
 import com.example.demo.threads.event.entity.ContentEventOutbox;
 import com.example.demo.threads.event.entity.ContentEventStatus;
 import com.example.demo.threads.event.entity.ContentEventType;
+import com.example.demo.threads.event.port.ContentEventPublisher.Code;
+import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.example.demo.threads.event.repo.ContentEventOutboxRepository;
 import com.example.demo.threads.event.service.ContentEventOutboxService;
 import org.junit.jupiter.api.Test;
@@ -62,9 +64,7 @@ class ContentEventOutboxServiceBehaviorTest {
                 eq(ContentEventStatus.PENDING), eq(clock.instant().plusSeconds(2)),
                 eq("CONFIRM_TIMEOUT"), eq("worker-a"), eq(clock.instant()))).thenReturn(1);
 
-        assertThat(service.markFailure(delivery,
-                new com.example.demo.threads.event.service.ContentEventPublisherTransport.PublishException(
-                        com.example.demo.threads.event.service.ContentEventPublisherTransport.Code.CONFIRM_TIMEOUT)))
+        assertThat(service.markFailure(delivery, new PublishException(Code.CONFIRM_TIMEOUT)))
                 .isTrue();
 
         when(repository.retryFailed(eq(9L), eq(ContentEventStatus.FAILED),

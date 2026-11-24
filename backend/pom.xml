@@ -30,6 +30,10 @@
         <java.checkstyle.config>${project.basedir}/../config/checkstyle.xml</java.checkstyle.config>
         <java.version>21</java.version>
         <jjwt.version>0.12.5</jjwt.version>
+        <grpc.version>1.74.0</grpc.version>
+        <protobuf.version>3.25.5</protobuf.version>
+        <protobuf-maven-plugin.version>0.6.1</protobuf-maven-plugin.version>
+        <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
         <!-- 全局禁用 AOT 与测试 AOT，避免在 Windows 环境下触发删除目录异常 -->
         <spring.aot.enabled>false</spring.aot.enabled>
         <spring.test.aot.enabled>false</spring.test.aot.enabled>
@@ -107,6 +111,29 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- Opt-in private gRPC session-authentication listener. -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+            <version>${grpc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
+            <version>${grpc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-stub</artifactId>
+            <version>${grpc.version}</version>
+        </dependency>
+
+        <!-- Optional Kafka transport for the content-event envelope. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
         </dependency>
 
         <!-- JDBC 基础（Spring Boot 4 将 DataSourceAutoConfiguration 拆分到 JDBC 模块） -->
@@ -213,6 +240,31 @@
             </resource>
         </resources>
         <plugins>
+            <!-- Generate Java protobuf and gRPC stubs from the versioned contract. -->
+            <plugin>
+                <groupId>kr.motd.maven</groupId>
+                <artifactId>os-maven-plugin</artifactId>
+                <version>${os-maven-plugin.version}</version>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <groupId>org.xolstice.maven.plugins</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>${protobuf-maven-plugin.version}</version>
+                <configuration>
+                    <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
+                    <pluginId>grpc-java</pluginId>
+                    <pluginArtifact>io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}</pluginArtifact>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>compile-custom</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -244,7 +296,7 @@
                 <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
-                    <mainClass>com.example.demo.Demo1Application</mainClass>
+                    <mainClass>com.example.chatprocess.BackendProcessLauncher</mainClass>
                 </configuration>
                 <executions>
                     <execution>

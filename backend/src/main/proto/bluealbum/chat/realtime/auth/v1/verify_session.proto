@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package bluealbum.chat.realtime.auth.v1;
+
+option java_multiple_files = true;
+option java_package = "com.example.demo.chat.realtimegrpc.contract";
+option java_outer_classname = "VerifySessionProto";
+option go_package = "github.com/17356085/MagicAlbum/services/chat-realtime/internal/authv1;authv1";
+
+// Private, opt-in authentication contract for the chat realtime pilot.
+// The bearer token travels in the request body; the service credential must
+// be supplied independently in the x-bluealbum-grpc-credential metadata.
+service VerifySession {
+  rpc VerifySession(VerifySessionRequest) returns (VerifySessionResponse);
+}
+
+message VerifySessionRequest {
+  string token = 1;
+}
+
+message VerifySessionResponse {
+  int64 user_id = 1;
+  int64 expires_at = 2;
+}

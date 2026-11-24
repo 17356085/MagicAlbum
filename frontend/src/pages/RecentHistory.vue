@@ -295,17 +295,14 @@ onBeforeUnmount(() => {
 <template>
   <section class="ui-page">
     <section v-if="isLoggedIn" class="ui-panel overflow-hidden">
-      <header class="ui-page-header border-b border-[var(--ui-border)] px-4 py-4 sm:px-6">
+      <header class="ui-toolbar justify-between sm:px-6">
         <div class="flex min-w-0 items-center gap-3">
           <button type="button" class="ui-button shrink-0 px-3" @click="safeBack()" aria-label="返回上一页" title="返回上一页">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-5 w-5">
               <path fill-rule="evenodd" d="M7.22 12.53a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 1 1 1.06 1.06L9.81 11.5H20.25a.75.75 0 0 1 0 1.5H9.81l3.72 4.22a.75.75 0 1 1-1.06 1.06l-5.25-5.25Z" clip-rule="evenodd" />
             </svg>
           </button>
-          <div class="min-w-0">
-            <h1 class="ui-title">本机浏览记录</h1>
-            <p class="ui-description">保留最近 90 天浏览过的帖子</p>
-          </div>
+          <h1 class="sr-only">本机浏览记录</h1>
         </div>
         <button type="button" class="ui-button text-red-600 hover:border-red-300 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30" :disabled="!hasValidDisplayedScope" @click="clearAll">清空</button>
       </header>
@@ -361,11 +358,13 @@ onBeforeUnmount(() => {
 
       <footer class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ filteredItems.length }} 条 · 每页 {{ query.size }} 条</div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="ui-pagination-controls">
           <button type="button" class="ui-button" :disabled="(query.page || 1) <= 1" @click="prevPage">上一页</button>
-          <span class="text-sm text-[var(--ui-muted)]">第</span>
-          <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
-          <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+          <label class="ui-page-position ui-muted text-sm">
+            <span>第</span>
+            <input v-model="inputPage" aria-label="页码" class="ui-field text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+            <span>/ {{ totalPages }} 页</span>
+          </label>
           <button type="button" class="ui-button" :disabled="(query.page || 1) >= totalPages" @click="nextPage">下一页</button>
         </div>
       </footer>

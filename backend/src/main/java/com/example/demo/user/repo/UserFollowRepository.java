@@ -20,4 +20,13 @@ public interface UserFollowRepository extends JpaRepository<UserFollow, Long> {
 
     @Query("SELECT uf.followerId FROM UserFollow uf WHERE uf.followingId = :followingId ORDER BY uf.createdAt DESC")
     Page<Long> findFollowerIds(Long followingId, Pageable pageable);
+
+    @Query("""
+            SELECT outgoing.followingId FROM UserFollow outgoing
+            WHERE outgoing.followerId = :userId AND outgoing.followingId NOT IN :excluded
+              AND EXISTS (SELECT incoming.id FROM UserFollow incoming
+                          WHERE incoming.followerId = outgoing.followingId AND incoming.followingId = :userId)
+            ORDER BY outgoing.createdAt DESC, outgoing.followingId
+            """)
+    Page<Long> findMutualIds(Long userId, java.util.Collection<Long> excluded, Pageable pageable);
 }

@@ -1,4 +1,5 @@
 import { onBeforeUnmount, ref, type Ref, watch } from 'vue'
+import { getHomeOverview, homeOverviewEnabled } from '@/api/homeOverview'
 import { getMyProfile } from '@/api/settings'
 import type { ProfileUpdatedDetail, User } from '@/types'
 
@@ -8,6 +9,7 @@ interface HeaderIdentityOptions {
   user: Readonly<Ref<User | null>>
   updateCurrentUser: (patch: Partial<User>) => void
   hydrateCurrentUser: (patch: Partial<User>, expectedToken: string) => boolean
+  onHomePage?: () => boolean
 }
 
 interface ProfileRequest {
@@ -18,7 +20,9 @@ interface ProfileRequest {
   promise: Promise<void>
 }
 
-export function useHeaderIdentity({ isLoggedIn, token, user, updateCurrentUser, hydrateCurrentUser }: HeaderIdentityOptions) {
+export function useHeaderIdentity({
+  isLoggedIn, token, user, updateCurrentUser, hydrateCurrentUser, onHomePage,
+}: HeaderIdentityOptions) {
   const avatarUrl = ref('')
   const displayName = ref('')
   const profileHydrated = ref(false)
@@ -115,9 +119,11 @@ export function useHeaderIdentity({ isLoggedIn, token, user, updateCurrentUser, 
       ''
   }
 
-  async function runProfileRequest(request: ProfileRequest): Promise<void> {
+  async function runProfileRequest(request: ProfileRequest, force: boolean): Promise<void> {
     try {
-      const profile = await getMyProfile()
+      const overview = !force && homeOverviewEnabled && onHomePage?.() ? await getHomeOverview() : null
+      if (!isCurrentProfileRequest(request)) return
+      const profile = overview?.profile ?? await getMyProfile()
       if (!isCurrentProfileRequest(request)) return
 
       const patch = profilePatch(profile)
@@ -173,7 +179,7 @@ export function useHeaderIdentity({ isLoggedIn, token, user, updateCurrentUser, 
       generation: requestGeneration,
       promise: Promise.resolve(),
     }
-    request.promise = runProfileRequest(request)
+    request.promise = runProfileRequest(request, force)
     profileRequest = request
     return request.promise
   }

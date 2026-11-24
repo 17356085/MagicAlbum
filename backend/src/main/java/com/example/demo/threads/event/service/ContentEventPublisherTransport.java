@@ -2,6 +2,7 @@ package com.example.demo.threads.event.service;
 
 import com.example.demo.threads.event.config.ContentEventProperties;
 import com.example.demo.threads.event.dto.ContentEventMessage;
+import com.example.demo.threads.event.port.ContentEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.amqp.core.Message;
@@ -37,7 +38,7 @@ import java.util.concurrent.TimeoutException;
  */
 @Component
 @ConditionalOnProperty(name = "app.content.events.enabled", havingValue = "true")
-public class ContentEventPublisherTransport {
+public class ContentEventPublisherTransport implements ContentEventPublisher {
     public static final String EXCHANGE = "content.events.v1";
     public static final String ROUTING_KEY = "thread.changed";
 
@@ -95,6 +96,7 @@ public class ContentEventPublisherTransport {
         rabbitTemplate.setReturnsCallback(returned -> { });
     }
 
+    @Override
     public void publish(ContentEventMessage event) {
         if (event == null || event.eventId() == null || event.eventId().isBlank()) {
             throw new PublishException(Code.SERIALIZATION);
@@ -193,26 +195,4 @@ public class ContentEventPublisherTransport {
             throw new IllegalStateException("spring.rabbitmq.publisher-returns must be true");
         }
     }
-
-    public enum Code {
-        SERIALIZATION,
-        CONFIRM_NACK,
-        CONFIRM_TIMEOUT,
-        RETURNED,
-        TRANSPORT
-    }
-
-    public static final class PublishException extends RuntimeException {
-        private final Code code;
-
-        public PublishException(Code code) {
-            super(code == null ? Code.TRANSPORT.name() : code.name());
-            this.code = code == null ? Code.TRANSPORT : code;
-        }
-
-        public Code code() {
-            return code;
-        }
-    }
-
 }

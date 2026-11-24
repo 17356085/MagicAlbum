@@ -21,6 +21,10 @@ vi.mock('@/api/users', () => ({
 vi.mock('@/api/settings', () => ({
   getMyProfile: mocks.getMyProfile,
 }))
+vi.mock('@/api/popularSearch', () => ({
+  listPopularSearches: vi.fn().mockResolvedValue([]),
+  recordPopularSearch: vi.fn().mockResolvedValue(undefined),
+}))
 
 const SearchBoxStub = defineComponent({
   props: [

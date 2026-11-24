@@ -41,11 +41,15 @@
             </div>
           </div>
         </div>
-        <div class="flex shrink-0 items-center gap-2 self-start">
+        <div class="flex flex-wrap items-center gap-2 self-start">
           <router-link v-if="isMe" to="/settings" class="ui-button-primary">编辑资料</router-link>
           <button v-else type="button" class="ui-button" :class="followedByMe === true ? 'text-[var(--ui-muted)]' : 'ui-button-primary'" :disabled="followButtonDisabled" @click="toggleFollow">
             {{ followSaving ? '处理中...' : (followedByMe === true ? '已关注' : '关注') }}
           </button>
+          <router-link v-if="!isMe && userId" :to="{ name: 'messages', query: { peer: String(userId) } }" class="ui-button">
+            发私信
+          </router-link>
+          <FriendRequestActions v-if="!isMe && isLoggedIn && userId" :peer="userId" />
         </div>
       </header>
 
@@ -86,11 +90,13 @@
           <div v-else class="ui-empty px-0 py-8" role="status"><h2>暂无帖子</h2></div>
           <div class="mt-3 flex flex-col gap-3 border-t border-[var(--ui-border)] pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
             <div class="text-xs text-[var(--ui-muted)]">共 {{ threads.total || 0 }} 条 · 每页 {{ size }} 条</div>
-            <div class="flex flex-wrap items-center gap-2">
+            <div class="ui-pagination-controls">
               <button type="button" class="ui-button" :disabled="page<=1" @click="prevPage">上一页</button>
-              <span class="text-sm text-[var(--ui-muted)]">第</span>
-              <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
-              <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+              <label class="ui-page-position ui-muted text-sm">
+                <span>第</span>
+                <input v-model="inputPage" aria-label="页码" class="ui-field text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+                <span>/ {{ totalPages }} 页</span>
+              </label>
               <button type="button" class="ui-button" :disabled="page>=totalPages" @click="nextPage">下一页</button>
             </div>
           </div>
@@ -104,6 +110,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { followUser, getUserProfile, listUserThreads, unfollowUser } from '@/api/users'
+import FriendRequestActions from '@/components/FriendRequestActions.vue'
 import { normalizeImageUrl } from '@/utils/image'
 import { safeBack as navigateBackSafely } from '@/utils/router'
 import { useAuthStore } from '@/stores/auth'

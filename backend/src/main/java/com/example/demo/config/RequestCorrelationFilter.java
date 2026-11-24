@@ -15,6 +15,15 @@ import java.util.UUID;
 @Component
 public class RequestCorrelationFilter extends OncePerRequestFilter {
     private static final String REQUEST_ID = "X-Request-Id";
+    private final String service;
+
+    public RequestCorrelationFilter() {
+        this("backend");
+    }
+
+    public RequestCorrelationFilter(String service) {
+        this.service = service;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -38,9 +47,9 @@ public class RequestCorrelationFilter extends OncePerRequestFilter {
             int status = failed && !response.isCommitted() && response.getStatus() < 400
                     ? HttpServletResponse.SC_INTERNAL_SERVER_ERROR : response.getStatus();
             org.slf4j.LoggerFactory.getLogger(RequestCorrelationFilter.class).info(
-                    "request_id={} method={} route={} status={} duration_ms={} service=backend",
+                    "request_id={} method={} route={} status={} duration_ms={} service={}",
                     requestId, request.getMethod(), routePattern(request),
-                    status, durationMs
+                    status, durationMs, service
             );
             MDC.remove("requestId");
         }

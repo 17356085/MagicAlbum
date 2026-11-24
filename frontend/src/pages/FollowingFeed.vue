@@ -21,7 +21,13 @@ const error = ref('')
 const feed = ref<PageResult<FollowingFeedItem>>({ items: [], page: 1, size: 10, total: 0 })
 const followingUsers = ref<User[]>([])
 const selectedUserId = ref<'all' | string>('all')
+const channelRail = ref<HTMLElement | null>(null)
 const channelScroller = ref<HTMLElement | null>(null)
+const channelTrack = ref<HTMLElement | null>(null)
+const channelsOverflow = ref(false)
+const canScrollChannelsLeft = ref(false)
+const canScrollChannelsRight = ref(false)
+let channelResizeObserver: ResizeObserver | null = null
 const inputPage = ref('1')
 
 const currentUserId = computed(() => user.value?.id ?? user.value?.userId ?? null)
@@ -300,10 +306,23 @@ function goToInputPage(): void {
   setPage(Math.min(Math.max(1, Number(raw)), totalPages.value))
 }
 
-function scrollChannels(direction: 'left' | 'right'): void {
+function updateChannelControls(): void {
+  const rail = channelRail.value
+  const el = channelScroller.value
+  const track = channelTrack.value
+  if (!rail || !el || !track) return
+  channelsOverflow.value = track.offsetWidth > rail.clientWidth
+  canScrollChannelsLeft.value = el.scrollLeft > 1
+  canScrollChannelsRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+function scrollChannels(direction: -1 | 1): void {
   const el = channelScroller.value
   if (!el) return
-  el.scrollBy({ left: direction === 'left' ? -360 : 360, behavior: 'smooth' })
+  el.scrollBy({
+    left: direction * el.clientWidth,
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+  })
 }
 
 const stopAuthWatch = watch(
@@ -318,6 +337,12 @@ function onAuthStateChanged(): void {
 
 onMounted(() => {
   window.addEventListener('auth-state-changed', onAuthStateChanged)
+  if (channelRail.value && channelScroller.value && channelTrack.value && typeof ResizeObserver !== 'undefined') {
+    channelResizeObserver = new ResizeObserver(updateChannelControls)
+    channelResizeObserver.observe(channelRail.value)
+    channelResizeObserver.observe(channelScroller.value)
+    channelResizeObserver.observe(channelTrack.value)
+  }
   void load()
 })
 watch(page, (val) => {
@@ -325,6 +350,7 @@ watch(page, (val) => {
 }, { immediate: true })
 
 onBeforeUnmount(() => {
+  channelResizeObserver?.disconnect()
   disposed = true
   sessionEpoch += 1
   loadRequestSeq += 1
@@ -336,83 +362,89 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ui-page mx-auto max-w-[920px]">
-    <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">关注动态</h1>
-        <p class="ui-description">查看你关注的成员最近发布的帖子。</p>
-      </div>
-      <router-link v-if="currentUserId" :to="`/users/${currentUserId}/following`" class="ui-button">全部关注</router-link>
-    </header>
+    <h1 class="sr-only">关注动态</h1>
+    <div v-if="currentUserId" class="mb-3 flex justify-end">
+      <router-link :to="`/users/${currentUserId}/following`" class="ui-button">全部关注</router-link>
+    </div>
 
-    <section class="ui-panel mb-3 overflow-hidden">
-      <div class="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 text-xs text-[var(--ui-muted)]">
-        <span>全部动态包含所有关注用户的新帖；头像仅用于快捷筛选</span>
-      </div>
-      <div class="flex h-24 items-center gap-2 px-2 py-3">
+    <section class="ui-panel mb-3 px-3 py-2">
+      <div ref="channelRail" class="flex min-h-20 items-center gap-2">
         <button
+          v-if="channelsOverflow"
           type="button"
-          class="ui-button h-8 w-8 shrink-0 rounded-full p-0 text-[var(--ui-muted)]"
-          @click="scrollChannels('left')"
+          class="channel-arrow"
+          :disabled="!canScrollChannelsLeft"
+          @click="scrollChannels(-1)"
           aria-label="向左查看更多关注用户"
         >
-          ‹
+          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
         </button>
 
-        <div ref="channelScroller" class="ui-scroll flex min-w-0 flex-1 items-center gap-5 overflow-x-auto px-1 py-1">
-          <button
-            type="button"
-            class="flex h-[72px] w-[76px] shrink-0 flex-col items-center justify-start text-center"
-            @click="selectUser('all')"
-          >
-            <div
-              class="mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 bg-[var(--ui-surface)] text-[var(--ui-accent)]"
-              style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;"
-              :class="selectedUserId === 'all' ? 'border-[var(--ui-accent)]' : 'border-[var(--ui-border)]'"
+        <div ref="channelScroller" class="ui-scroll-rail min-w-0 flex-1" @scroll.passive="updateChannelControls">
+          <div ref="channelTrack" class="flex w-max items-center gap-5 px-1 py-1">
+            <button
+              type="button"
+              class="flex h-[72px] w-[76px] shrink-0 flex-col items-center justify-start text-center"
+              :aria-pressed="selectedUserId === 'all'"
+              @click="selectUser('all')"
             >
-              <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" />
-              </svg>
-            </div>
-            <div
-              class="mt-1.5 h-4 w-full truncate text-xs leading-4"
-              :class="selectedUserId === 'all' ? 'font-medium text-[var(--ui-accent)]' : 'text-[var(--ui-muted)]'"
-            >
-              全部动态
-            </div>
-          </button>
-
-          <button
-            v-for="u in channelUsers"
-            :key="u.id"
-            type="button"
-            class="flex h-[72px] w-[76px] shrink-0 flex-col items-center justify-start text-center"
-            @click="selectUser(String(u.id))"
-          >
-            <div class="relative mx-auto h-12 w-12 shrink-0" style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;">
-              <img
-                :src="avatarUrl(userDisplayName(u), u.avatarUrl)"
-                alt="avatar"
-                class="block h-12 w-12 rounded-full border-2 object-cover"
+              <div
+                class="mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 bg-[var(--ui-surface)] text-[var(--ui-accent)]"
                 style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;"
-                :class="selectedUserId === String(u.id) ? 'border-[var(--ui-accent)]' : 'border-transparent'"
-              />
-            </div>
-            <div
-              class="mt-1.5 h-4 w-full truncate text-xs leading-4"
-              :class="selectedUserId === String(u.id) ? 'font-medium text-[var(--ui-accent)]' : 'text-[var(--ui-muted)]'"
+                :class="selectedUserId === 'all' ? 'border-[var(--ui-accent)]' : 'border-[var(--ui-border)]'"
+              >
+                <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" />
+                </svg>
+              </div>
+              <div
+                class="mt-1.5 h-4 w-full truncate text-xs leading-4"
+                :class="selectedUserId === 'all' ? 'font-medium text-[var(--ui-accent)]' : 'text-[var(--ui-muted)]'"
+              >
+                全部动态
+              </div>
+            </button>
+
+            <button
+              v-for="u in channelUsers"
+              :key="u.id"
+              type="button"
+              class="flex h-[72px] w-[76px] shrink-0 flex-col items-center justify-start text-center"
+              :aria-pressed="selectedUserId === String(u.id)"
+              @click="selectUser(String(u.id))"
             >
-              {{ userDisplayName(u) }}
-            </div>
-          </button>
+              <div class="relative mx-auto h-12 w-12 shrink-0" style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;">
+                <img
+                  :src="avatarUrl(userDisplayName(u), u.avatarUrl)"
+                  alt="avatar"
+                  class="block h-12 w-12 rounded-full border-2 object-cover"
+                  style="width: 48px; height: 48px; max-width: 48px; max-height: 48px;"
+                  :class="selectedUserId === String(u.id) ? 'border-[var(--ui-accent)]' : 'border-transparent'"
+                />
+              </div>
+              <div
+                class="mt-1.5 h-4 w-full truncate text-xs leading-4"
+                :class="selectedUserId === String(u.id) ? 'font-medium text-[var(--ui-accent)]' : 'text-[var(--ui-muted)]'"
+              >
+                {{ userDisplayName(u) }}
+              </div>
+            </button>
+          </div>
         </div>
 
         <button
+          v-if="channelsOverflow"
           type="button"
-          class="ui-button h-8 w-8 shrink-0 rounded-full p-0 text-[var(--ui-muted)]"
-          @click="scrollChannels('right')"
+          class="channel-arrow"
+          :disabled="!canScrollChannelsRight"
+          @click="scrollChannels(1)"
           aria-label="向右查看更多关注用户"
         >
-          ›
+          <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+            <path d="m9 18 6-6-6-6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
         </button>
       </div>
     </section>
@@ -485,20 +517,33 @@ onBeforeUnmount(() => {
 
     <div v-if="!loading && !error && (page > 1 || visibleItems.length > 0)" class="ui-panel mt-3 flex flex-col items-start gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div class="text-xs text-[var(--ui-muted)]">共 {{ feed.total || 0 }} 条 · 每页 {{ size }} 条</div>
-      <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+      <div class="ui-pagination-controls">
         <button type="button" class="ui-button" :disabled="loading || page <= 1" @click="setPage(page - 1)">上一页</button>
-        <span class="text-sm text-[var(--ui-muted)]">第</span>
-        <input
-          v-model="inputPage"
-          class="ui-field w-16 text-center"
-          aria-label="页码"
-          inputmode="numeric"
-          @keyup.enter="goToInputPage"
-          @blur="goToInputPage"
-        />
-        <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+        <label class="ui-page-position ui-muted text-sm">
+          <span>第</span>
+          <input
+            v-model="inputPage"
+            class="ui-field text-center"
+            aria-label="页码"
+            inputmode="numeric"
+            @keyup.enter="goToInputPage"
+            @blur="goToInputPage"
+          />
+          <span>/ {{ totalPages }} 页</span>
+        </label>
         <button type="button" class="ui-button" :disabled="loading || page >= totalPages" @click="setPage(page + 1)">下一页</button>
       </div>
     </div>
   </section>
 </template>
+
+<style scoped>
+.channel-arrow {
+  @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--ui-border)] text-[var(--ui-muted)] lg:h-9 lg:w-9;
+}
+.channel-arrow:hover:not(:disabled), .channel-arrow:focus-visible {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+.channel-arrow:disabled { opacity: .4; }
+</style>

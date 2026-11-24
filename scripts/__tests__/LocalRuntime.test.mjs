@@ -86,6 +86,31 @@ $localhostCfg = Copy-Config $cfg
 $localhostCfg['NOTIFICATION_SERVICE_BASE_URL'] = 'http://localhost:8081/'
 Assert-LocalRuntimeConfiguration -Values $localhostCfg
 
+$dedicated = Copy-Config $cfg
+$dedicated['NOTIFICATION_DB_USER'] = 'bluealbum_notify'
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $dedicated } 'NOTIFICATION_DB_PASSWORD'
+$dedicated['NOTIFICATION_DB_PASSWORD'] = 'Notify-DB-fixture-key-1234567890'
+Assert-LocalRuntimeConfiguration -Values $dedicated
+$dedicated['NOTIFICATION_DB_USER'] = $dedicated['DB_USER']
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $dedicated } 'NOTIFICATION_DB_USER'
+$dedicated['NOTIFICATION_DB_USER'] = 'bluealbum_notify'
+$dedicated['DB_PASSWORD'] = $dedicated['NOTIFICATION_DB_PASSWORD']
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $dedicated } 'NOTIFICATION_DB_PASSWORD'
+
+$migration = Copy-Config $cfg
+$migration['NOTIFICATION_DB_MIGRATION_USER'] = 'bluealbum_notify_ddl'
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $migration } 'requires NOTIFICATION_DB_USER'
+$migration['NOTIFICATION_DB_USER'] = 'bluealbum_notify'
+$migration['NOTIFICATION_DB_PASSWORD'] = 'Notify-DB-fixture-key-1234567890'
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $migration } 'NOTIFICATION_DB_MIGRATION_PASSWORD'
+$migration['NOTIFICATION_DB_MIGRATION_PASSWORD'] = 'Migrate-DB-fixture-key-1234567890'
+Assert-LocalRuntimeConfiguration -Values $migration
+$migration['NOTIFICATION_DB_MIGRATION_USER'] = $migration['NOTIFICATION_DB_USER']
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $migration } 'NOTIFICATION_DB_MIGRATION_USER'
+$migration['NOTIFICATION_DB_MIGRATION_USER'] = 'bluealbum_notify_ddl'
+$migration['NOTIFICATION_DB_MIGRATION_PASSWORD'] = $migration['NOTIFICATION_DB_PASSWORD']
+Assert-Throws { Assert-LocalRuntimeConfiguration -Values $migration } 'NOTIFICATION_DB_MIGRATION_PASSWORD'
+
 $legacy = Copy-Config $cfg
 $null = $legacy.Remove('RABBITMQ_MANAGEMENT_PORT')
 $null = $legacy.Remove('VITE_AUTH_VERIFY_MODE')
@@ -138,7 +163,7 @@ Assert-Throws { Assert-LocalRuntimeConfiguration -Values $bad } 'duplicate local
 test('isolates inherited binding and override environment variables', () => {
   runPowerShell(runtimeScript(`
 $namesToSet = @(
-    'NOTIFICATION_DATASOURCE_URL', 'SPRING_DATASOURCE_URL', 'SPRING_FLYWAY_ENABLED',
+    'NOTIFICATION_DATASOURCE_URL', 'SPRING_DATASOURCE_URL', 'SPRING_FLYWAY_ENABLED', 'CHAT_INTERNAL_SERVICE_TOKEN',
     'SPRING_CONFIG_ADDITIONAL_LOCATION', 'APP_SECURITY_JWT_SECRET', 'SPRING_PROFILES_ACTIVE',
     'APP_NOTIFICATIONS_CLIENT_ENABLED', 'APP_ADMIN_EMAIL', 'APP_ADMIN_USER_ID', 'GATEWAY_PORT', 'JAVA_TOOL_OPTIONS'
 )

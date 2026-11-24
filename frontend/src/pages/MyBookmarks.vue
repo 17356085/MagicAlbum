@@ -312,12 +312,7 @@ onUnmounted(() => {
 
 <template>
   <section class="ui-page">
-    <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">我的收藏</h1>
-        <p class="ui-description">收藏过的帖子会保存在你的账户中。</p>
-      </div>
-    </header>
+    <h1 class="sr-only">我的收藏</h1>
 
     <section class="ui-panel overflow-hidden">
       <div v-if="loading" role="status" class="ui-empty">正在加载收藏...</div>
@@ -357,9 +352,9 @@ onUnmounted(() => {
       </div>
 
       <div v-else-if="!loading && !error && !hasKnownTotal && (bookmarks.items.length > 0 || page > 1)" class="border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
-        <nav aria-label="收藏翻页" class="flex flex-wrap items-center justify-between gap-4">
+        <nav aria-label="收藏翻页" class="ui-pagination-controls justify-between">
           <button type="button" class="ui-button disabled:opacity-50" :disabled="page <= 1" @click="setPage(page - 1)">上一页</button>
-          <div class="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300">
+          <div class="ui-page-position ui-muted flex-wrap text-sm">
             <span>第 {{ page }} 页</span>
             <span>暂未获取总数</span>
           </div>

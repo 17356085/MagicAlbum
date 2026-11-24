@@ -18,11 +18,73 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 FULL_MODE="${BLUEALBUM_FULL_PYTHON_REGRESSION:-0}"
+SPLIT_CHAT="${BLUEALBUM_SPLIT_CHAT_CHECK:-0}"
+CUTOVER_MODE="${BLUEALBUM_CHAT_CUTOVER_CHECK:-0}"
+CHAT_REALTIME_CHECK="${BLUEALBUM_CHAT_REALTIME_CHECK:-0}"
+CHAT_BACKUP_CHECK="${BLUEALBUM_CHAT_BACKUP_CHECK:-0}"
+CHAT_POLL_LOAD="${BLUEALBUM_CHAT_POLL_LOAD_CHECK:-0}"
+CHAT_GRPC_CHECK="${BLUEALBUM_CHAT_GRPC_CHECK:-0}"
+TELEMETRY_CHECK="${BLUEALBUM_TELEMETRY_CHECK:-0}"
+COMMENT_EVENTS_CHECK="${BLUEALBUM_COMMENT_EVENTS_CHECK:-0}"
+[[ "$CHAT_GRPC_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_GRPC_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then SPLIT_CHAT=1; fi
+[[ "$TELEMETRY_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_TELEMETRY_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$TELEMETRY_CHECK" == 1 ]]; then SPLIT_CHAT=1; fi
+[[ "$COMMENT_EVENTS_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_COMMENT_EVENTS_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+[[ "$CHAT_POLL_LOAD" == "0" || "$CHAT_POLL_LOAD" == "1" ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_POLL_LOAD_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$CHAT_POLL_LOAD" == "1" ]]; then CUTOVER_MODE=1; fi
+[[ "$CUTOVER_MODE" == "0" || "$CUTOVER_MODE" == "1" ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_CUTOVER_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+[[ "$SPLIT_CHAT" == "0" || "$SPLIT_CHAT" == "1" ]] || {
+  printf 'ERROR: BLUEALBUM_SPLIT_CHAT_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
 [[ "$FULL_MODE" == "0" || "$FULL_MODE" == "1" ]] || {
   printf 'ERROR: BLUEALBUM_FULL_PYTHON_REGRESSION must be 0 or 1\n' >&2
   exit 1
 }
-if [[ "$FULL_MODE" == "1" ]]; then
+[[ "$CHAT_REALTIME_CHECK" == "0" || "$CHAT_REALTIME_CHECK" == "1" ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_REALTIME_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+[[ "$CHAT_BACKUP_CHECK" == "0" || "$CHAT_BACKUP_CHECK" == "1" ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_BACKUP_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+  if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" ]]; then
+    printf 'ERROR: run the chat backup check in its own project\n' >&2
+    exit 1
+  fi
+  SPLIT_CHAT=1
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-backup-ci}"
+elif [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" ]]; then
+    printf 'ERROR: run the chat realtime, cutover, and full regression checks in separate projects\n' >&2
+    exit 1
+  fi
+  SPLIT_CHAT=1
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-realtime-ci}"
+elif [[ "$CUTOVER_MODE" == "1" ]]; then
+  SPLIT_CHAT=1
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-cutover-ci}"
+elif [[ "$SPLIT_CHAT" == "1" ]]; then
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/split-chat-ci}"
+elif [[ "$FULL_MODE" == "1" ]]; then
   ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/python-full-ci}"
 else
   ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/m0-ci}"
@@ -49,11 +111,15 @@ FULL_CREDENTIALS_FILE="$ARTIFACT_DIR/full-regression.env"
 FULL_EVIDENCE_FILE="$ARTIFACT_DIR/full-regression-bootstrap.json"
 FULL_COLLECT_FILE="$ARTIFACT_DIR/full-collect.txt"
 FULL_JUNIT_FILE="$ARTIFACT_DIR/full-python-junit.xml"
+CHAT_CUTOVER_STATE="$ARTIFACT_DIR/chat-cutover-state.json"
+CHAT_CUTOVER_OVERRIDE="$ARTIFACT_DIR/chat-cutover.override.yml"
+CHAT_CUTOVER_EVIDENCE="$ARTIFACT_DIR/chat-cutover-checks.txt"
 
 PROJECT=""
 COMPOSE_TOUCHED=0
 CREDENTIALS_CREATED=0
 FULL_CREDENTIALS_CREATED=0
+CUTOVER_STATE_OWNED=0
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -70,6 +136,25 @@ fi
 if [[ "$FULL_MODE" == "1" ]]; then
   PROJECT="${PROJECT}-full"
 fi
+if [[ "$SPLIT_CHAT" == "1" ]]; then
+  PROJECT="${PROJECT}-split-chat"
+fi
+if [[ "$CUTOVER_MODE" == "1" ]]; then
+  PROJECT="${PROJECT}-cutover"
+  source "$SCRIPT_DIR/compose-chat-cutover.sh"
+fi
+if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  PROJECT="${PROJECT}-realtime"
+  source "$SCRIPT_DIR/compose-chat-realtime.sh"
+fi
+if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+  PROJECT="${PROJECT}-backup"
+  BACKUP_RESTORE_PROJECT="${PROJECT}-restore"
+  BACKUP_RESTORE_ENV="$ARTIFACT_DIR/ci-restore.env"
+  BACKUP_RESTORE_ENV_OWNED=0
+  BACKUP_RESTORE_TOUCHED=0
+  source "$SCRIPT_DIR/compose-chat-backup.sh"
+fi
 
 if [[ ! "$PROJECT" =~ ^bluealbum-ci-[a-z0-9-]+$ ]]; then
   die "invalid Compose project name: $PROJECT"
@@ -80,26 +165,86 @@ COMPOSE_ARGS=(
   --env-file "$ENV_FILE"
   --project-name "$PROJECT"
   --file "$ROOT_DIR/docker-compose.yml"
-  --file "$OVERRIDE_FILE"
 )
+if [[ "$SPLIT_CHAT" == "1" ]]; then
+  COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.chat.yml")
+fi
+GRPC_FIXTURE_DIR=""
+if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
+  COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.grpc.yml")
+fi
+if [[ "$TELEMETRY_CHECK" == 1 ]]; then
+  COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.telemetry.yml")
+fi
+if [[ "$COMMENT_EVENTS_CHECK" == 1 ]]; then
+  COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.comment-events.yml")
+fi
+COMPOSE_ARGS+=(--file "$OVERRIDE_FILE")
 
 compose() {
   COMPOSE_DISABLE_ENV_FILE=1 docker compose "${COMPOSE_ARGS[@]}" "$@"
 }
 
+verify_split_chat_owner() {
+  [[ "$SPLIT_CHAT" == "1" ]] || return 0
+  local required_messages="${1:-34}" core_rows split_chat_messages chat_migrations ddl_attempt cross_db_attempt
+  compose exec -T chat-service sh -ec 'test -z "${JWT_SECRET:-}" && test -z "${DB_PASSWORD:-}"' \
+    || die 'Stand-alone chat process received core credentials'
+  core_rows=$(compose exec -T mysql sh -c '
+    MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -u "$MYSQL_USER" "$MYSQL_DATABASE" -Nse "
+      SELECT (SELECT COUNT(*) FROM chat_conversations) + (SELECT COUNT(*) FROM chat_members)
+           + (SELECT COUNT(*) FROM chat_messages) + (SELECT COUNT(*) FROM chat_daily_usage)
+           + (SELECT COUNT(*) FROM chat_preferences)"
+  ')
+  split_chat_messages=$(compose exec -T chat-mysql sh -c '
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root "$MYSQL_DATABASE" -Nse "SELECT COUNT(*) FROM chat_messages"
+  ')
+  chat_migrations=$(compose exec -T chat-mysql sh -c '
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root "$MYSQL_DATABASE" -Nse "SELECT COUNT(*) FROM chat_flyway_schema_history WHERE success = 1 AND version IN (\"1\",\"2\",\"3\",\"4\")"
+  ')
+  if ddl_attempt=$(compose exec -T chat-mysql sh -c '
+    MYSQL_PWD="$CHAT_DB_PASSWORD" exec mysql -u "$CHAT_DB_USER" "$CHAT_DB_NAME" -Nse "CREATE TABLE ci_chat_runtime_ddl_probe (id INT)"
+  ' 2>&1); then
+    die 'Chat runtime database account could create a table'
+  fi
+  [[ "$ddl_attempt" == *'ERROR 1142'* ]] || die 'Chat runtime DDL probe did not explicitly fail on permissions'
+  if cross_db_attempt=$(compose exec -T mysql sh -c '
+    MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -h chat-mysql --connect-timeout=5 -u "$MYSQL_USER" bluealbum_ci_chat -Nse "SELECT COUNT(*) FROM chat_messages"
+  ' 2>&1); then
+    die 'Core runtime credentials could read the independent chat database'
+  fi
+  [[ "$cross_db_attempt" =~ ERROR\ (1044|1045) ]] || die 'Core-to-chat database probe did not explicitly fail on permissions'
+  if cross_db_attempt=$(compose exec -T chat-mysql sh -c '
+    MYSQL_PWD="$CHAT_DB_PASSWORD" exec mysql -h mysql --connect-timeout=5 -u "$CHAT_DB_USER" bluealbum_ci -Nse "SELECT COUNT(*) FROM users"
+  ' 2>&1); then
+    die 'Chat runtime credentials could read the core database'
+  fi
+  [[ "$cross_db_attempt" =~ ERROR\ (1044|1045) ]] || die 'Chat-to-core database probe did not explicitly fail on permissions'
+  core_rows="${core_rows//$'\r'/}"
+  split_chat_messages="${split_chat_messages//$'\r'/}"
+  chat_migrations="${chat_migrations//$'\r'/}"
+  [[ "$core_rows" == "0" ]] || die 'Core chat tables received writes during split-chat verification'
+  [[ "$chat_migrations" == "4" ]] || die 'Stand-alone chat database did not apply the expected chat-owned migrations'
+  if ! [[ "$split_chat_messages" =~ ^[1-9][0-9]*$ ]] || (( split_chat_messages < required_messages )); then
+    die 'Stand-alone chat database is missing verified messages'
+  fi
+  printf 'core_chat_rows=%s\nsplit_chat_messages=%s\nchat_migrations=%s\ncore_credentials=absent\nruntime_ddl=denied\ncore_to_chat_database=denied\nchat_to_core_database=denied\n' \
+    "$core_rows" "$split_chat_messages" "$chat_migrations" > "$ARTIFACT_DIR/chat-owner-checks.txt"
+}
+
 assert_project_unused() {
-  local containers volumes networks
-  if ! containers="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")"; then
+  local project="${1:-$PROJECT}" containers volumes networks
+  if ! containers="$(docker ps -aq --filter "label=com.docker.compose.project=$project")"; then
     die 'cannot inspect Docker containers before starting the CI stack'
   fi
-  if ! volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"; then
+  if ! volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$project")"; then
     die 'cannot inspect Docker volumes before starting the CI stack'
   fi
-  if ! networks="$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")"; then
+  if ! networks="$(docker network ls -q --filter "label=com.docker.compose.project=$project")"; then
     die 'cannot inspect Docker networks before starting the CI stack'
   fi
   if [[ -n "$containers" || -n "$volumes" || -n "$networks" ]]; then
-    die "Compose project label already has containers, volumes, or networks: $PROJECT"
+    die "Compose project label already has containers, volumes, or networks: $project"
   fi
 }
 
@@ -130,7 +275,8 @@ validate_junit() {
   local report="$1"
   local expected="$2"
   local required_section_page="${3:-}"
-  "$PYTHON_BIN" - "$report" "$expected" "$required_section_page" <<'PY'
+  local required_chat_backlog="${4:-}"
+  "$PYTHON_BIN" - "$report" "$expected" "$required_section_page" "$required_chat_backlog" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -165,6 +311,10 @@ if sys.argv[3]:
     properties = root.findall(".//property[@name='owned_section_filter_page']")
     if [item.get("value") for item in properties] != [sys.argv[3]]:
         raise SystemExit("M0 browser journey did not verify both owned section filters")
+if sys.argv[4]:
+    properties = root.findall(".//property[@name='realtime_chat_offline_backlog']")
+    if [item.get("value") for item in properties] != [sys.argv[4]]:
+        raise SystemExit("Browser journey did not verify the realtime chat offline backlog")
 print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }
@@ -176,6 +326,9 @@ cleanup() {
 
   set +e
   mkdir -p "$LOG_DIR" || cleanup_status=1
+  if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+    cleanup_chat_backup || cleanup_status=1
+  fi
   if (( COMPOSE_TOUCHED == 1 )); then
     compose logs --no-color --timestamps --tail=500 >"$LOG_DIR/compose.log" 2>&1 || cleanup_status=1
     compose down --volumes --remove-orphans >"$LOG_DIR/compose-down.log" 2>&1 || cleanup_status=1
@@ -206,6 +359,13 @@ cleanup() {
   if (( FULL_CREDENTIALS_CREATED == 1 )) && [[ -f "$FULL_CREDENTIALS_FILE" ]]; then
     rm -f -- "$FULL_CREDENTIALS_FILE" || cleanup_status=1
   fi
+  if [[ -n "$GRPC_FIXTURE_DIR" ]]; then
+    rm -f -- "$GRPC_FIXTURE_DIR/tls.crt" "$GRPC_FIXTURE_DIR/tls.key" || cleanup_status=1
+    rmdir -- "$GRPC_FIXTURE_DIR" || cleanup_status=1
+  fi
+  if (( CUTOVER_STATE_OWNED == 1 )); then
+    rm -f -- "$CHAT_CUTOVER_STATE" "${CHAT_CUTOVER_STATE%.json}.tmp" || cleanup_status=1
+  fi
 
   if (( cleanup_status != 0 )); then
     printf 'ERROR: Compose cleanup failed for %s; inspect %s\n' "$PROJECT" "$LOG_DIR" >&2
@@ -221,6 +381,15 @@ assert_project_unused
 
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SCREENSHOT_DIR"
 [[ ! -e "$ENV_FILE" ]] || die "temporary credential file already exists: $ENV_FILE"
+chat_cutover_admin=''
+if [[ "$CUTOVER_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
+  [[ ! -e "$CHAT_CUTOVER_STATE" && ! -e "${CHAT_CUTOVER_STATE%.json}.tmp" ]] \
+    || die "temporary cutover state already exists: $CHAT_CUTOVER_STATE"
+  CUTOVER_STATE_OWNED=1
+fi
+if [[ "$CUTOVER_MODE" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
+  chat_cutover_admin='chat-cutover-admin@example.test'
+fi
 
 mysql_port="${COMPOSE_MYSQL_PORT:-3306}"
 redis_port="${COMPOSE_REDIS_PORT:-6379}"
@@ -236,6 +405,15 @@ port_values=(
   "$mysql_port" "$redis_port" "$rabbitmq_port" "$rabbitmq_management_port"
   "$backend_port" "$notification_port" "$gateway_port" "$frontend_port"
 )
+if [[ "$TELEMETRY_CHECK" == 1 ]]; then
+  [[ -n "${BLUEALBUM_OTEL_AGENT_JAR:-}" && -f "$BLUEALBUM_OTEL_AGENT_JAR" ]] \
+    || die 'BLUEALBUM_OTEL_AGENT_JAR must point to an existing Java agent'
+  telemetry_tempo_port="${BLUEALBUM_TEMPO_PORT:-3200}"
+  telemetry_loki_port="${BLUEALBUM_LOKI_PORT:-3100}"
+  export BLUEALBUM_TEMPO_PORT="$telemetry_tempo_port" BLUEALBUM_LOKI_PORT="$telemetry_loki_port"
+  port_names+=(tempo loki)
+  port_values+=("$telemetry_tempo_port" "$telemetry_loki_port")
+fi
 for index in "${!port_values[@]}"; do
   port="${port_values[$index]}"
   validate_port "$port"
@@ -246,6 +424,8 @@ done
 
 db_password="$(random_hex_32)"
 db_root_password="$(random_hex_32)"
+notification_db_password="$(random_hex_32)"
+notification_db_migration_password="$(random_hex_32)"
 redis_password="$(random_hex_32)"
 rabbitmq_password="$(random_hex_32)"
 jwt_secret="$(random_hex_32)"
@@ -258,6 +438,10 @@ NOTIFICATION_DB_NAME=bluealbum_ci_notifications
 DB_USER=bluealbum_ci
 DB_PASSWORD=$db_password
 DB_ROOT_PASSWORD=$db_root_password
+NOTIFICATION_DB_USER=bluealbum_ci_notify
+NOTIFICATION_DB_PASSWORD=$notification_db_password
+NOTIFICATION_DB_MIGRATION_USER=bluealbum_ci_notify_ddl
+NOTIFICATION_DB_MIGRATION_PASSWORD=$notification_db_migration_password
 REDIS_PASSWORD=$redis_password
 RABBITMQ_USER=bluealbum_ci
 RABBITMQ_PASSWORD=$rabbitmq_password
@@ -275,6 +459,37 @@ COMPOSE_NOTIFICATION_PORT=$notification_port
 COMPOSE_GATEWAY_PORT=$gateway_port
 COMPOSE_FRONTEND_PORT=$frontend_port
 EOF
+if [[ "$SPLIT_CHAT" == "1" ]]; then
+  cat >>"$ENV_FILE" <<EOF
+CHAT_DB_NAME=bluealbum_ci_chat
+CHAT_DB_USER=bluealbum_ci_chat_app
+CHAT_DB_PASSWORD=$(random_hex_32)
+CHAT_DB_MIGRATION_USER=bluealbum_ci_chat_ddl
+CHAT_DB_MIGRATION_PASSWORD=$(random_hex_32)
+CHAT_DB_ROOT_PASSWORD=$(random_hex_32)
+CHAT_INTERNAL_SERVICE_TOKEN=$(random_hex_32)
+CHAT_GOVERNANCE_INTERNAL_TOKEN=$(random_hex_32)
+CHAT_DB_URL=jdbc:mysql://chat-mysql:3306/bluealbum_ci_chat?useSSL=false&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8
+CHAT_CORE_URL=http://backend:8080
+EOF
+fi
+if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  printf 'CHAT_REALTIME_ALLOWED_ORIGINS=http://127.0.0.1:%s\n' "$frontend_port" >> "$ENV_FILE"
+fi
+if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
+  GRPC_FIXTURE_DIR="$(mktemp -d)"
+  MSYS2_ARG_CONV_EXCL="/CN=" openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=backend \
+    -addext subjectAltName=DNS:backend -keyout "$GRPC_FIXTURE_DIR/tls.key" \
+    -out "$GRPC_FIXTURE_DIR/tls.crt" >/dev/null 2>&1
+  grpc_mount_dir="$GRPC_FIXTURE_DIR"
+  if command -v cygpath >/dev/null 2>&1; then grpc_mount_dir="$(cygpath -am "$GRPC_FIXTURE_DIR")"; fi
+  cat >>"$ENV_FILE" <<EOF
+CHAT_REALTIME_GRPC_CREDENTIAL=$(random_hex_32)
+CHAT_REALTIME_GRPC_CERTIFICATE="$grpc_mount_dir/tls.crt"
+CHAT_REALTIME_GRPC_PRIVATE_KEY="$grpc_mount_dir/tls.key"
+CHAT_REALTIME_GRPC_CA="$grpc_mount_dir/tls.crt"
+EOF
+fi
 chmod 600 "$ENV_FILE"
 # Compose prioritizes inherited shell values over --env-file, including empty values.
 while IFS='=' read -r key _; do
@@ -283,6 +498,14 @@ done < "$ENV_FILE"
 
 cat >"$OVERRIDE_FILE" <<'EOF'
 services:
+  rabbitmq:
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+S 2:2"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5672"]
+      start_period: 60s
+      interval: 5s
+      retries: 24
   backend:
     environment:
       JAVA_OPTS: "-Xmx384m -XX:ActiveProcessorCount=2"
@@ -304,13 +527,55 @@ cat >>"$OVERRIDE_FILE" <<'EOF'
     environment:
       JAVA_OPTS: "-Xmx256m -XX:ActiveProcessorCount=2"
 EOF
+if [[ "$SPLIT_CHAT" == "1" ]]; then
+  cat >>"$OVERRIDE_FILE" <<'EOF'
+  chat-service:
+    environment:
+      JAVA_OPTS: "-Xmx256m -XX:ActiveProcessorCount=2"
+EOF
+fi
+scale_options=()
+if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  cat >>"$OVERRIDE_FILE" <<'EOF'
+  chat-realtime:
+    ports:
+      - "127.0.0.1::8092"
+EOF
+  scale_options=(--scale chat-realtime=2)
+fi
+if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+  backup_pin_images
+fi
 
 COMPOSE_TOUCHED=1
 compose config --quiet
-for service in backend notification-service gateway frontend; do
+services=(backend notification-service chat-realtime gateway frontend)
+for service in "${services[@]}"; do
   compose build "$service"
 done
-compose up -d --wait --wait-timeout 300
+compose up -d --wait --wait-timeout 300 "${scale_options[@]}"
+if [[ "$TELEMETRY_CHECK" == 1 ]]; then
+  "$PYTHON_BIN" "$SCRIPT_DIR/telemetry-runtime.py" \
+    --gateway "http://127.0.0.1:$gateway_port" \
+    --tempo "http://127.0.0.1:$telemetry_tempo_port" \
+    --loki "http://127.0.0.1:$telemetry_loki_port" \
+    --output "$ARTIFACT_DIR/telemetry-runtime.json"
+fi
+
+if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+  run_chat_backup
+  printf 'Split-chat backup and recovery passed for %s\n' "$PROJECT"
+  exit 0
+elif [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  run_chat_realtime_check
+  verify_split_chat_owner 6
+  printf 'Dual chat realtime with the split chat writer passed for %s\n' "$PROJECT"
+  exit 0
+elif [[ "$CUTOVER_MODE" == "1" ]]; then
+  run_chat_cutover
+  printf 'Chat application cutover and rollback passed for %s\n' "$PROJECT"
+  exit 0
+fi
 
 export TEST_BASE_URL="http://127.0.0.1:$frontend_port"
 export TEST_API_BASE_URL="http://127.0.0.1:$gateway_port/api/v1"
@@ -412,7 +677,7 @@ if [[ "$FULL_MODE" == "1" ]]; then
 
   "$PYTHON_BIN" -m pytest -c pytest.ini \
     --collect-only -q -p no:cacheprovider tests >"$FULL_COLLECT_FILE"
-  "$PYTHON_BIN" - "$FULL_COLLECT_FILE" 143 <<'PY'
+  "$PYTHON_BIN" - "$FULL_COLLECT_FILE" 148 <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -434,10 +699,22 @@ PY
   set -e
 
   [[ -f "$FULL_JUNIT_FILE" ]] || die "full Python pytest did not produce a JUnit report: $FULL_JUNIT_FILE"
-  validate_junit "$FULL_JUNIT_FILE" 143
+  validate_junit "$FULL_JUNIT_FILE" 148 '' 31
   (( full_status == 0 )) || die "full Python regression exited with status $full_status"
+  verify_split_chat_owner
   cp -- "$FULL_JUNIT_FILE" "$JUNIT_FILE"
-  printf 'Full Python regression passed for %s: 143 tests, zero skips\n' "$PROJECT"
+  if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
+    printf 'grpc_tls_websocket_journey=passed\n' > "$ARTIFACT_DIR/chat-grpc-checks.txt"
+  fi
+  if [[ "$COMMENT_EVENTS_CHECK" == 1 ]]; then
+    comment_queue=$(compose exec -T rabbitmq rabbitmqctl --quiet list_queues name consumers messages |
+      awk '$1 == "notification.comment-created.v1" {print $2 ":" $3}')
+    comment_queue="${comment_queue//$'\r'/}"
+    [[ "$comment_queue" == "1:0" ]] || die 'Comment notification queue did not drain to its dedicated consumer'
+    printf 'comment_notification_browser=passed\ndedicated_queue=%s\n' "$comment_queue" \
+      > "$ARTIFACT_DIR/comment-events-checks.txt"
+  fi
+  printf 'Full Python regression passed for %s: 148 tests, zero skips\n' "$PROJECT"
   exit 0
 fi
 
@@ -486,8 +763,10 @@ ui_status=$?
 set -e
 
 [[ -f "$UI_JUNIT_FILE" ]] || die "browser pytest did not produce a JUnit report: $UI_JUNIT_FILE"
-validate_junit "$UI_JUNIT_FILE" 1 2
+validate_junit "$UI_JUNIT_FILE" 1 2 31
 (( ui_status == 0 )) || die "M0 browser journey exited with status $ui_status"
+
+verify_split_chat_owner
 
 # Keep the historical artifact name for local tooling that already consumes it.
 cp -- "$UI_JUNIT_FILE" "$JUNIT_FILE"

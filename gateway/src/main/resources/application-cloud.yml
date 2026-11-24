@@ -1,3 +1,8 @@
+home:
+  bff:
+    core-base-url: ${HOME_BFF_CORE_BASE_URL:lb://bluealbum-monolith}
+    notification-base-url: ${HOME_BFF_NOTIFICATION_BASE_URL:lb://bluealbum-notification-service}
+
 spring:
   config:
     import: optional:nacos:bluealbum-gateway-cloud.yml?group=${NACOS_CONFIG_GROUP:DEFAULT_GROUP}&refreshEnabled=true
@@ -21,12 +26,14 @@ spring:
               uri: lb://bluealbum-notification-service
               predicates:
                 - Path=/api/v1/notifications/stream
+                - Method=GET,HEAD
               metadata:
                 response-timeout: 65000
             - id: notification-service-api
               uri: lb://bluealbum-notification-service
               predicates:
-                - Path=/api/v1/notifications/**
+                - Path=/api/v1/notifications,/api/v1/notifications/events
+                - Method=GET,HEAD
             - id: bluealbum-ai-api
               uri: lb://bluealbum-monolith
               predicates:
@@ -37,3 +44,19 @@ spring:
               uri: lb://bluealbum-monolith
               predicates:
                 - Path=/api/v1/**,/uploads/**
+            - id: chat-realtime
+              order: -1
+              uri: ${CHAT_REALTIME_GATEWAY_URI:ws://127.0.0.1:8092}
+              predicates:
+                - Path=/api/v1/chat/realtime
+            - id: notification-service-read
+              order: -1
+              uri: lb://bluealbum-notification-service
+              predicates:
+                - Path=/api/v1/notifications/{id}/read
+                - Method=PATCH
+            - id: chat-service-api
+              order: -2
+              uri: ${CHAT_SERVICE_GATEWAY_URI:lb://bluealbum-monolith}
+              predicates:
+                - Path=/api/v1/chat/conversations/**,/api/v1/chat/direct/**,/api/v1/chat/groups/**,/api/v1/chat/settings

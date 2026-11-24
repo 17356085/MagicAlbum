@@ -2,6 +2,7 @@ import api from './client'
 import { decodeThreadLikeResponse } from './interactionState'
 import { decodePageResponse } from './pagination'
 import { normalizeThread } from './threadNormalization'
+import { getHomeOverview, homeOverviewEnabled } from './homeOverview'
 import type { Id, PageResult, Thread, ThreadLikeState } from '@/types'
 
 export { normalizeThread } from './threadNormalization'
@@ -42,6 +43,16 @@ export async function listThreads({
   if (sectionId) params.sectionId = sectionId
   params.page = page
   params.size = size
+  if (homeOverviewEnabled && page === 1 && size === 10 && !params.q && !params.tag && !sectionId) {
+    const overview = await getHomeOverview()
+    if (overview?.threads != null) {
+      try {
+        return normalizeThreadResult(overview.threads, page, size, '/home/overview')
+      } catch (_) {
+        // Preserve the existing thread API as a fallback for partial or invalid summaries.
+      }
+    }
+  }
   const { data } = await api.get('/threads', { params })
   return normalizeThreadResult(data, page, size, '/threads')
 }

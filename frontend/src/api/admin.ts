@@ -18,6 +18,9 @@ export interface AdminReport {
   threadId?: Id | null
   targetThreadId?: Id | null
   resolutionReason?: string | null
+  chatEvidence?: string | null
+  chatEvidenceUnavailable?: boolean
+  pendingAction?: AdminReportAction
   reviewerId?: Id | null
   resolvedAt?: string | null
 }
@@ -56,6 +59,7 @@ export function validateAdminReportReason(reason: string): string {
   return normalized
 }
 
-export async function resolveAdminReport(id: Id, action: AdminReportAction, reason: string): Promise<void> {
-  await api.post(`/admin/reports/${id}/resolve`, { action, reason: validateAdminReportReason(reason) })
+export async function resolveAdminReport(id: Id, action: AdminReportAction, reason: string): Promise<AdminReport> {
+  const { data } = await api.post<AdminReport>(`/admin/reports/${id}/resolve`, { action, reason: validateAdminReportReason(reason) })
+  return data
 }

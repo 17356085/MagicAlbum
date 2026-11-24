@@ -56,11 +56,8 @@ function excerpt(item: Thread): string {
 
 <template>
   <section class="ui-page">
+    <h1 class="sr-only">我的帖子</h1>
     <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">我的帖子</h1>
-        <p class="ui-description">整理你发起的讨论，继续和社区交流。</p>
-      </div>
       <div class="flex flex-wrap items-center gap-2">
         <select v-model="query.sort" class="ui-field w-auto" aria-label="帖子排序" @change="query.page=1; load()">
           <option value="updatedAt">最近更新</option>
@@ -125,11 +122,13 @@ function excerpt(item: Thread): string {
 
       <footer class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ list.total || 0 }} 条 · 每页 {{ query.size }} 条</div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="ui-pagination-controls">
           <button type="button" class="ui-button" :disabled="loading || (query.page || 1) <= 1" @click="prevPage">上一页</button>
-          <span class="text-sm text-[var(--ui-muted)]">第</span>
-          <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
-          <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+          <label class="ui-page-position ui-muted text-sm">
+            <span>第</span>
+            <input v-model="inputPage" aria-label="页码" class="ui-field text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+            <span>/ {{ totalPages }} 页</span>
+          </label>
           <button type="button" class="ui-button" :disabled="loading || (query.page || 1) >= totalPages" @click="nextPage">下一页</button>
         </div>
       </footer>

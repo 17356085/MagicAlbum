@@ -23,4 +23,8 @@ public class UserSummaryDto {
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public String displayName() {
+        return nickname == null || nickname.isEmpty() ? username : nickname;
+    }
 }

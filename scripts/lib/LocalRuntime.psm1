@@ -196,6 +196,33 @@ function Assert-LocalRuntimeConfiguration {
         throw 'DB_NAME and NOTIFICATION_DB_NAME must identify separate databases.'
     }
 
+    $notificationUser = [string]$Values['NOTIFICATION_DB_USER']
+    $notificationPassword = [string]$Values['NOTIFICATION_DB_PASSWORD']
+    if ($notificationUser -or $notificationPassword) {
+        if ($notificationUser -notmatch '^[A-Za-z0-9_]{1,32}$' -or $notificationUser -in @('root', $Values['DB_USER'])) {
+            throw 'NOTIFICATION_DB_USER must identify a dedicated MySQL account.'
+        }
+        if ($notificationPassword -notmatch '^[A-Za-z0-9_+=@%./:-]{24,128}$' -or
+            $notificationPassword -cin @([string]$Values['DB_PASSWORD'], [string]$Values['DB_ROOT_PASSWORD'])) {
+            throw 'NOTIFICATION_DB_PASSWORD must be a separate random credential of 24 to 128 characters.'
+        }
+    }
+    $migrationUser = [string]$Values['NOTIFICATION_DB_MIGRATION_USER']
+    $migrationPassword = [string]$Values['NOTIFICATION_DB_MIGRATION_PASSWORD']
+    if ($migrationUser -or $migrationPassword) {
+        if (-not $notificationUser -or -not $notificationPassword) {
+            throw 'A notification migration account requires NOTIFICATION_DB_USER and NOTIFICATION_DB_PASSWORD.'
+        }
+        if ($migrationUser -notmatch '^[A-Za-z0-9_]{1,32}$' -or
+            $migrationUser -in @('root', $Values['DB_USER'], $notificationUser)) {
+            throw 'NOTIFICATION_DB_MIGRATION_USER must identify a dedicated MySQL migration account.'
+        }
+        if ($migrationPassword -notmatch '^[A-Za-z0-9_+=@%./:-]{24,128}$' -or
+            $migrationPassword -cin @([string]$Values['DB_PASSWORD'], [string]$Values['DB_ROOT_PASSWORD'], $notificationPassword)) {
+            throw 'NOTIFICATION_DB_MIGRATION_PASSWORD must be a separate random credential of 24 to 128 characters.'
+        }
+    }
+
     foreach ($key in @('DB_PASSWORD', 'DB_ROOT_PASSWORD', 'REDIS_PASSWORD', 'SPRING_RABBITMQ_PASSWORD')) {
         if (-not (Test-LocalCredential -Value ([string]$Values[$key]))) {
             throw "runtime.env credential '$key' is missing or obviously invalid."
@@ -245,7 +272,7 @@ function Get-LocalEnvironmentNamesToIsolate {
     $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($key in [Environment]::GetEnvironmentVariables('Process').Keys) {
         $name = [string]$key
-        if ($name -match '^(NOTIFICATION_|SPRING_DATASOURCE_|SPRING_FLYWAY_|SPRING_CONFIG_|APP_SECURITY_|SPRING_PROFILES_|APP_NOTIFICATIONS_|APP_ADMIN_)' -or $name -in @(
+        if ($name -match '^(CHAT_REALTIME_|CHAT_INTERNAL_|NOTIFICATION_|SPRING_DATASOURCE_|SPRING_FLYWAY_|SPRING_CONFIG_|APP_SECURITY_|SPRING_PROFILES_|APP_NOTIFICATIONS_|APP_ADMIN_)' -or $name -in @(
                 'SERVER_PORT', 'SERVER_ADDRESS', 'SPRING_APPLICATION_JSON',
                 'GATEWAY_PORT', 'MANAGEMENT_PORT', 'PORT', 'VITE_PORT',
                 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS'

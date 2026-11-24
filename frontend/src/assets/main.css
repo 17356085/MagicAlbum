@@ -125,6 +125,12 @@
   .dark .ui-button-primary { background: #4f46e5; }
   .dark .ui-button-primary:hover:not(:disabled) { background: #4f46e5; }
   .ui-field { width: 100%; min-width: 0; min-height: 42px; padding: 9px 12px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface); color: var(--ui-ink); }
+  .ui-pagination-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .ui-pagination-controls > button { flex: none; white-space: nowrap; }
+  .ui-page-position { display: inline-flex; flex: none; align-items: center; gap: 6px; white-space: nowrap; }
+  .ui-page-position .ui-field { width: 3rem; }
+  .ui-scroll-rail { overflow-x: auto; scrollbar-width: none; }
+  .ui-scroll-rail::-webkit-scrollbar { display: none; }
   .ui-empty { padding: 48px 24px; text-align: center; color: var(--ui-muted); }
   .ui-empty h2 { margin-bottom: 8px; font-size: 1rem; font-weight: 600; color: var(--ui-ink); }
   .ui-error { padding: 16px 20px; border: 1px solid #fecaca; border-radius: 10px; background: #fff1f2; color: #9f1239; }
@@ -195,6 +201,20 @@
     width: 0;
     height: 0;
   }
+}
+@media (forced-colors: none) {
+  @supports not selector(::-webkit-scrollbar) {
+    .ui-scroll-on-interaction { scrollbar-color: transparent transparent; }
+    .ui-scroll-on-interaction:hover { scrollbar-color: color-mix(in srgb, var(--ui-muted) 38%, transparent) transparent; }
+    .ui-scroll-on-interaction:focus-visible { scrollbar-color: var(--ui-muted) transparent; }
+  }
+  .ui-scroll-on-interaction::-webkit-scrollbar { width: 5px; height: 5px; }
+  .ui-scroll-on-interaction::-webkit-scrollbar-thumb { background: transparent; }
+  .ui-scroll-on-interaction:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--ui-muted) 38%, transparent);
+    background-clip: padding-box;
+  }
+  .ui-scroll-on-interaction:focus-visible::-webkit-scrollbar-thumb { background-color: var(--ui-muted); }
 }
 @media (forced-colors: active) {
   :where(html, body, textarea, .prose pre, .ui-scroll) {

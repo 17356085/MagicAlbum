@@ -1,11 +1,14 @@
 package com.example.demo.search.service;
 
 import com.example.demo.threads.event.dto.ContentEventMessage;
+import com.example.demo.threads.event.port.ContentEventPublisher.Code;
+import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.example.demo.threads.event.service.ContentEventPublisherTransport;
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Envelope;
 import com.rabbitmq.client.GetResponse;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.rabbit.connection.Connection;
@@ -36,9 +39,10 @@ class ContentSearchReplayServiceTest {
     private final Channel channel = mock(Channel.class);
     private final AMQP.Queue.DeclareOk declaration = mock(AMQP.Queue.DeclareOk.class);
     private final ContentEventPublisherTransport publisher = mock(ContentEventPublisherTransport.class);
-    private final ContentSearchConsumer consumer = mock(ContentSearchConsumer.class);
+    private final ContentSearchEventDecoder decoder = mock(ContentSearchEventDecoder.class);
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private final ContentSearchReplayService service =
-            new ContentSearchReplayService(connections, publisher, consumer);
+            new ContentSearchReplayService(connections, publisher, decoder, new ContentSearchPipelineMetrics(meters));
 
     @BeforeEach
     void setUp() throws Exception {
@@ -70,6 +74,8 @@ class ContentSearchReplayServiceTest {
         order.verify(publisher).publish(valid);
         order.verify(channel).basicAck(12, false);
         verify(channel, never()).basicNack(anyLong(), anyBoolean(), anyBoolean());
+        assertThat(meters.counter("bluealbum.content.search.replayed").count()).isEqualTo(1);
+        assertThat(meters.counter("bluealbum.content.search.quarantined").count()).isEqualTo(1);
     }
 
     @Test
@@ -79,9 +85,8 @@ class ContentSearchReplayServiceTest {
         when(channel.basicGet(FAILED_QUEUE, false)).thenReturn(delivery(21, poison));
         doAnswer(invocation -> {
             throw new InvalidContentEventException("UNSUPPORTED_ENVELOPE");
-        }).when(consumer).decode(any(byte[].class));
-        doThrow(new ContentEventPublisherTransport.PublishException(
-                ContentEventPublisherTransport.Code.CONFIRM_TIMEOUT))
+        }).when(decoder).decode(any(byte[].class));
+        doThrow(new PublishException(Code.CONFIRM_TIMEOUT))
                 .when(publisher).quarantine(poison);
         when(declaration.getMessageCount()).thenReturn(1);
 
@@ -94,6 +99,7 @@ class ContentSearchReplayServiceTest {
         verify(channel).basicNack(21, false, true);
         verify(channel, never()).basicAck(anyLong(), anyBoolean());
         verify(publisher).quarantine(poison);
+        assertThat(meters.counter("bluealbum.content.search.quarantined").count()).isZero();
     }
 
     private void decodePoisonAndValid(byte[] poison, byte[] validBody, ContentEventMessage valid) {
@@ -104,7 +110,7 @@ class ContentSearchReplayServiceTest {
             }
             assertThat(body).isEqualTo(validBody);
             return valid;
-        }).when(consumer).decode(any(byte[].class));
+        }).when(decoder).decode(any(byte[].class));
     }
 
     private ContentEventMessage validEvent() {

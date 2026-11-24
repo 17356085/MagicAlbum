@@ -24,7 +24,8 @@ export default defineConfig(({ command, mode }) => {
       '/api/v1': {
         // target 不要带 /api/v1 路径后缀，否则请求路径会被拼成 /api/v1/api/v1/...
         target: 'http://127.0.0.1:9000',
-        changeOrigin: true
+        changeOrigin: true,
+        ws: true
       },
       '/uploads': {
         // 后端返回的本地图片地址是 /uploads/...，由网关统一转发到后端静态资源。

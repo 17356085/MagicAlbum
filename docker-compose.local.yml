@@ -11,9 +11,15 @@ services:
       MYSQL_USER: ${DB_USER:?Run scripts/Start-Local.ps1 first}
       MYSQL_PASSWORD: ${DB_PASSWORD:?Run scripts/Start-Local.ps1 first}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Run scripts/Start-Local.ps1 first}
+      NOTIFICATION_DB_NAME: ${NOTIFICATION_DB_NAME:?Run scripts/Start-Local.ps1 first}
+      NOTIFICATION_DB_USER: ${NOTIFICATION_DB_USER:-}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-}
+      NOTIFICATION_DB_MIGRATION_USER: ${NOTIFICATION_DB_MIGRATION_USER:-}
+      NOTIFICATION_DB_MIGRATION_PASSWORD: ${NOTIFICATION_DB_MIGRATION_PASSWORD:-}
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     volumes:
       - local_mysql:/var/lib/mysql
+      - ./scripts/init-notification-db.sh:/usr/local/bin/bluealbum-init-notification-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysql -h 127.0.0.1 -u root -Nse 'SELECT 1'"]
       interval: 5s

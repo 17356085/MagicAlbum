@@ -1,8 +1,11 @@
 package com.example.demo.search;
 
+import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.search.port.ContentSearchIndex;
 import com.example.demo.search.port.SearchVersionConflictException;
 import com.example.demo.search.service.ContentSearchConsumer;
+import com.example.demo.search.service.ContentSearchEventDecoder;
+import com.example.demo.search.service.ContentSearchProjection;
 import com.example.demo.search.service.ContentSearchReplayService;
 import com.example.demo.search.service.SearchRebuildService;
 import com.example.demo.search.service.ThreadSearchService;
@@ -13,6 +16,8 @@ import com.example.demo.threads.dto.ThreadSearchDocument;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.event.dto.ContentEventMessage;
 import com.example.demo.threads.event.entity.ContentEventStatus;
+import com.example.demo.threads.event.port.ContentEventPublisher.Code;
+import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.example.demo.threads.event.repo.ContentEventOutboxRepository;
 import com.example.demo.threads.event.service.ContentEventOutboxService;
 import com.example.demo.threads.event.service.ContentEventPublisherTransport;
@@ -26,6 +31,7 @@ import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.GetResponse;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Binding;
@@ -46,6 +52,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.security.authentication.TestingAuthenticationToken;
 
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
@@ -68,7 +75,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** Explicit-only acceptance. Dependencies are created and stopped by content-search-smoke.sh. */
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "observability"})
 @SpringBootTest(properties = {
         "spring.datasource.url=${CONTENT_SEARCH_TEST_DATASOURCE_URL}",
         "spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver",
@@ -82,27 +89,35 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.rabbitmq.port=${CONTENT_SEARCH_TEST_RABBIT_PORT}",
         "spring.rabbitmq.username=${CONTENT_SEARCH_TEST_RABBIT_USERNAME}",
         "spring.rabbitmq.password=${CONTENT_SEARCH_TEST_RABBIT_PASSWORD}",
-        "spring.rabbitmq.connection-timeout=1s",
+        "spring.rabbitmq.connection-timeout=${CONTENT_SEARCH_TEST_RABBIT_TIMEOUT:1s}",
         "spring.rabbitmq.listener.simple.auto-startup=false",
         "app.rabbit.enabled=true",
         "app.content.events.enabled=true",
         "app.content.events.publisher-scheduler-enabled=false",
+        "app.content.events.kafka.enabled=${CONTENT_SEARCH_TEST_KAFKA_ENABLED:false}",
+        "app.content.events.kafka.bootstrap-servers=${CONTENT_SEARCH_TEST_KAFKA_SERVER:127.0.0.1:9092}",
+        "app.content.events.kafka.send-timeout=2s",
+        "app.search.kafka-pilot.rabbit-index=tongpin-threads-v11111111111111111111111111111111",
+        "app.search.kafka-pilot.kafka-index=tongpin-threads-v22222222222222222222222222222222",
         "app.content.events.max-attempts=2",
-        "app.content.events.confirm-timeout=1s",
-        "app.content.events.connection-timeout=1s",
+        "app.content.events.confirm-timeout=${CONTENT_SEARCH_TEST_RABBIT_TIMEOUT:1s}",
+        "app.content.events.connection-timeout=${CONTENT_SEARCH_TEST_RABBIT_TIMEOUT:1s}",
+        "app.content.events.lease-duration=${CONTENT_SEARCH_TEST_RABBIT_LEASE:30s}",
         "app.search.enabled=true",
         "app.search.consumer.enabled=false",
         "app.search.consumer.max-attempts=2",
         "app.search.consumer.backoff-ms=10",
         "app.search.elasticsearch.url=${CONTENT_SEARCH_TEST_ELASTIC_URL}",
         "app.search.elasticsearch.connect-timeout=500ms",
-        "app.search.elasticsearch.read-timeout=1s",
+        "app.search.elasticsearch.read-timeout=2s",
         "app.search.elasticsearch.replicas=0"
 })
 class ContentSearchRuntimeAcceptance {
     private static final String QUEUE = "content.search.v1";
     private static final String FAILED = "content.search.failed.v1";
     private static final String QUARANTINE = "content.search.quarantine.v1";
+    private static final String RABBIT_INDEX = "tongpin-threads-v11111111111111111111111111111111";
+    private static final String KAFKA_INDEX = "tongpin-threads-v22222222222222222222222222222222";
     @Autowired ThreadService threads;
     @Autowired ThreadRepository threadRepository;
     @Autowired SectionRepository sections;
@@ -111,9 +126,12 @@ class ContentSearchRuntimeAcceptance {
     @Autowired ContentEventOutboxService outbox;
     @Autowired ContentEventPublisherTransport publisher;
     @Autowired ContentSearchConsumer consumer;
+    @Autowired ContentSearchEventDecoder decoder;
+    @Autowired ContentSearchProjection projection;
     @Autowired ContentSearchReplayService replay;
     @Autowired ContentSearchIndex index;
     @Autowired SearchRebuildService rebuild;
+    @Autowired GovernanceService governance;
     @Autowired ThreadSearchService search;
     @Autowired ThreadSearchProjectionService owner;
     @Autowired ConnectionFactory connections;
@@ -124,6 +142,7 @@ class ContentSearchRuntimeAcceptance {
     @Autowired DataSource dataSource;
     @Autowired ObjectMapper mapper;
     @Autowired MeterRegistry metrics;
+    @Autowired PrometheusMeterRegistry prometheus;
     @MockitoBean StringRedisTemplate redis;
 
     @BeforeEach
@@ -134,6 +153,89 @@ class ContentSearchRuntimeAcceptance {
             assertThat(connection.getMetaData().getDatabaseProductName()).isEqualTo("MySQL");
         }
         assertThat(jdbc.queryForObject("SELECT DATABASE()", String.class)).isEqualTo(expected);
+    }
+
+    @Test
+    void kafka_pilot_primes_indexes_and_compares_same_event() throws Exception {
+        phase("kafka_pipeline");
+        declareTopology();
+        rebuild.preparePilotIndex(RABBIT_INDEX);
+        rebuild.preparePilotIndex(KAFKA_INDEX);
+        rebuild.activatePilotIndex(RABBIT_INDEX, KAFKA_INDEX);
+        Actor author = actor("kafka-first");
+        long id = create(author, "KafkaPilotInitialNeedle", "Initial notification search trial");
+        publishPending();
+        consumeAll();
+        ThreadSearchDocument document = awaitBothCarriers(id);
+        evidence("kafka_pipeline", Map.of("eventId", document.eventId(), "version", document.version(),
+                "sameEventOnBothIndexes", true, "active", index.activeIndex().orElseThrow()));
+    }
+
+    @Test
+    void kafka_pilot_outage_preserves_rabbit_delivery_and_refuses_stale_cutover() throws Exception {
+        phase("kafka_outage");
+        Actor author = actor("kafka-outage");
+        long id = create(author, "KafkaPilotOutageNeedle", "Committed while Kafka was offline");
+        publishPending();
+        consumeAll();
+        ThreadSearchDocument document = owner.read(id).orElseThrow();
+        assertThat(index.read(RABBIT_INDEX, id)).contains(document);
+        assertThat(index.read(KAFKA_INDEX, id)).isEmpty();
+        assertThatThrownBy(() -> rebuild.activatePilotIndex(KAFKA_INDEX, RABBIT_INDEX))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(index.activeIndex()).contains(RABBIT_INDEX);
+        awaitCondition(() -> confirmedDeliveries(document.eventId(), false) == 1);
+        evidence("kafka_outage", Map.of("eventId", document.eventId(), "rabbitStillWorks", true,
+                "kafkaPending", true, "staleCutoverPrevented", true));
+    }
+
+    @Test
+    void kafka_pilot_recovers_then_switches_and_returns_to_rabbit() throws Exception {
+        phase("kafka_recovery");
+        long id = search.list("KafkaPilotOutageNeedle", null, null, 1, 10).getContent().getFirst().getId();
+        ThreadSearchDocument recovered = awaitBothCarriers(id);
+        assertThat(rebuild.activatePilotIndex(KAFKA_INDEX, RABBIT_INDEX).verified()).isGreaterThanOrEqualTo(2);
+        assertThat(index.activeIndex()).contains(KAFKA_INDEX);
+        Actor author = actor("kafka-cutover");
+        long later = create(author, "KafkaPilotAfterCutoverNeedle", "Committed after the pilot index switch");
+        publishPending();
+        consumeAll();
+        awaitBothCarriers(later);
+        index.refresh(KAFKA_INDEX);
+        assertThat(search.list("KafkaPilotAfterCutoverNeedle", null, null, 1, 10).getContent())
+                .extracting(dto -> dto.getId()).containsExactly(later);
+        long verified = rebuild.activatePilotIndex(RABBIT_INDEX, KAFKA_INDEX).verified();
+        assertThat(index.activeIndex()).contains(RABBIT_INDEX);
+        assertThat(search.list("KafkaPilotAfterCutoverNeedle", null, null, 1, 10).getContent())
+                .extracting(dto -> dto.getId()).containsExactly(later);
+        evidence("kafka_recovery", Map.of("replayedEventId", recovered.eventId(), "verifiedDocuments", verified,
+                "cutoverAndRollback", true, "postCutoverWriteRetained", true));
+    }
+
+    private ThreadSearchDocument awaitBothCarriers(long id) throws InterruptedException {
+        ThreadSearchDocument document = owner.read(id).orElseThrow();
+        awaitCondition(() -> index.read(KAFKA_INDEX, id).filter(document::equals).isPresent()
+                && confirmedDeliveries(document.eventId(), true) == 1);
+        assertThat(index.read(RABBIT_INDEX, id)).contains(document);
+        return document;
+    }
+
+    private long confirmedDeliveries(String eventId, boolean confirmed) {
+        String confirmation = confirmed ? "IS NOT NULL" : "IS NULL AND delivery.last_error IS NOT NULL";
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM content_event_kafka_delivery delivery
+                JOIN content_event_outbox event ON event.id = delivery.outbox_id
+                WHERE event.event_id = ? AND delivery.published_at
+                """ + confirmation, Long.class, eventId);
+    }
+
+    private void awaitCondition(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        do {
+            if (condition.getAsBoolean()) return;
+            Thread.sleep(150);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("Kafka pilot readback did not reach the expected state");
     }
 
     @Test
@@ -189,8 +291,8 @@ class ContentSearchRuntimeAcceptance {
         try {
             channel.queueUnbind(QUEUE, "content.events.v1", "thread.changed");
             assertThatThrownBy(() -> publisher.publish(message(current)))
-                    .isInstanceOfSatisfying(ContentEventPublisherTransport.PublishException.class,
-                            failure -> assertThat(failure.code()).isEqualTo(ContentEventPublisherTransport.Code.RETURNED));
+                    .isInstanceOfSatisfying(PublishException.class,
+                            failure -> assertThat(failure.code()).isEqualTo(Code.RETURNED));
         } finally {
             channel.queueBind(QUEUE, "content.events.v1", "thread.changed");
             channel.close();
@@ -202,7 +304,7 @@ class ContentSearchRuntimeAcceptance {
         Connection firstConnection = connections.createConnection();
         Channel firstChannel = firstConnection.createChannel(false);
         GetResponse unacknowledged = awaitDelivery(firstChannel, QUEUE);
-        consumer.apply(consumer.decode(unacknowledged.getBody()));
+        projection.apply(decoder.decode(unacknowledged.getBody()));
         firstChannel.abort();
         firstConnection.close();
         Connection nextConnection = connections.createConnection();
@@ -255,6 +357,8 @@ class ContentSearchRuntimeAcceptance {
         assertThat(quarantineBody).contains("\"reason\":\"INVALID_ENVELOPE\"");
         assertThat(quarantineBody).doesNotContain("sensitive-original-request");
         assertThat(quarantineBody).doesNotContain("requestId");
+        assertThat(metrics.counter("bluealbum.content.search.quarantined").count()).isEqualTo(1);
+        assertThat(metrics.counter("bluealbum.content.search.replayed").count()).isEqualTo(1);
 
         threads.hideForModeration(id);
         // Deliberately leave the old visible ES document in place before rechecking the owner.
@@ -288,10 +392,16 @@ class ContentSearchRuntimeAcceptance {
         consumeAll();
         assertThat(index.read(ContentSearchIndex.ALIAS, crashId)).contains(owner.read(crashId).orElseThrow());
         verifyLateCommitRebuild(actor);
+        long lagSamples = metrics.summary("bluealbum.content.search.index.lag").count();
+        assertThat(lagSamples).isPositive();
+        assertThat(prometheus.scrape()).contains("bluealbum_content_outbox_oldest_pending_seconds",
+                "bluealbum_content_outbox_rows", "bluealbum_content_search_index_lag_seconds_count",
+                "bluealbum_content_search_failed_total", "bluealbum_content_search_replayed_total",
+                "bluealbum_content_search_quarantined_total");
         evidence("pipeline", Map.of("threadId", id, "tombstoneVersion", 4,
                 "crashRecoveredThreadId", crashId, "activeIndex", index.activeIndex().orElseThrow(),
                 "published", outbox.count(ContentEventStatus.PUBLISHED),
-                "indexedBatchSize", 2, "staleBatchFellBack", true));
+                "indexedBatchSize", 2, "staleBatchFellBack", true, "indexLagSamples", lagSamples));
     }
 
     private void verifyMultipleIndexedHits(Actor actor) throws Exception {
@@ -337,6 +447,7 @@ class ContentSearchRuntimeAcceptance {
         assertThat(search.list("M2IndexOutageNeedle", null, null, 1, 10).getContent())
                 .extracting(dto -> dto.getId()).containsExactly(id);
         assertThat(metrics.counter("content.search.fallback", "reason", "unavailable").count()).isPositive();
+        assertThat(metrics.counter("bluealbum.content.search.failed").count()).isPositive();
         evidence("index_outage", Map.of("threadId", id, "durableFailedQueue", queueCount(FAILED),
                 "databaseFallback", true));
     }
@@ -349,13 +460,17 @@ class ContentSearchRuntimeAcceptance {
         var delivery = outbox.claimOne().orElseThrow();
         assertThat(delivery.message().aggregateId()).isEqualTo(id);
         assertThatThrownBy(() -> publisher.publish(delivery.message()))
-                .isInstanceOf(ContentEventPublisherTransport.PublishException.class);
+                .isInstanceOf(PublishException.class);
         assertThat(outbox.markFailure(delivery, new IllegalStateException("offline"))).isTrue();
         assertThat(events.findById(delivery.id()).orElseThrow().getStatus()).isEqualTo(ContentEventStatus.PENDING);
+        double pendingRows = metrics.get("bluealbum.content.outbox.rows").tag("status", "pending").gauge().value();
+        assertThat(pendingRows).isEqualTo(outbox.count(ContentEventStatus.PENDING)).isPositive();
+        assertThat(metrics.get("bluealbum.content.outbox.oldest.pending").gauge().value()).isNotNegative();
         assertThat(search.list("M2OutageNeedle", null, null, 1, 10).getContent())
                 .extracting(dto -> dto.getId()).containsExactly(id);
         evidence("outage", Map.of("threadId", id, "pendingEventId", delivery.message().eventId(),
-                "pendingCount", outbox.count(ContentEventStatus.PENDING), "databaseFallback", true));
+                "pendingCount", outbox.count(ContentEventStatus.PENDING), "pendingMetricRows", pendingRows,
+                "databaseFallback", true));
     }
 
     @Test
@@ -370,6 +485,8 @@ class ContentSearchRuntimeAcceptance {
         consumeAll();
         index.refresh(ContentSearchIndex.ALIAS);
         assertThat(outbox.count(ContentEventStatus.PENDING)).isZero();
+        assertThat(metrics.get("bluealbum.content.outbox.rows").tag("status", "pending").gauge().value()).isZero();
+        assertThat(metrics.counter("bluealbum.content.search.replayed").count()).isEqualTo(retried.published());
         assertThat(queueCount(FAILED)).isZero();
         for (String needle : List.of("M2OutageNeedle", "M2IndexOutageNeedle")) {
             var result = search.list(needle, null, null, 1, 10);
@@ -382,9 +499,53 @@ class ContentSearchRuntimeAcceptance {
         assertThat(rebuilt.index()).isNotEqualTo(oldIndex);
         assertThat(index.count(oldIndex)).isPositive();
         assertThat(index.activeIndex()).contains(rebuilt.index());
+
+        Actor rollbackOperator = actor("rollback");
+        long afterRebuild = create(rollbackOperator, "M2RollbackNeedle", "M2RollbackNeedle body");
+        long hiddenAfterRebuild = search.list("M2IndexOutageNeedle", null, null, 1, 10)
+                .getContent().getFirst().getId();
+        threads.hideForModeration(hiddenAfterRebuild);
+        publishPending();
+        consumeAll();
+        assertThat(index.read(oldIndex, afterRebuild)).isEmpty();
+        assertThat(index.read(rebuilt.index(), afterRebuild)).contains(owner.read(afterRebuild).orElseThrow());
+        assertThat(index.read(oldIndex, hiddenAfterRebuild).orElseThrow().visible()).isTrue();
+
+        var mvc = MockMvcBuilders.webAppContextSetup(web).build();
+        mvc.perform(post("/api/v1/admin/search/rollback").param("index", oldIndex))
+                .andExpect(status().isUnauthorized());
+        var principal = new TestingAuthenticationToken(rollbackOperator.user(), null, "ROLE_USER");
+        mvc.perform(post("/api/v1/admin/search/rollback").principal(principal).param("index", oldIndex))
+                .andExpect(status().isForbidden());
+        assertThat(index.activeIndex()).contains(rebuilt.index());
+        governance.bootstrapAdmin(rollbackOperator.user());
+        mvc.perform(post("/api/v1/admin/search/rollback").principal(principal)
+                        .param("index", ContentSearchIndex.ALIAS))
+                .andExpect(status().isBadRequest());
+        var rollbackResponse = mvc.perform(post("/api/v1/admin/search/rollback").principal(principal)
+                        .param("index", oldIndex))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.index").value(oldIndex))
+                .andReturn().getResponse();
+        var rolledBack = mapper.readValue(rollbackResponse.getContentAsByteArray(), SearchRebuildService.RebuildResult.class);
+        assertThat(rolledBack.verified()).isEqualTo(rolledBack.documents()).isPositive();
+        mvc.perform(post("/api/v1/admin/search/rollback").principal(principal).param("index", oldIndex))
+                .andExpect(status().isConflict());
+        assertThat(index.activeIndex()).contains(oldIndex);
+        assertThat(index.count(rebuilt.index())).isPositive();
+        assertThat(index.read(ContentSearchIndex.ALIAS, afterRebuild)).contains(owner.read(afterRebuild).orElseThrow());
+        assertThat(index.read(ContentSearchIndex.ALIAS, hiddenAfterRebuild))
+                .contains(owner.read(hiddenAfterRebuild).orElseThrow());
+        assertThat(search.list("M2IndexOutageNeedle", null, null, 1, 10).getContent()).isEmpty();
+        double indexedBefore = metrics.counter("content.search.requests", "source", "elasticsearch").count();
+        assertThat(search.list("M2RollbackNeedle", null, null, 1, 10).getContent())
+                .extracting(dto -> dto.getId()).containsExactly(afterRebuild);
+        assertThat(metrics.counter("content.search.requests", "source", "elasticsearch").count())
+                .isEqualTo(indexedBefore + 1);
         evidence("recovery", Map.of("failedReplayed", retried.published(), "oldIndexRetained", oldIndex,
-                "activeIndex", rebuilt.index(), "verifiedDocuments", rebuilt.verified(), "pendingCount", 0,
-                "failedQueueCount", 0));
+                "activeIndex", rolledBack.index(), "rebuiltIndex", rebuilt.index(),
+                "verifiedDocuments", rolledBack.verified(), "aliasRollback", true,
+                "hiddenAfterRebuildPreserved", true, "pendingCount", 0, "failedQueueCount", 0));
     }
 
     private void verifyLateCommitRebuild(Actor actor) throws Exception {

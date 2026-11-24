@@ -8,7 +8,6 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
@@ -98,7 +97,7 @@ public class NotificationRepository {
                     "INSERT INTO notifications "
                             + "(user_id, type, title, content, thread_id, target_id, target_type, read_flag, created_at, idempotency_key) "
                             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    Statement.RETURN_GENERATED_KEYS
+                    new String[] {"id"}
             );
             ps.setLong(1, notification.getUserId());
             ps.setString(2, notification.getType());

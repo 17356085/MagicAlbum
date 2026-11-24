@@ -14,6 +14,12 @@
     "interaction": [
       "bookmarks"
     ],
+    "chat": [
+      "chat"
+    ],
+    "social": [
+      "social"
+    ],
     "notifications": [
       "notifications"
     ],
@@ -39,18 +45,6 @@
     "repo"
   ],
   "allowedCrossDomainDependencies": [
-    {
-      "source": "backend/src/main/java/com/example/demo/governance/repo/SectionGovernanceRepository.java",
-      "target": "com.example.demo.sections.entity.Section"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
-      "target": "com.example.demo.sections.entity.Section"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
-      "target": "com.example.demo.sections.repo.SectionRepository"
-    },
     {
       "source": "backend/src/main/java/com/example/demo/governance/service/GovernanceService.java",
       "target": "com.example.demo.user.entity.User"
@@ -140,14 +134,6 @@
       "target": "com.example.demo.user.repo.UserRepository"
     },
     {
-      "source": "backend/src/main/java/com/example/demo/bookmarks/service/ThreadBookmarkService.java",
-      "target": "com.example.demo.threads.entity.Thread"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/bookmarks/service/ThreadBookmarkService.java",
-      "target": "com.example.demo.threads.repo.ThreadRepository"
-    },
-    {
       "source": "backend/src/main/java/com/example/demo/bootstrap/local/LocalSampleDataSeeder.java",
       "target": "com.example.demo.sections.entity.Section"
     },
@@ -182,22 +168,6 @@
     {
       "source": "backend/src/main/java/com/example/demo/bootstrap/local/seed/LocalThreadSeedText.java",
       "target": "com.example.demo.sections.entity.Section"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
-      "target": "com.example.demo.posts.entity.Post"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
-      "target": "com.example.demo.posts.repo.PostRepository"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
-      "target": "com.example.demo.threads.entity.Thread"
-    },
-    {
-      "source": "backend/src/main/java/com/example/demo/moderation/service/ContentReportService.java",
-      "target": "com.example.demo.threads.repo.ThreadRepository"
     },
     {
       "source": "backend/src/main/java/com/example/demo/posts/service/PostService.java",

@@ -123,7 +123,6 @@ onBeforeUnmount(() => {
     <header class="mobile-me__header ui-page-header">
       <div class="min-w-0">
         <h1 class="ui-title">我的</h1>
-        <p class="ui-description">你的内容与日常足迹。</p>
       </div>
       <button type="button" class="mobile-me__back ui-button" aria-label="返回上一页" title="返回上一页" @click="safeBack">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
@@ -154,6 +153,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="isLoggedIn" class="mobile-me__links" aria-label="我的内容">
+        <router-link to="/messages" class="mobile-me__link">消息<span aria-hidden="true">›</span></router-link>
         <router-link to="/my/threads" class="mobile-me__link">我的帖子<span aria-hidden="true">›</span></router-link>
         <router-link to="/my/posts" class="mobile-me__link">我的评论<span aria-hidden="true">›</span></router-link>
         <router-link to="/my/bookmarks" class="mobile-me__link">我的收藏<span aria-hidden="true">›</span></router-link>

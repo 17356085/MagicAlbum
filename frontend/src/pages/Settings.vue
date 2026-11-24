@@ -99,12 +99,7 @@ onUnmounted(() => {
 
 <template>
   <div class="ui-page">
-    <header class="ui-page-header">
-      <div class="min-w-0">
-        <h1 class="ui-title">设置</h1>
-        <p class="ui-description">管理公开资料、通知偏好、关联状态与账号安全。</p>
-      </div>
-    </header>
+    <h1 class="sr-only">设置</h1>
 
     <div class="ui-panel overflow-hidden">
       <nav class="ui-toolbar" aria-label="设置导航">

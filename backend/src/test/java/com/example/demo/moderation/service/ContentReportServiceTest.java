@@ -15,6 +15,7 @@ import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.posts.service.PostService;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
+import com.example.demo.threads.service.ContentReportTargets;
 import com.example.demo.threads.service.ThreadService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,8 +68,7 @@ class ContentReportServiceTest {
     void setUp() {
         service = new ContentReportService(
                 reportRepository,
-                threadRepository,
-                postRepository,
+                new ContentReportTargets(threadRepository, postRepository),
                 threadService,
                 postService
         );

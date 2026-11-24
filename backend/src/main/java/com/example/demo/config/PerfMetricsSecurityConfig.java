@@ -7,9 +7,9 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 
-/** Metrics are scraped only within the isolated performance environment. */
+/** Metrics profiles bind their Actuator endpoints on a separate management port. */
 @Configuration
-@Profile("perf")
+@Profile({"perf", "observability"})
 public class PerfMetricsSecurityConfig {
     @Bean
     @Order(0)

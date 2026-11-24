@@ -1,0 +1,38 @@
+groups:
+  - name: bluealbum-microservices
+    rules:
+      - alert: BlueAlbumCoreMetricsUnavailable
+        expr: up{job="bluealbum-core"} == 0
+        for: 1m
+        annotations:
+          summary: "核心服务指标连续一分钟无法采集"
+
+      - alert: BlueAlbumChatRealtimeUnavailable
+        expr: (up{job="bluealbum-chat-realtime"} == 0) or (bluealbum_chat_realtime_ready == 0) or absent(up{job="bluealbum-chat-realtime"})
+        for: 1m
+        annotations:
+          summary: "聊天实时节点无法采集或已失去消息队列连接"
+
+      - alert: BlueAlbumNotificationPendingTooLong
+        expr: bluealbum_notification_outbox_oldest_pending_seconds > 300
+        for: 2m
+        annotations:
+          summary: "通知 Outbox 的最早待投递记录已超过五分钟"
+
+      - alert: BlueAlbumNotificationDeliveryFailed
+        expr: bluealbum_notification_outbox_rows{status="failed"} > 0
+        for: 1m
+        annotations:
+          summary: "通知 Outbox 存在需要检查的失败记录"
+
+      - alert: BlueAlbumContentEventPendingTooLong
+        expr: bluealbum_content_outbox_oldest_pending_seconds > 300
+        for: 2m
+        annotations:
+          summary: "内容事件 Outbox 有待投递记录积压超过五分钟"
+
+      - alert: BlueAlbumContentEventDeliveryFailed
+        expr: bluealbum_content_outbox_rows{status="failed"} > 0
+        for: 1m
+        annotations:
+          summary: "内容事件 Outbox 存在需要重试或排查的失败记录"

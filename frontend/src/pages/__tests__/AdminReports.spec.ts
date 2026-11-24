@@ -160,6 +160,31 @@ describe('AdminReports', () => {
     expect(wrapper.text()).toContain('当前没有待处理举报')
   })
 
+  it('shows a queued chat action without claiming that the message is hidden', async () => {
+    mocks.getGovernanceMe.mockResolvedValue({ admin: true, moderatedSectionIds: [], postingRestricted: false, restrictedUntil: null })
+    const report = {
+      id: 17, targetType: 'CHAT_MESSAGE', targetId: 99, reason: 'OTHER', status: 'PENDING',
+      createdAt: '2026-10-08T00:00:00Z', reporterId: 9, chatEvidence: '已举报的消息',
+    }
+    const pending = { ...report, pendingAction: 'HIDE' }
+    mocks.listAdminReports
+      .mockResolvedValueOnce({ ...emptyPage, items: [report], total: 1 })
+      .mockResolvedValueOnce({ ...emptyPage, items: [pending], total: 1 })
+    mocks.resolveAdminReport.mockResolvedValue(pending)
+    const wrapper = createWrapper()
+
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '隐藏内容')!.trigger('click')
+    await wrapper.get('#resolution-reason-17').setValue('确认违规')
+    await wrapper.findAll('form').find((form) => form.find('#resolution-reason-17').exists())!.trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已提交审核操作，等待聊天服务确认。')
+    expect(wrapper.text()).toContain('正在等待聊天服务确认隐藏内容。')
+    expect(wrapper.text()).not.toContain('隐藏内容成功')
+    expect(wrapper.findAll('button').some((button) => button.text() === '隐藏内容')).toBe(false)
+  })
+
   it('clears review controls and enters denied when permission is revoked during resolution', async () => {
     const auth = useAuthStore()
     auth.applyAuthState({ accessToken: 'admin-token', user: { id: 7, username: 'admin' } })

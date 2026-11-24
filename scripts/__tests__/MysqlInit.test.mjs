@@ -24,7 +24,21 @@ function createHarness() {
   const mysqlPath = join(binDir, 'mysql')
   writeFileSync(
     mysqlPath,
-    '#!/bin/sh\nset -eu\n: "${MYSQL_SQL_CAPTURE:?missing SQL capture path}"\nif [ "${MYSQL_INIT_TEST_EXIT:-0}" -ne 0 ]; then exit "$MYSQL_INIT_TEST_EXIT"; fi\ncat > "$MYSQL_SQL_CAPTURE"\n',
+    [
+      '#!/bin/sh',
+      'set -eu',
+      ': "${MYSQL_SQL_CAPTURE:?missing SQL capture path}"',
+      'if [ "${MYSQL_INIT_TEST_EXIT:-0}" -ne 0 ]; then exit "$MYSQL_INIT_TEST_EXIT"; fi',
+      'case "$*" in',
+      '  *"FROM mysql.db"*"REPLACE("*) printf "%s\\n" "${MYSQL_RUNTIME_GRANT:-0}" ;;',
+      '  *"FROM mysql.db"*) printf "%s\\n" "${MYSQL_LEGACY_GRANT:-0}" ;;',
+      '  *"--database=m0_core -Nse SELECT DATABASE()"*) [ "$3" = "m0_core_user" ] ;;',
+      '  *"--database=m0_notify_test -Nse SELECT DATABASE()"*) [ "$3" = "m0_notify_user" ] || [ "$3" = "m0_notify_ddl" ] ;;',
+      '  *"-Nse SELECT 1"*) exit "${MYSQL_REPLACEMENT_AUTH_EXIT:-0}" ;;',
+      '  *) cat >> "$MYSQL_SQL_CAPTURE" ;;',
+      'esac',
+      '',
+    ].join('\n'),
     { encoding: 'utf8', mode: 0o755 },
   )
   try {
@@ -109,6 +123,73 @@ test('notification database initializer isolates shell state when sourced', () =
     const sql = readCapturedSql(harness)
     assert.ok(sql.includes('CREATE DATABASE IF NOT EXISTS `m0_notify_test`'), 'notification database SQL did not execute')
     assert.ok(sql.includes("GRANT ALL PRIVILEGES ON `m0_notify_test`.* TO 'm0_notify_user'@'%';"), 'notification grant SQL did not execute')
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('dedicated notification account provisions a literal schema grant and removes the legacy grant', () => {
+  const harness = createHarness()
+  try {
+    const env = childEnv(harness, {
+      MYSQL_DATABASE: 'm0_core',
+      MYSQL_USER: 'm0_core_user',
+      MYSQL_PASSWORD: 'Core-DB-fixture-key-1234567890',
+      MYSQL_ROOT_PASSWORD: 'Root-DB-fixture-key-1234567890',
+      MYSQL_LEGACY_GRANT: '1',
+      NOTIFICATION_DB_NAME: 'm0_notify_test',
+      NOTIFICATION_DB_USER: 'm0_notify_user',
+      NOTIFICATION_DB_PASSWORD: 'Notify-DB-fixture-key-1234567890',
+    })
+    const result = runBash(['scripts/init-notification-db.sh'], env)
+    assert.equal(result.status, 0, result.stderr)
+    const sql = readCapturedSql(harness)
+    assert.ok(sql.includes("CREATE USER IF NOT EXISTS 'm0_notify_user'@'%'"))
+    assert.ok(sql.includes("GRANT ALL PRIVILEGES ON `m0\\_notify\\_test`.* TO 'm0_notify_user'@'%';"))
+    assert.ok(sql.includes("REVOKE ALL PRIVILEGES ON `m0_notify_test`.* FROM 'm0_core_user'@'%';"))
+
+    writeFileSync(harness.capturePath, '')
+    const rejected = runBash(['scripts/init-notification-db.sh'], { ...env, MYSQL_REPLACEMENT_AUTH_EXIT: '43' })
+    assert.equal(rejected.status, 43)
+    assert.doesNotMatch(readCapturedSql(harness), /GRANT ALL|REVOKE ALL/)
+  } finally {
+    harness.cleanup()
+  }
+})
+
+test('migration account caps the previous runtime schema grant and validates separate credentials', () => {
+  const harness = createHarness()
+  try {
+    const env = childEnv(harness, {
+      MYSQL_DATABASE: 'm0_core',
+      MYSQL_USER: 'm0_core_user',
+      MYSQL_PASSWORD: 'Core-DB-fixture-key-1234567890',
+      MYSQL_ROOT_PASSWORD: 'Root-DB-fixture-key-1234567890',
+      MYSQL_LEGACY_GRANT: '1',
+      MYSQL_RUNTIME_GRANT: '1',
+      NOTIFICATION_DB_NAME: 'm0_notify_test',
+      NOTIFICATION_DB_USER: 'm0_notify_user',
+      NOTIFICATION_DB_PASSWORD: 'Notify-DB-fixture-key-1234567890',
+      NOTIFICATION_DB_MIGRATION_USER: 'm0_notify_ddl',
+      NOTIFICATION_DB_MIGRATION_PASSWORD: 'Migrate-DB-fixture-key-1234567890',
+    })
+    const result = runBash(['scripts/init-notification-db.sh'], env)
+    assert.equal(result.status, 0, result.stderr)
+    const sql = readCapturedSql(harness)
+    const grant = '`m0\\_notify\\_test`.*'
+    assert.ok(sql.includes(`GRANT ALL PRIVILEGES ON ${grant} TO 'm0_notify_ddl'@'%';`))
+    const revoke = sql.indexOf(`REVOKE ALL PRIVILEGES ON ${grant} FROM 'm0_notify_user'@'%';`)
+    assert.ok(revoke >= 0)
+    assert.ok(sql.indexOf(`GRANT SELECT, INSERT, UPDATE ON ${grant} TO 'm0_notify_user'@'%';`) > revoke)
+    assert.ok(!sql.includes(`GRANT ALL PRIVILEGES ON ${grant} TO 'm0_notify_user'@'%';`))
+
+    writeFileSync(harness.capturePath, '')
+    const rejected = runBash(['scripts/init-notification-db.sh'], {
+      ...env,
+      NOTIFICATION_DB_MIGRATION_PASSWORD: env.NOTIFICATION_DB_PASSWORD,
+    })
+    assert.equal(rejected.status, 1)
+    assert.equal(readCapturedSql(harness), '')
   } finally {
     harness.cleanup()
   }

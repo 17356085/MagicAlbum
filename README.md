@@ -62,7 +62,7 @@ mvn -B package
 pwsh -File ./scripts/Test-NotificationRuntime.ps1 -JavaHome 'C:\path\to\jdk-21'
 ```
 
-脚本默认使用临时 MySQL／Redis 容器、临时宿主机端口（核心 19080、通知 19081、网关 19090），并在 `outputs/notification-runtime/` 留下检查结果和日志。它只记录并清理自己创建的容器、Java 进程和临时凭证文件；不会使用或清理 `test-artifacts/local-runtime/`。该验证覆盖通知服务 V3、核心 Outbox 迁移、接收端停机后的重试、幂等重放和收件人隔离，但不等同于完整前端 UI 验收或生产迁移验收。
+脚本使用临时 MySQL／Redis 容器和独立宿主机端口（默认核心 19080、通知 19081、网关 19090），在 `outputs/notification-runtime/` 保存结果。它从通知 V3 旧库出发，使用正式初始化脚本开通运行与迁移账号，验证重复初始化、跨库拒绝、旧数据保留、专用账号执行 V4 以及运行账号的 DDL 拒绝。随后验证公网网关拦截、内部直连、停机补投、幂等和 SSE 补拉。
 
 ## 异步媒体与实时通知
 
@@ -118,6 +118,7 @@ scripts/__tests__/     工程脚本回归
 tests/                 Python API 与浏览器测试
 perf/                  压测实验材料；不代表已达到性能目标
 docs/engineering/      目录及编码规范（随仓库交付）
+docs/architecture/     同频微服务架构设计（随仓库交付）
 docs/ 其他目录          本机文档与历史资料（默认不跟踪）
 outputs/               本机审查结果、截图及文件归档（默认不跟踪）
 ```
@@ -135,8 +136,45 @@ pnpm build
 
 Go worker 的检查入口见[服务说明](services/README.md)，工程脚本见[脚本索引](scripts/README.md)。Python 接口和浏览器测试需要隔离环境及专用账号，见 [`tests/README.md`](./tests/README.md)。单元测试、完整 Python 回归和各专项运行门禁分别记录结果；已有 CI 证据以对应提交及实际报告为准。
 
+### 通知库独立账号
+
+新生成的本地 `runtime.env` 分别创建通知运行账号和 Flyway 迁移账号。已有本地环境先备份，再用 `scripts/Stop-Local.ps1 -KeepDependencies` 停止应用。在原环境文件中设置运行账号的 `NOTIFICATION_DB_USER`、`NOTIFICATION_DB_PASSWORD`，以及迁移账号的 `NOTIFICATION_DB_MIGRATION_USER`、`NOTIFICATION_DB_MIGRATION_PASSWORD`，然后用 `scripts/Start-Local.ps1` 启动。
+
+完整 Compose 在 `.env` 中设置同样的四项。两个账号和密码需各自独立，并与核心库账号和数据库管理员凭证区分。使用 24 至 128 位随机密码，字符可以是字母、数字或 `_+=@%./:-`。新卷会自动初始化。已有卷先备份，再在原数据库卷上按顺序执行以下命令，每一步成功后继续。
+
+```powershell
+docker compose --env-file .env stop backend notification-service
+docker compose --env-file .env up -d --wait mysql
+docker compose --env-file .env exec -T mysql sh /docker-entrypoint-initdb.d/01-notification-db.sh
+docker compose --env-file .env up -d --wait --build
+```
+
+初始化脚本核验专用凭证，为 Flyway 授予通知库迁移权限，将运行账号收紧为本库的 `SELECT`、`INSERT`、`UPDATE`，并撤销核心账号原有的通知库授权。切换保留原通知表、Flyway 历史和数据卷，脚本可以重复执行。
+
+兼容配置中，仅设置运行账号时，由该账号兼做迁移。四项都省略时沿用原共享授权。需要回切时，先停止两个应用并备份，再调整配置并重复初始化。自管部署可向通知服务单独传入 `SPRING_FLYWAY_USER` 和 `SPRING_FLYWAY_PASSWORD`，沿用通知库连接地址。
+
+### 独立聊天进程演练
+
+使用干净的 Compose 项目可演练独立聊天进程。按 `.env.example` 为聊天库设置独立的运行账号、Flyway 账号和管理员密码，并分别生成 `CHAT_INTERNAL_SERVICE_TOKEN` 与 `CHAT_GOVERNANCE_INTERNAL_TOKEN`。聊天服务复用后端镜像，通过私有网络访问核心的认证、公开资料和联系判定接口，使用自己的 MySQL 数据库。前端仍访问原有 API，好友、拉黑和 WebSocket 路径沿用现有入口。
+
+```powershell
+docker compose --env-file .env -p bluealbum-chat-drill -f docker-compose.yml -f docker-compose.chat.yml up -d --build --wait
+```
+
+`scripts/ci/compose-browser-smoke.sh` 支持以下隔离验证。每次使用临时账号，结束时清理本次创建的容器和数据卷。
+
+- `BLUEALBUM_SPLIT_CHAT_CHECK=1` 运行 API 与浏览器用例，并核验实际写入的位置和数据库权限。
+- `BLUEALBUM_CHAT_REALTIME_CHECK=1` 启动两个 Go 实时节点，验证同一条写入的扇出、单节点停机、重连后按游标补拉和无关账号隔离。
+- `BLUEALBUM_CHAT_CUTOVER_CHECK=1` 验证已有历史的前向切换、聊天进程停机后的举报补发、目标写入后的反向对账和回退。
+- `BLUEALBUM_CHAT_BACKUP_CHECK=1` 停止临时项目的写入，将核心、通知和独立聊天的备份导入全新项目，验证消息历史、待审核决定与待投递通知的恢复。需要 PowerShell 7.4 或更高版本。
+
+持有聊天历史的环境按分库演练步骤做迁移和对账。[数据库切换](docs/architecture/03-数据库归属与迁移.md#聊天首次分库演练) · [服务间通信规范](docs/architecture/04-服务间通信规范.md)
+
+在 Compose 的 `up` 前加上 `-f docker-compose.observability.yml` 可启用私网 Prometheus，采集核心 Outbox 与每个 Go 实时节点的状态。[指标与告警](docs/engineering/observability.md#微服务联调指标)
+
 ## 开发资料
 
+- [同频微服务架构设计](docs/architecture/01-总体架构设计.md)
 - [工程文档索引](docs/engineering/README.md)：按架构、运维、阶段实施和历史评审查找资料。
 - [前端说明](./frontend/README.md)：依赖、代理与前端检查。
 - [Python 测试](./tests/README.md)：接口及浏览器测试环境。

@@ -41,6 +41,13 @@ public class SearchAdminController {
         return rebuild.rebuild();
     }
 
+    @PostMapping("/rollback")
+    public SearchRebuildService.RebuildResult rollback(Authentication authentication,
+                                                       @RequestParam("index") String index) {
+        access.requireAdmin(userId(authentication));
+        return rebuild.rollback(index);
+    }
+
     @PostMapping("/failed/replay")
     public ContentSearchReplayService.ReplayResult replay(Authentication authentication,
                                                          @RequestParam(defaultValue = "10") int limit) {

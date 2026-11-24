@@ -7,6 +7,7 @@ import com.example.demo.threads.service.ThreadSearchProjectionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.rabbitmq.client.Channel;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
@@ -16,13 +17,17 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class ContentSearchConsumerTest {
     private final ThreadSearchProjectionService owner = mock(ThreadSearchProjectionService.class);
     private final ContentSearchIndex index = mock(ContentSearchIndex.class);
     private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-    private final ContentSearchConsumer consumer = new ContentSearchConsumer(owner, index, mapper, 3, 0);
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+    private final ContentSearchPipelineMetrics metrics = new ContentSearchPipelineMetrics(meters);
+    private final ContentSearchConsumer consumer = new ContentSearchConsumer(
+            new ContentSearchEventDecoder(mapper), new ContentSearchProjection(owner, index, metrics), metrics, 3, 0);
     private final Channel channel = mock(Channel.class);
 
     @Test
@@ -64,6 +69,8 @@ class ContentSearchConsumerTest {
         verify(index, times(3)).put(ContentSearchIndex.ALIAS, document);
         verify(channel).basicNack(19, false, false);
         verify(channel, never()).basicAck(anyLong(), anyBoolean());
+        assertThat(meters.counter("bluealbum.content.search.failed").count()).isEqualTo(1);
+        assertThat(meters.summary("bluealbum.content.search.index.lag").count()).isZero();
     }
 
     private Message message(ContentEventMessage event) throws Exception {

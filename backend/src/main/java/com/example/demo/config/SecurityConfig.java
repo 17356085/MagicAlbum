@@ -92,6 +92,7 @@ public class SecurityConfig {
                         "/api/v1/sections",
                         "/api/v1/tags",
                         "/api/v1/tags/popular",
+                        "/api/v1/search/popular",
                         "/api/v1/threads",
                         "/api/v1/threads/*",
                         "/api/v1/threads/*/posts"

@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -18,6 +19,8 @@ import java.util.Map;
 
 @Service
 public class UserProfileService {
+    private static final int USER_SUMMARY_BATCH_SIZE = 500;
+
     private final UserRepository userRepository;
     private final UserProfileRepository profileRepository;
     private final UserFollowRepository followRepository;
@@ -106,6 +109,15 @@ public class UserProfileService {
         Map<Long, UserSummaryDto> result = new HashMap<>();
         if (userIds == null || userIds.isEmpty()) return result;
 
+        List<Long> ids = new ArrayList<>(userIds);
+        for (int from = 0; from < ids.size(); from += USER_SUMMARY_BATCH_SIZE) {
+            int to = Math.min(from + USER_SUMMARY_BATCH_SIZE, ids.size());
+            loadUserSummaries(ids.subList(from, to), result);
+        }
+        return result;
+    }
+
+    private void loadUserSummaries(List<Long> userIds, Map<Long, UserSummaryDto> result) {
         List<User> users = userRepository.findAllById(userIds);
         Map<Long, User> userMap = new HashMap<>();
         for (User user : users) {
@@ -134,7 +146,6 @@ public class UserProfileService {
             }
             result.put(userId, dto);
         }
-        return result;
     }
 
     public ProfileDto updateProfile(Long userId, ProfileDto payload) {

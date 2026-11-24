@@ -1,0 +1,73 @@
+# Optional local trace and log collection for the split-chat Compose topology.
+x-otel-environment: &otel-environment
+  JAVA_TOOL_OPTIONS: -javaagent:/opt/bluealbum/opentelemetry-javaagent.jar
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_METRICS_EXPORTER: none
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: 'true'
+  OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_MDC_ATTRIBUTES: requestId
+  OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS: 'false'
+
+x-otel-jar: &otel-jar
+  type: bind
+  source: ${BLUEALBUM_OTEL_AGENT_JAR:?Set BLUEALBUM_OTEL_AGENT_JAR to the OpenTelemetry Java agent file}
+  target: /opt/bluealbum/opentelemetry-javaagent.jar
+  read_only: true
+  bind:
+    create_host_path: false
+
+services:
+  backend:
+    environment:
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: bluealbum-core
+    volumes:
+      - *otel-jar
+  chat-service:
+    environment:
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: bluealbum-chat
+    volumes:
+      - *otel-jar
+  notification-service:
+    environment:
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: bluealbum-notification
+    volumes:
+      - *otel-jar
+  gateway:
+    environment:
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: bluealbum-gateway
+    volumes:
+      - *otel-jar
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.131.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./perf/telemetry/collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - tempo
+      - loki
+  tempo:
+    image: grafana/tempo:2.8.2
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./perf/telemetry/tempo.yml:/etc/tempo.yml:ro
+      - telemetry-tempo:/var/tempo
+    ports:
+      - "127.0.0.1:${BLUEALBUM_TEMPO_PORT:-3200}:3200"
+  loki:
+    image: grafana/loki:3.5.3
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./perf/telemetry/loki.yml:/etc/loki/config.yaml:ro
+      - telemetry-loki:/loki
+    ports:
+      - "127.0.0.1:${BLUEALBUM_LOKI_PORT:-3100}:3100"
+
+volumes:
+  telemetry-tempo:
+  telemetry-loki:

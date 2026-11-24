@@ -455,7 +455,6 @@ onUnmounted(() => {
         <div class="flex min-w-0 items-center gap-2">
           <h1 class="ui-title truncate">发帖</h1>
         </div>
-        <p class="ui-description hidden lg:block">选择分区，写下标题和正文，再发布到社区。</p>
       </div>
       <div class="flex shrink-0 flex-nowrap items-center justify-end gap-2 lg:hidden">
         <button type="button" class="ui-button min-h-11 whitespace-nowrap px-3 py-2 text-sm" :disabled="editorBusy" @click="onSaveDraft">保存草稿</button>

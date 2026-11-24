@@ -286,11 +286,13 @@ onUnmounted(() => {
 
       <div v-if="!loading && !error && (page > 1 || (list.items || []).length > 0)" class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ list.total || 0 }} 人 · 每页 {{ size }} 人</div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="ui-pagination-controls">
           <button type="button" class="ui-button" :disabled="loading || page <= 1" @click="setPage(page - 1)">上一页</button>
-          <span class="text-sm text-[var(--ui-muted)]">第</span>
-          <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
-          <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+          <label class="ui-page-position ui-muted text-sm">
+            <span>第</span>
+            <input v-model="inputPage" aria-label="页码" class="ui-field text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+            <span>/ {{ totalPages }} 页</span>
+          </label>
           <button type="button" class="ui-button" :disabled="loading || page >= totalPages" @click="setPage(page + 1)">下一页</button>
         </div>
       </div>

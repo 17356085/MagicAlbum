@@ -1,6 +1,8 @@
 package com.example.demo.threads.event;
 
 import com.example.demo.threads.event.dto.ContentEventMessage;
+import com.example.demo.threads.event.port.ContentEventPublisher.Code;
+import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.example.demo.threads.event.service.ContentEventPublisherTransport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -65,10 +67,8 @@ class ContentEventPublisherTransportTest {
         ContentEventPublisherTransport transport = transport(Duration.ofSeconds(1));
 
         assertThatThrownBy(() -> transport.publish(event))
-                .isInstanceOf(ContentEventPublisherTransport.PublishException.class)
-                .extracting(ContentEventPublisherTransport.PublishException.class::cast)
-                .extracting(ContentEventPublisherTransport.PublishException::code)
-                .isEqualTo(ContentEventPublisherTransport.Code.CONFIRM_NACK);
+                .isInstanceOfSatisfying(PublishException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Code.CONFIRM_NACK));
     }
 
     @Test
@@ -82,10 +82,8 @@ class ContentEventPublisherTransportTest {
         ContentEventPublisherTransport transport = transport(Duration.ofSeconds(1));
 
         assertThatThrownBy(() -> transport.publish(event))
-                .isInstanceOf(ContentEventPublisherTransport.PublishException.class)
-                .extracting(ContentEventPublisherTransport.PublishException.class::cast)
-                .extracting(ContentEventPublisherTransport.PublishException::code)
-                .isEqualTo(ContentEventPublisherTransport.Code.RETURNED);
+                .isInstanceOfSatisfying(PublishException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Code.RETURNED));
     }
 
     @Test
@@ -95,10 +93,8 @@ class ContentEventPublisherTransportTest {
         ContentEventPublisherTransport transport = transport(Duration.ofMillis(5));
 
         assertThatThrownBy(() -> transport.publish(event))
-                .isInstanceOf(ContentEventPublisherTransport.PublishException.class)
-                .extracting(ContentEventPublisherTransport.PublishException.class::cast)
-                .extracting(ContentEventPublisherTransport.PublishException::code)
-                .isEqualTo(ContentEventPublisherTransport.Code.CONFIRM_TIMEOUT);
+                .isInstanceOfSatisfying(PublishException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Code.CONFIRM_TIMEOUT));
     }
 
     @Test

@@ -1,0 +1,16 @@
+# Optional comment notification delivery through the private RabbitMQ queue.
+services:
+  backend:
+    environment:
+      APP_NOTIFICATIONS_COMMENT_EVENTS_ENABLED: 'true'
+  notification-service:
+    environment:
+      APP_NOTIFICATIONS_COMMENT_EVENTS_ENABLED: 'true'
+      APP_RABBIT_ENABLED: 'true'
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:?RABBITMQ_USER must be set}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy

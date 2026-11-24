@@ -83,7 +83,7 @@
     </nav>
 
     <PopularTagsPanel :sections="sections" />
-    <FollowingFeedPanel v-if="isLoggedIn" />
+    <FollowingFeedPanel v-if="isLoggedIn" :prefer-home-overview="homeOverviewEnabled && route.name === 'discover'" />
     <RecentVisitsPanel v-if="isLoggedIn" />
 
     <!-- 个人中心菜单 (仅登录) -->
@@ -92,6 +92,19 @@
         我的
       </div>
       <ul class="space-y-1 px-2 pb-2">
+        <li>
+          <router-link
+            to="/messages"
+            class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            active-class="text-brandDay-600 bg-brandDay-50 dark:text-brandNight-400 dark:bg-brandNight-900/20"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5 opacity-70" aria-hidden="true">
+              <path stroke-linejoin="round" d="M4 5h16v11H10l-5 3v-3H4z" />
+              <path stroke-linecap="round" d="M8 9h8m-8 3h5" />
+            </svg>
+            <span>消息</span>
+          </router-link>
+        </li>
         <li>
           <router-link
             to="/my/threads"
@@ -180,6 +193,7 @@ import { getGovernanceMe, type GovernanceMe } from '@/api/governance'
 import { getStoredAccessToken } from '@/utils/authStorage'
 import PopularTagsPanel from '@/components/sidebar/PopularTagsPanel.vue'
 import FollowingFeedPanel from '@/components/sidebar/FollowingFeedPanel.vue'
+import { homeOverviewEnabled } from '@/api/homeOverview'
 import RecentVisitsPanel from '@/components/sidebar/RecentVisitsPanel.vue'
 import type { Section } from '@/types'
 
@@ -233,7 +247,9 @@ async function loadSectionsData(): Promise<void> {
   const requestSeq = ++sectionsRequestSeq
   loadingSections.value = true
   try {
-    const data = await listSections({ size: 20 })
+    const data = await (homeOverviewEnabled && route.name === 'discover'
+      ? listSections({ size: 20 }, true)
+      : listSections({ size: 20 }))
     if (requestSeq === sectionsRequestSeq) sections.value = data.items
   } catch (_) {
   } finally {

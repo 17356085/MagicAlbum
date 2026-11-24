@@ -3,12 +3,12 @@ package com.example.demo.governance.service;
 import com.example.demo.governance.entity.CommunityState;
 import com.example.demo.sections.entity.Section;
 import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.governance.repo.CommunityAdminRoleRepository;
 import com.example.demo.governance.repo.CommunityAuditRepository;
 import com.example.demo.governance.repo.CommunityModeratorScopeRepository;
 import com.example.demo.governance.repo.CommunityPostingRestrictionRepository;
 import com.example.demo.governance.repo.CommunityStateRepository;
-import com.example.demo.governance.repo.SectionGovernanceRepository;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,8 +40,6 @@ class GovernanceServiceTest {
     @Mock
     private SectionRepository sectionRepository;
     @Mock
-    private SectionGovernanceRepository sectionGovernanceRepository;
-    @Mock
     private CommunityStateRepository stateRepository;
     @Mock
     private CommunityAdminRoleRepository adminRoleRepository;
@@ -56,7 +54,8 @@ class GovernanceServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new GovernanceService(userRepository, sectionRepository, sectionGovernanceRepository,
+        SectionAdministration sectionAdministration = new SectionAdministration(sectionRepository);
+        service = new GovernanceService(userRepository, sectionAdministration,
                 stateRepository, adminRoleRepository, moderatorScopeRepository,
                 restrictionRepository, auditRepository);
     }
@@ -134,7 +133,7 @@ class GovernanceServiceTest {
         Section section = new Section();
         section.setId(9L);
         when(userRepository.findByIdForInteraction(7L)).thenReturn(Optional.of(user));
-        when(sectionGovernanceRepository.findByIdForWriting(9L)).thenReturn(Optional.of(section));
+        when(sectionRepository.findByIdForWriting(9L)).thenReturn(Optional.of(section));
         when(restrictionRepository.findById(7L)).thenReturn(Optional.of(
                 new com.example.demo.governance.entity.CommunityPostingRestriction(7L, null)));
 
@@ -142,9 +141,9 @@ class GovernanceServiceTest {
                 () -> service.assertCanWrite(7L, 9L));
 
         assertEquals(HttpStatus.FORBIDDEN.value(), failure.getStatusCode().value());
-        InOrder order = inOrder(userRepository, sectionGovernanceRepository);
+        InOrder order = inOrder(userRepository, sectionRepository);
         order.verify(userRepository).findByIdForInteraction(7L);
-        order.verify(sectionGovernanceRepository).findByIdForWriting(9L);
+        order.verify(sectionRepository).findByIdForWriting(9L);
     }
 
     private static User user(Long id) {

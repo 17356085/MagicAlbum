@@ -1,0 +1,84 @@
+package com.example.demo.threads.event.kafka;
+
+import com.example.demo.threads.event.dto.ContentEventMessage;
+import com.example.demo.threads.event.port.ContentEventPublisher.Code;
+import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class KafkaContentEventPublisherTest {
+    private final Producer<String, byte[]> producer = mock(Producer.class);
+    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ContentEventMessage event = new ContentEventMessage(
+            "event-1", 1, "THREAD", 7L, 2L, "THREAD_UPSERTED",
+            Instant.parse("2026-10-19T00:00:00Z"), "request-1");
+
+    @Test
+    void sends_original_envelope_with_stable_aggregate_key() throws Exception {
+        when(producer.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
+        KafkaContentEventPublisher publisher = publisher(Duration.ofSeconds(1));
+
+        publisher.publish(event);
+
+        var capture = org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
+        verify(producer).send(capture.capture());
+        ProducerRecord<?, ?> record = capture.getValue();
+        assertThat(record.topic()).isEqualTo("content.events.v1");
+        assertThat(record.key()).isEqualTo("THREAD:7");
+        var body = mapper.readTree((byte[]) record.value());
+        assertThat(body.get("eventId").asText()).isEqualTo(event.eventId());
+        assertThat(body.get("occurredAt").asText()).isEqualTo("2026-10-19T00:00:00Z");
+    }
+
+    @Test
+    void confirmation_timeout_is_reported_as_unknown_outcome() {
+        when(producer.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
+        KafkaContentEventPublisher publisher = publisher(Duration.ofMillis(10));
+
+        assertThatThrownBy(() -> publisher.publish(event))
+                .isInstanceOfSatisfying(PublishException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Code.CONFIRM_TIMEOUT));
+    }
+
+    @Test
+    void failed_future_is_reported_as_transport_failure() {
+        CompletableFuture<RecordMetadata> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new IllegalStateException("broker unavailable"));
+        when(producer.send(any(ProducerRecord.class))).thenReturn(failed);
+        KafkaContentEventPublisher publisher = publisher(Duration.ofSeconds(1));
+
+        assertThatThrownBy(() -> publisher.publish(event))
+                .isInstanceOfSatisfying(PublishException.class,
+                        failure -> assertThat(failure.code()).isEqualTo(Code.TRANSPORT));
+    }
+
+    @Test
+    void close_is_bounded_and_idempotent() {
+        KafkaContentEventPublisher publisher = publisher(Duration.ofSeconds(1));
+
+        publisher.close();
+        publisher.close();
+
+        verify(producer).close(Duration.ofSeconds(1));
+    }
+
+    private KafkaContentEventPublisher publisher(Duration sendTimeout) {
+        return new KafkaContentEventPublisher(
+                producer, mapper, "content.events.v1", sendTimeout, Duration.ofSeconds(1));
+    }
+}

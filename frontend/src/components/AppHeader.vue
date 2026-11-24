@@ -16,10 +16,14 @@
           :visible-suggestions="visibleSuggestions"
           :suggest-profiles="suggestProfiles"
           :active-index="activeIndex"
+          :history="searchHistory"
+          :popular-searches="popularSearches[searchType]"
           @update:search-type="searchType = $event"
           @update:search-query="searchQuery = $event"
           @update:active-index="activeIndex = $event"
           @search="doSearch"
+          @use-history="searchFromHistory"
+          @clear-history="clearCurrentSearchHistory"
           @input-keydown="onInputKeydown"
           @input-focus="onInputFocus"
           @input-blur="onInputBlur"
@@ -80,8 +84,10 @@ import AuthEntry from '@/components/header/AuthEntry.vue'
 import BrandBar from '@/components/header/BrandBar.vue'
 import NotificationsMenu from '@/components/header/NotificationsMenu.vue'
 import SearchBox from '@/components/header/SearchBox.vue'
+import { clearSearchHistory, readSearchHistory, recordSearchHistory, type SearchHistoryEntry, type SearchType } from '@/components/header/searchHistory'
 import UserMenu from '@/components/header/UserMenu.vue'
 import { suggestUsers } from '@/api/users'
+import { listPopularSearches, recordPopularSearch } from '@/api/popularSearch'
 import { clearPendingAuthRedirect, getPendingAuthRedirect, setPendingAuthRedirect } from '@/utils/authStorage'
 import { useHeaderIdentity } from '@/components/header/useHeaderIdentity'
 import { useHeaderTheme } from '@/components/header/useHeaderTheme'
@@ -97,11 +103,23 @@ const router = useRouter()
 const route = useRoute()
 const isMobileChildRoute = computed(() => !['/', '/discover', '/sections', '/feed', '/ranking', '/me'].includes(route.path))
 function goBack(): void { safeBack(router) }
-type SearchType = 'threads' | 'users'
 type SuggestProfile = Pick<UserProfile, 'avatarUrl' | 'nickname'>
 
 const searchType = ref<SearchType>('threads')
 const searchQuery = ref('')
+const searchHistoryOwner = computed(() => {
+  if (!isLoggedIn.value) return 'guest'
+  const id = user.value?.id ?? user.value?.userId
+  return id == null ? null : 'account:' + String(id)
+})
+const searchHistory = ref<SearchHistoryEntry[]>([])
+const popularSearches = ref<Record<SearchType, string[]>>({ threads: [], users: [] })
+const popularUntil: Record<SearchType, number> = { threads: 0, users: 0 }
+const popularLoading = new Set<SearchType>()
+watch(searchHistoryOwner, (owner, previous) => {
+  if (previous !== undefined && previous !== owner) searchQuery.value = ''
+  searchHistory.value = readSearchHistory(owner)
+}, { immediate: true, flush: 'sync' })
 // 顶栏联想建议（仅用户搜索时启用）
 const suggestOpen = ref(false)
 const suggestions = ref<User[]>([])
@@ -158,7 +176,10 @@ const {
   refreshMyProfile,
   resetIdentity,
   onProfileUpdated,
-} = useHeaderIdentity({ isLoggedIn, token, user, updateCurrentUser, hydrateCurrentUser })
+} = useHeaderIdentity({
+  isLoggedIn, token, user, updateCurrentUser, hydrateCurrentUser,
+  onHomePage: () => route.name === 'discover',
+})
 const { isDark, themeLabel, toggleTheme } = useHeaderTheme()
 
 // 事件处理定义在 setup 顶层，便于在卸载时正确移除
@@ -293,10 +314,37 @@ function doSearch(): void {
     }
     return
   }
+  searchHistory.value = recordSearchHistory(searchHistoryOwner.value, searchType.value, q)
+  if (isLoggedIn.value) void recordPopularSearch(searchType.value, q).catch(() => {})
   if (searchType.value === 'users') {
     router.push({ name: 'users', query: { q, page: 1 } })
   } else {
     router.push({ name: 'discover', query: { q, page: 1, sectionId: route.query.sectionId } })
+  }
+}
+
+function searchFromHistory(entry: SearchHistoryEntry): void {
+  searchType.value = entry.type
+  searchQuery.value = entry.query
+  doSearch()
+}
+
+function clearCurrentSearchHistory(): void {
+  clearSearchHistory(searchHistoryOwner.value)
+  searchHistory.value = []
+}
+
+async function loadPopularSearches(): Promise<void> {
+  const type = searchType.value
+  if (popularLoading.has(type) || popularUntil[type] > Date.now()) return
+  popularLoading.add(type)
+  try {
+    popularSearches.value[type] = await listPopularSearches(type)
+    popularUntil[type] = Date.now() + 30_000
+  } catch (_) {
+    // Search stays usable while suggestions are unavailable.
+  } finally {
+    popularLoading.delete(type)
   }
 }
 
@@ -354,6 +402,7 @@ function onInputFocus(): void {
   if (searchType.value === 'users' && String(searchQuery.value || '').trim()) {
     suggestOpen.value = true
   }
+  if (!searchQuery.value.trim()) void loadPopularSearches()
 }
 
 function onInputBlur(): void {

@@ -111,9 +111,9 @@
 
         <nav v-if="!usersLoading && !usersError && userTotalPages > 1" class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between" aria-label="成员列表分页">
           <span class="text-[var(--ui-muted)]">共 {{ userTotal }} 位成员</span>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="ui-pagination-controls">
             <button type="button" class="ui-button" :disabled="userPage <= 1 || usersLoading || pendingKey !== null" @click="goToUserPage(userPage - 1)">上一页</button>
-            <span class="min-w-20 text-center text-[var(--ui-muted)]">第 {{ userPage }} / {{ userTotalPages }} 页</span>
+            <span class="ui-page-position ui-muted">第 {{ userPage }} / {{ userTotalPages }} 页</span>
             <button type="button" class="ui-button" :disabled="userPage >= userTotalPages || usersLoading || pendingKey !== null" @click="goToUserPage(userPage + 1)">下一页</button>
           </div>
         </nav>
@@ -192,7 +192,7 @@
         </ul>
         <nav v-if="!auditLoading && !auditError && auditTotalPages > 1" class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between" aria-label="变更记录分页">
           <span class="text-[var(--ui-muted)]">共 {{ auditTotal }} 条记录</span>
-          <div class="flex flex-wrap items-center gap-2"><button type="button" class="ui-button" :disabled="auditPage <= 1 || auditLoading || pendingKey !== null" @click="goToAuditPage(auditPage - 1)">上一页</button><span class="min-w-20 text-center text-[var(--ui-muted)]">第 {{ auditPage }} / {{ auditTotalPages }} 页</span><button type="button" class="ui-button" :disabled="auditPage >= auditTotalPages || auditLoading || pendingKey !== null" @click="goToAuditPage(auditPage + 1)">下一页</button></div>
+          <div class="ui-pagination-controls"><button type="button" class="ui-button" :disabled="auditPage <= 1 || auditLoading || pendingKey !== null" @click="goToAuditPage(auditPage - 1)">上一页</button><span class="ui-page-position ui-muted">第 {{ auditPage }} / {{ auditTotalPages }} 页</span><button type="button" class="ui-button" :disabled="auditPage >= auditTotalPages || auditLoading || pendingKey !== null" @click="goToAuditPage(auditPage + 1)">下一页</button></div>
         </nav>
       </section>
     </template>

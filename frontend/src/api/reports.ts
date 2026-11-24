@@ -1,6 +1,6 @@
 import api from './client'
 
-export type ReportTargetType = 'THREAD' | 'POST'
+export type ReportTargetType = 'THREAD' | 'POST' | 'CHAT_MESSAGE'
 export type ReportReason = 'SPAM' | 'HARASSMENT' | 'OTHER'
 
 export interface CreateReportPayload {
@@ -42,7 +42,7 @@ function hasOwn(value: object, key: string): boolean {
 }
 
 function isReportTargetType(value: unknown): value is ReportTargetType {
-  return value === 'THREAD' || value === 'POST'
+  return value === 'THREAD' || value === 'POST' || value === 'CHAT_MESSAGE'
 }
 
 function decodeReportAcknowledgement(

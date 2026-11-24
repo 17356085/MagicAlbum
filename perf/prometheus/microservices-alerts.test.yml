@@ -1,0 +1,37 @@
+rule_files:
+  - microservices-alerts.yml
+
+evaluation_interval: 15s
+
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'bluealbum_content_outbox_oldest_pending_seconds{job="bluealbum-core",instance="backend:9090"}'
+        values: '350+0x10 0+0x5'
+      - series: 'bluealbum_content_outbox_rows{job="bluealbum-core",instance="backend:9090",status="failed"}'
+        values: '1+0x10 0+0x5'
+    alert_rule_test:
+      - alertname: BlueAlbumContentEventPendingTooLong
+        eval_time: 1m45s
+        exp_alerts: []
+      - alertname: BlueAlbumContentEventPendingTooLong
+        eval_time: 2m
+        exp_alerts:
+          - exp_labels: {job: bluealbum-core, instance: 'backend:9090'}
+            exp_annotations:
+              summary: "内容事件 Outbox 有待投递记录积压超过五分钟"
+      - alertname: BlueAlbumContentEventPendingTooLong
+        eval_time: 3m
+        exp_alerts: []
+      - alertname: BlueAlbumContentEventDeliveryFailed
+        eval_time: 45s
+        exp_alerts: []
+      - alertname: BlueAlbumContentEventDeliveryFailed
+        eval_time: 1m
+        exp_alerts:
+          - exp_labels: {job: bluealbum-core, instance: 'backend:9090', status: failed}
+            exp_annotations:
+              summary: "内容事件 Outbox 存在需要重试或排查的失败记录"
+      - alertname: BlueAlbumContentEventDeliveryFailed
+        eval_time: 3m
+        exp_alerts: []

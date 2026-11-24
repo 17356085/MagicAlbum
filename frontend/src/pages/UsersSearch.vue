@@ -191,17 +191,14 @@ watch(page, (val) => {
 
 <template>
   <section class="ui-page">
-    <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">搜索用户</h1>
-        <p class="ui-description">按昵称或用户名找到社区里的成员。</p>
-      </div>
-      <span v-if="!loading && !error && total" class="ui-tag">共 {{ total }} 位用户</span>
-    </header>
+    <h1 class="sr-only">搜索用户</h1>
 
-    <div v-if="q" class="ui-toolbar mb-4 rounded-lg border border-[var(--ui-border)]">
-      <span class="text-sm text-[var(--ui-muted)]">搜索关键字：</span>
-      <span class="ui-tag">{{ q }}</span>
+    <div v-if="q || (!loading && !error && total)" class="ui-toolbar mb-4 rounded-lg border border-[var(--ui-border)]">
+      <template v-if="q">
+        <span class="text-sm text-[var(--ui-muted)]">搜索关键字：</span>
+        <span class="ui-tag">{{ q }}</span>
+      </template>
+      <span v-if="!loading && !error && total" class="ui-tag">共 {{ total }} 位用户</span>
     </div>
 
     <div v-if="loading" class="ui-panel ui-empty" role="status">
@@ -264,7 +261,7 @@ watch(page, (val) => {
       <!-- Pagination -->
       <div v-if="showPagination" class="mt-6 flex flex-col gap-3 border-t border-[var(--ui-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ total }} 条 · 每页 {{ size }} 条</div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="ui-pagination-controls">
         <button 
           class="ui-button"
           :disabled="page<=1" 
@@ -272,16 +269,18 @@ watch(page, (val) => {
         >
           上一页
         </button>
-        <span class="text-sm text-[var(--ui-muted)]">第</span>
-        <input
-          v-model="inputPage"
-          class="ui-field w-16 text-center"
-          aria-label="页码"
-          inputmode="numeric"
-          @keyup.enter="goToInputPage"
-          @blur="goToInputPage"
-        />
-        <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+        <label class="ui-page-position ui-muted text-sm">
+          <span>第</span>
+          <input
+            v-model="inputPage"
+            class="ui-field text-center"
+            aria-label="页码"
+            inputmode="numeric"
+            @keyup.enter="goToInputPage"
+            @blur="goToInputPage"
+          />
+          <span>/ {{ totalPages }} 页</span>
+        </label>
         <button 
           class="ui-button"
           :disabled="page >= totalPages"

@@ -24,6 +24,8 @@ spring:
     locations: classpath:db/migration/mysql
 
 app:
+  chat:
+    allow-requests-default: true
   admin:
     email: ${APP_ADMIN_EMAIL:}
   rate-limit:

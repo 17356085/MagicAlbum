@@ -199,12 +199,7 @@ onUnmounted(() => {
 
 <template>
   <section class="ui-page">
-    <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">分区</h1>
-        <p class="ui-description">按兴趣浏览社区里的讨论与最新帖子。</p>
-      </div>
-    </header>
+    <h1 class="sr-only">分区</h1>
 
     <div v-if="loading" class="ui-panel ui-empty" role="status">正在加载...</div>
     <div v-else-if="error" class="ui-error" role="alert">

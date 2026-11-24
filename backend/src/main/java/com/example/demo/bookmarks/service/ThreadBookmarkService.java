@@ -5,36 +5,32 @@ import com.example.demo.bookmarks.dto.BookmarkPageResponse;
 import com.example.demo.bookmarks.dto.BookmarkStatusResponse;
 import com.example.demo.bookmarks.entity.ThreadBookmark;
 import com.example.demo.bookmarks.repo.ThreadBookmarkRepository;
-import com.example.demo.threads.entity.Thread;
-import com.example.demo.threads.repo.ThreadRepository;
+import com.example.demo.threads.service.ThreadService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ThreadBookmarkService {
 
-    private static final String NORMAL_STATUS = "NORMAL";
 
     private final ThreadBookmarkRepository bookmarkRepository;
-    private final ThreadRepository threadRepository;
+    private final ThreadService threadService;
 
-    public ThreadBookmarkService(ThreadBookmarkRepository bookmarkRepository, ThreadRepository threadRepository) {
+    public ThreadBookmarkService(ThreadBookmarkRepository bookmarkRepository, ThreadService threadService) {
         this.bookmarkRepository = bookmarkRepository;
-        this.threadRepository = threadRepository;
+        this.threadService = threadService;
     }
 
     public BookmarkStatusResponse getStatus(Long userId, Long threadId) {
-        requireNormalThread(threadId);
+        threadService.requireNormalThread(threadId);
         return new BookmarkStatusResponse(bookmarkRepository.existsByUserIdAndThreadId(userId, threadId));
     }
 
     public BookmarkStatusResponse add(Long userId, Long threadId) {
-        requireNormalThread(threadId);
+        threadService.requireNormalThread(threadId);
         if (!bookmarkRepository.existsByUserIdAndThreadId(userId, threadId)) {
             ThreadBookmark bookmark = new ThreadBookmark();
             bookmark.setUserId(userId);
@@ -76,14 +72,5 @@ public class ThreadBookmarkService {
                 result.getNumber() + 1,
                 result.getSize(),
                 result.getTotalElements());
-    }
-
-    private Thread requireNormalThread(Long threadId) {
-        Thread thread = threadRepository.findById(threadId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在"));
-        if (!NORMAL_STATUS.equals(thread.getStatus())) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "帖子不存在");
-        }
-        return thread;
     }
 }

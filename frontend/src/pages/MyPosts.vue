@@ -66,11 +66,8 @@ function contextLink(item: MyPostItem): string {
 
 <template>
   <section class="ui-page">
+    <h1 class="sr-only">我的评论</h1>
     <header class="ui-page-header">
-      <div>
-        <h1 class="ui-title">我的评论</h1>
-        <p class="ui-description">管理你参与过的讨论与回复。</p>
-      </div>
       <div class="flex flex-wrap items-center gap-2">
         <select v-model="query.sort" class="ui-field w-auto" aria-label="评论排序" @change="query.page=1; load()">
           <option value="createdAt">最新发布</option>
@@ -136,11 +133,13 @@ function contextLink(item: MyPostItem): string {
 
       <footer class="flex flex-col gap-3 border-t border-[var(--ui-border)] px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div class="text-xs text-[var(--ui-muted)]">共 {{ list.total || 0 }} 条 · 每页 {{ query.size }} 条</div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="ui-pagination-controls">
           <button type="button" class="ui-button" :disabled="loading || (query.page || 1) <= 1" @click="prevPage">上一页</button>
-          <span class="text-sm text-[var(--ui-muted)]">第</span>
-          <input v-model="inputPage" aria-label="页码" class="ui-field w-16 text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
-          <span class="text-sm text-[var(--ui-muted)]">/ {{ totalPages }} 页</span>
+          <label class="ui-page-position ui-muted text-sm">
+            <span>第</span>
+            <input v-model="inputPage" aria-label="页码" class="ui-field text-center" inputmode="numeric" @keyup.enter="goToInputPage" @blur="goToInputPage" />
+            <span>/ {{ totalPages }} 页</span>
+          </label>
           <button type="button" class="ui-button" :disabled="loading || (query.page || 1) >= totalPages" @click="nextPage">下一页</button>
         </div>
       </footer>

@@ -1,8 +1,13 @@
 package com.example.demo.notifications.outbox;
 
+import com.example.demo.notifications.dto.NotificationDto;
 import com.example.demo.notifications.service.NotificationService;
 import com.example.demo.notifications.service.NotificationCreationAcknowledgement;
+import com.example.demo.notifications.service.rabbit.CommentCreatedEnvelope;
+import com.example.demo.notifications.service.rabbit.CommentCreatedRabbitTransport;
 import com.example.demo.user.service.UserSettingsService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -20,15 +25,40 @@ public class NotificationOutboxDispatcher {
     private final NotificationOutboxService outboxService;
     private final NotificationService notificationService;
     private final UserSettingsService userSettingsService;
+    private final CommentCreatedRabbitTransport commentCreatedTransport;
 
+    @Autowired
+    NotificationOutboxDispatcher(
+            NotificationOutboxService outboxService,
+            NotificationService notificationService,
+            UserSettingsService userSettingsService,
+            ObjectProvider<CommentCreatedRabbitTransport> commentCreatedTransportProvider
+    ) {
+        this(outboxService, notificationService, userSettingsService,
+                commentCreatedTransportProvider == null ? null : commentCreatedTransportProvider.getIfAvailable());
+    }
+
+    /** Preserves the direct/HTTP constructor used by existing tests and callers. */
     public NotificationOutboxDispatcher(
             NotificationOutboxService outboxService,
             NotificationService notificationService,
             UserSettingsService userSettingsService
     ) {
+        this(outboxService, notificationService, userSettingsService,
+                (CommentCreatedRabbitTransport) null);
+    }
+
+    /** Isolated constructor for the opt-in Rabbit delivery contract. */
+    public NotificationOutboxDispatcher(
+            NotificationOutboxService outboxService,
+            NotificationService notificationService,
+            UserSettingsService userSettingsService,
+            CommentCreatedRabbitTransport commentCreatedTransport
+    ) {
         this.outboxService = outboxService;
         this.notificationService = notificationService;
         this.userSettingsService = userSettingsService;
+        this.commentCreatedTransport = commentCreatedTransport;
     }
 
     public void dispatch() {
@@ -60,16 +90,7 @@ public class NotificationOutboxDispatcher {
                 outboxService.markSuppressed(delivery.id(), owner, "preference disabled before delivery");
                 return;
             }
-            var response = notificationService.create(
-                    delivery.recipientUserId(),
-                    delivery.type(),
-                    delivery.title(),
-                    delivery.content(),
-                    delivery.threadId(),
-                    delivery.targetId(),
-                    delivery.targetType(),
-                    UUID.fromString(delivery.eventId())
-            );
+            var response = deliverToSelectedTransport(delivery);
             NotificationCreationAcknowledgement.requireCreated(response, delivery.type(), delivery.title(), delivery.content(),
                     delivery.threadId(), delivery.targetId(), delivery.targetType());
             outboxService.markDelivered(delivery.id(), owner);
@@ -88,6 +109,26 @@ public class NotificationOutboxDispatcher {
                 MDC.put("requestId", previousRequestId);
             }
         }
+    }
+
+    private NotificationDto deliverToSelectedTransport(
+            NotificationOutboxService.Delivery delivery
+    ) {
+        if (commentCreatedTransport != null && CommentCreatedEnvelope.supports(delivery)) {
+            // The Rabbit path is selected only for the existing comment reply
+            // intent. Other notification intents retain the HTTP contract.
+            return commentCreatedTransport.deliver(delivery);
+        }
+        return notificationService.create(
+                delivery.recipientUserId(),
+                delivery.type(),
+                delivery.title(),
+                delivery.content(),
+                delivery.threadId(),
+                delivery.targetId(),
+                delivery.targetType(),
+                UUID.fromString(delivery.eventId())
+        );
     }
 
     private boolean validRequestId(String value) {

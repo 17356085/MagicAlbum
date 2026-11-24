@@ -25,7 +25,9 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ArtifactDirectory,
 
-    [switch]$RequireStageFixtures
+    [switch]$RequireStageFixtures,
+
+    [switch]$IncludeSplitChat
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,12 +35,18 @@ Set-StrictMode -Version 3.0
 
 $script:RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:ComposeFile = Join-Path $script:RepositoryRoot 'docker-compose.yml'
+$script:ChatComposeFile = Join-Path $script:RepositoryRoot 'docker-compose.chat.yml'
+$script:IncludeSplitChat = [bool]$IncludeSplitChat
 $script:RunId = [Guid]::NewGuid().ToString('N').Substring(0, 10)
 $script:ArtifactRoot = $null
 $script:SourceMysqlId = $null
 $script:RestoreMysqlId = $null
+$script:SourceChatMysqlId = $null
+$script:RestoreChatMysqlId = $null
 $script:SourceDumpContainerPath = "/tmp/bluealbum-m0-$($script:RunId)-database.sql"
 $script:RestoreDumpContainerPath = "/tmp/bluealbum-m0-$($script:RunId)-restore.sql"
+$script:SourceChatDumpContainerPath = "/tmp/bluealbum-m0-$($script:RunId)-chat-database.sql"
+$script:RestoreChatDumpContainerPath = "/tmp/bluealbum-m0-$($script:RunId)-chat-restore.sql"
 $script:SnapshotTemporaryPaths = [System.Collections.Generic.List[object]]::new()
 $failureException = $null
 $script:Summary = [ordered]@{
@@ -47,10 +55,15 @@ $script:Summary = [ordered]@{
     SourceProject = $SourceProject
     RestoreProject = $RestoreProject
     ArtifactDirectory = $null
+    IncludeSplitChat = [bool]$IncludeSplitChat
     SourceDatabase = $null
     NotificationDatabase = $null
+    ChatDatabase = $null
     RequireStageFixtures = [bool]$RequireStageFixtures
     SourceDumpSha256 = $null
+    SourceChatDumpSha256 = $null
+    SourcePendingChatDecisions = $null
+    SourceUndeliveredNotificationOutbox = $null
     SourceUploadFileCount = $null
     SourceUploadBytes = $null
     SourceUploadManifestSha256 = $null
@@ -60,6 +73,7 @@ $script:Summary = [ordered]@{
     UploadComparison = $null
     DatabaseComparisons = @()
     RequiredBusinessTables = @()
+    ExpectedAsyncMutations = @()
     FinalNotificationRuntimeObservation = $null
     Notes = @(
         'Source application services must remain stopped and no business writes may occur during verification.'
@@ -177,9 +191,12 @@ function Invoke-Compose {
         '--project-name', $Project,
         '--project-directory', $script:RepositoryRoot,
         '--env-file', $EnvironmentFile,
-        '-f', $script:ComposeFile,
-        '-f', $script:ComposeOverrideFile
-    ) + $CommandArguments
+        '-f', $script:ComposeFile
+    )
+    if ($script:IncludeSplitChat) {
+        $arguments += @('-f', $script:ChatComposeFile)
+    }
+    $arguments += @('-f', $script:ComposeOverrideFile) + $CommandArguments
     return Invoke-Docker -Purpose $Purpose -Arguments $arguments
 }
 
@@ -269,6 +286,38 @@ function Get-SqlText {
     return (($lines | ForEach-Object { [string]$_ }) -join "`n").Trim()
 }
 
+function Get-SqlInt64 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Purpose,
+        [Parameter(Mandatory = $true)][string]$ContainerId,
+        [Parameter(Mandatory = $true)][string]$Query
+    )
+
+    $text = Get-SqlText -Purpose $Purpose -ContainerId $ContainerId -Query $Query
+    $value = 0L
+    if (-not [Int64]::TryParse($text, [Globalization.NumberStyles]::Integer, [Globalization.CultureInfo]::InvariantCulture, [ref]$value)) {
+        throw "$Purpose did not return an integer."
+    }
+    return $value
+}
+
+function Get-SourceChatDecisionStatusSummary {
+    param(
+        [Parameter(Mandatory = $true)][string]$ContainerId,
+        [Parameter(Mandatory = $true)][string]$DatabaseName
+    )
+
+    $databaseLiteral = $DatabaseName.Replace('`', '``')
+    $pending = Get-SqlInt64 -Purpose 'Count source pending chat moderation decisions' -ContainerId $ContainerId -Query "SELECT COUNT(*) FROM ``$databaseLiteral``.``chat_report_decisions`` WHERE status = 'PENDING';"
+    $claimed = Get-SqlInt64 -Purpose 'Count source claimed chat moderation decisions' -ContainerId $ContainerId -Query "SELECT COUNT(*) FROM ``$databaseLiteral``.``chat_report_decisions`` WHERE status = 'CLAIMED';"
+    return [ordered]@{
+        Pending = $pending
+        Claimed = $claimed
+        DispatcherResumableStatuses = @('PENDING', 'CLAIMED')
+        DispatcherTerminalStatuses = @('CONFIRMED', 'FAILED')
+    }
+}
+
 function Get-DatabaseTableNames {
     param(
         [Parameter(Mandatory = $true)][string]$ContainerId,
@@ -349,12 +398,14 @@ function Get-DatabaseSnapshot {
         }
         $primaryKey = Get-PrimaryKeyColumns -ContainerId $ContainerId -DatabaseName $DatabaseName -TableName $tableName -Purpose "Read $SnapshotName primary key"
         $temporaryPath = "/tmp/bluealbum-m0-$($script:RunId)-$($SnapshotName.ToLowerInvariant())-$tableIndex.sql"
-        $script:SnapshotTemporaryPaths.Add([pscustomobject]@{ ContainerId = $ContainerId; Path = $temporaryPath })
+        $temporaryFile = [pscustomobject]@{ ContainerId = $ContainerId; Path = $temporaryPath }
+        $script:SnapshotTemporaryPaths.Add($temporaryFile)
         $dumpCommand = 'set -eu; MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump --single-transaction --quick --skip-comments --skip-dump-date --skip-extended-insert --no-create-info --skip-add-locks --skip-disable-keys --skip-set-charset --skip-triggers --order-by-primary --hex-blob ' +
             (ConvertTo-ShellSingleQuoted $DatabaseName) + ' ' + (ConvertTo-ShellSingleQuoted $tableName) +
             ' > ' + (ConvertTo-ShellSingleQuoted $temporaryPath) + '; sha256sum ' + (ConvertTo-ShellSingleQuoted $temporaryPath) +
             ' | cut -d " " -f1; rm -f ' + (ConvertTo-ShellSingleQuoted $temporaryPath)
         $hashLines = @(Invoke-ContainerShell -Purpose "Hash $SnapshotName table" -ContainerId $ContainerId -Script $dumpCommand)
+        $null = $script:SnapshotTemporaryPaths.Remove($temporaryFile)
         $hash = (($hashLines | ForEach-Object { [string]$_ }) -join "`n").Trim().ToLowerInvariant()
         if ($hash -notmatch '^[0-9a-f]{64}$') {
             throw "Hash for a $SnapshotName table was not a SHA-256 digest."
@@ -391,6 +442,7 @@ function Compare-DatabaseSnapshots {
         [Parameter(Mandatory = $true)][object]$RestoreSnapshot,
         [Parameter(Mandatory = $true)][string]$Phase,
         [string[]]$ExcludedTables = @(),
+        [hashtable]$ExcludedTableReasons = @{},
         [switch]$AllowVolatileChanges
     )
 
@@ -404,16 +456,20 @@ function Compare-DatabaseSnapshots {
     }
     $excluded = [System.Collections.Generic.List[object]]::new()
     $stableCompared = 0
-    $mismatchCount = 0
+    $mismatchedTables = [System.Collections.Generic.List[string]]::new()
 
     foreach ($tableName in @($sourceTables.Keys | Sort-Object)) {
         if (-not $restoreTables.ContainsKey($tableName)) {
-            $mismatchCount++
+            $mismatchedTables.Add($tableName)
             continue
         }
         $reason = if ($AllowVolatileChanges) { Get-VolatileTableReason -TableName $tableName } else { $null }
         if ($ExcludedTables -contains $tableName) {
-            $reason = 'Explicitly excluded from final equality because application startup may deliver pending outbox events.'
+            if ($ExcludedTableReasons.ContainsKey($tableName)) {
+                $reason = [string]$ExcludedTableReasons[$tableName]
+            } else {
+                $reason = 'Explicitly excluded from final equality because application startup may deliver pending outbox events.'
+            }
         }
         if ($reason) {
             $excluded.Add([pscustomobject]@{ Table = $tableName; Reason = $reason })
@@ -423,16 +479,16 @@ function Compare-DatabaseSnapshots {
         $restoreTable = $restoreTables[$tableName]
         $stableCompared++
         if ($sourceTable.Count -ne $restoreTable.Count -or $sourceTable.Sha256 -ne $restoreTable.Sha256) {
-            $mismatchCount++
+            $mismatchedTables.Add($tableName)
         }
     }
     foreach ($tableName in @($restoreTables.Keys | Sort-Object)) {
         if (-not $sourceTables.ContainsKey($tableName)) {
-            $mismatchCount++
+            $mismatchedTables.Add($tableName)
         }
     }
-    if ($mismatchCount -gt 0) {
-        throw "Database snapshot comparison failed during $Phase ($mismatchCount table mismatch(es))."
+    if ($mismatchedTables.Count -gt 0) {
+        throw "Database snapshot comparison failed during $Phase. Differing tables: $($mismatchedTables -join ', ')."
     }
     return [pscustomobject]@{
         Phase = $Phase
@@ -626,8 +682,18 @@ function Remove-TemporaryContainerFile {
 }
 
 try {
-    if ($SourceProject -notmatch '^bluealbum-m0-[a-f0-9]{10}(-restore)?$' -or
-        $RestoreProject -notmatch '^bluealbum-m0-[a-f0-9]{10}(-restore)?$') {
+    $legacyProjectPattern = '^bluealbum-m0-[a-f0-9]{10}(-restore)?$'
+    $splitProjectPattern = '^bluealbum-ci-[0-9]+-[0-9]+-split-chat-backup(-restore)?$'
+    $allowedProjectPattern = if ($script:IncludeSplitChat) {
+        "($legacyProjectPattern)|($splitProjectPattern)"
+    } else {
+        $legacyProjectPattern
+    }
+    if ($SourceProject -notmatch $allowedProjectPattern -or
+        $RestoreProject -notmatch $allowedProjectPattern) {
+        if ($script:IncludeSplitChat) {
+            throw 'SourceProject and RestoreProject must match the bluealbum-m0 or split-chat backup project-name contract.'
+        }
         throw 'SourceProject and RestoreProject must match the bluealbum-m0 project-name contract.'
     }
     if ($SourceProject -eq $RestoreProject) {
@@ -635,6 +701,9 @@ try {
     }
     if (-not (Test-Path -LiteralPath $script:ComposeFile -PathType Leaf)) {
         throw 'The fixed repository docker-compose.yml was not found.'
+    }
+    if ($script:IncludeSplitChat -and -not (Test-Path -LiteralPath $script:ChatComposeFile -PathType Leaf)) {
+        throw 'The fixed repository docker-compose.chat.yml was not found.'
     }
 
     $sourceEnvPath = ConvertTo-AbsolutePath $SourceEnvironmentFile
@@ -666,6 +735,17 @@ try {
     }
     $script:Summary.SourceDatabase = $sourceDatabase
     $script:Summary.NotificationDatabase = $sourceNotificationDatabase
+    if ($script:IncludeSplitChat) {
+        $sourceChatDatabase = Get-RequiredDatabaseName -Values $sourceValues -Key 'CHAT_DB_NAME' -FileDescription 'SourceEnvironmentFile'
+        $restoreChatDatabase = Get-RequiredDatabaseName -Values $restoreValues -Key 'CHAT_DB_NAME' -FileDescription 'RestoreEnvironmentFile'
+        if ($sourceChatDatabase -ne $restoreChatDatabase) {
+            throw 'Source and restore environment files must use the same validated CHAT_DB_NAME for an unmodified split-chat dump import.'
+        }
+        if ($sourceChatDatabase -eq $sourceDatabase -or $sourceChatDatabase -eq $sourceNotificationDatabase) {
+            throw 'CHAT_DB_NAME must identify a database distinct from DB_NAME and NOTIFICATION_DB_NAME.'
+        }
+        $script:Summary.ChatDatabase = $sourceChatDatabase
+    }
 
     Get-Command docker -ErrorAction Stop | Out-Null
     $sourceContainers = @(Get-ProjectContainers -Project $SourceProject)
@@ -679,7 +759,11 @@ try {
     if (@($restoreVolumes).Count -ne 0) {
         throw 'RestoreProject already has Compose volumes; refusing to reuse existing restore data.'
     }
-    foreach ($service in @('frontend', 'gateway', 'backend', 'notification-service')) {
+    $sourceApplicationServices = @('frontend', 'gateway', 'backend', 'notification-service')
+    if ($script:IncludeSplitChat) {
+        $sourceApplicationServices += 'chat-service'
+    }
+    foreach ($service in $sourceApplicationServices) {
         $application = Get-RequiredProjectContainer -Containers $sourceContainers -Service $service -Project $SourceProject
         if ($application.Running) {
             throw "Source application service $service is still running; source writes are not frozen."
@@ -692,9 +776,29 @@ try {
         throw 'Source mysql must be running to take a consistent database dump.'
     }
     $script:SourceMysqlId = $sourceMysql.Id
+    if ($script:IncludeSplitChat) {
+        $sourceChatMysql = Get-RequiredProjectContainer -Containers $sourceContainers -Service 'chat-mysql' -Project $SourceProject
+        if (-not $sourceChatMysql.Running) {
+            throw 'Source chat-mysql must be running to take a consistent chat database dump.'
+        }
+        $script:SourceChatMysqlId = $sourceChatMysql.Id
+    }
 
     $sourceCoreSnapshot = Get-DatabaseSnapshot -ContainerId $sourceMysql.Id -DatabaseName $sourceDatabase -SnapshotName 'source-core'
     $sourceNotificationSnapshot = Get-DatabaseSnapshot -ContainerId $sourceMysql.Id -DatabaseName $sourceNotificationDatabase -SnapshotName 'source-notifications'
+    $sourceChatSnapshot = $null
+    $sourceChatDecisionStatuses = $null
+    $sourceUndeliveredNotificationOutbox = 0L
+    if ($script:IncludeSplitChat) {
+        $sourceChatSnapshot = Get-DatabaseSnapshot -ContainerId $sourceChatMysql.Id -DatabaseName $sourceChatDatabase -SnapshotName 'source-chat'
+        $sourceChatDecisionStatuses = Get-SourceChatDecisionStatusSummary -ContainerId $sourceMysql.Id -DatabaseName $sourceDatabase
+        $script:Summary.SourcePendingChatDecisions = $sourceChatDecisionStatuses
+        $sourceCoreTableNames = @($sourceCoreSnapshot.Tables | ForEach-Object { $_.Name })
+        if ($sourceCoreTableNames -contains 'notification_outbox') {
+            $sourceUndeliveredNotificationOutbox = Get-SqlInt64 -Purpose 'Count source undelivered notification outbox rows' -ContainerId $sourceMysql.Id -Query "SELECT COUNT(*) FROM ``$($sourceDatabase.Replace('`', '``'))``.``notification_outbox`` WHERE status IN ('PENDING', 'IN_FLIGHT');"
+        }
+        $script:Summary.SourceUndeliveredNotificationOutbox = $sourceUndeliveredNotificationOutbox
+    }
 
     $dumpCommand = 'set -eu; MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump -u root --single-transaction --routines --triggers --databases "$MYSQL_DATABASE" "$NOTIFICATION_DB_NAME" > ' + (ConvertTo-ShellSingleQuoted $script:SourceDumpContainerPath)
     $null = Invoke-Compose -Purpose 'Create source database dump' -Project $SourceProject -EnvironmentFile $sourceEnvPath -CommandArguments @('exec', '-T', 'mysql', 'sh', '-c', $dumpCommand)
@@ -704,6 +808,17 @@ try {
         throw 'The source database dump was empty or was not copied.'
     }
     $script:Summary.SourceDumpSha256 = (Get-FileHash -LiteralPath $dumpHostPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $chatDumpHostPath = $null
+    if ($script:IncludeSplitChat) {
+        $chatDumpCommand = 'set -eu; MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump -u root --single-transaction --routines --triggers --databases "$CHAT_DB_NAME" > ' + (ConvertTo-ShellSingleQuoted $script:SourceChatDumpContainerPath)
+        $null = Invoke-Compose -Purpose 'Create source chat database dump' -Project $SourceProject -EnvironmentFile $sourceEnvPath -CommandArguments @('exec', '-T', 'chat-mysql', 'sh', '-c', $chatDumpCommand)
+        $chatDumpHostPath = Join-Path $script:ArtifactRoot 'chat-database-dump.sql'
+        $null = Invoke-Docker -Purpose 'Copy source chat database dump to artifacts' -Arguments @('cp', "$($sourceChatMysql.Id):$($script:SourceChatDumpContainerPath)", $chatDumpHostPath)
+        if (-not (Test-Path -LiteralPath $chatDumpHostPath -PathType Leaf) -or (Get-Item -LiteralPath $chatDumpHostPath).Length -le 0) {
+            throw 'The source chat database dump was empty or was not copied.'
+        }
+        $script:Summary.SourceChatDumpSha256 = (Get-FileHash -LiteralPath $chatDumpHostPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
 
     $sourceUploadsPath = Join-Path $script:ArtifactRoot 'source-uploads'
     New-Item -ItemType Directory -Path $sourceUploadsPath -Force | Out-Null
@@ -716,37 +831,65 @@ try {
     $script:Summary.SourceUploadManifestSha256 = $sourceUploads.AggregateSha256
 
     $sourceContainersAfterCopy = @(Get-ProjectContainers -Project $SourceProject)
-    foreach ($service in @('frontend', 'gateway', 'backend', 'notification-service')) {
+    foreach ($service in $sourceApplicationServices) {
         if ((Get-RequiredProjectContainer -Containers $sourceContainersAfterCopy -Service $service -Project $SourceProject).Running) {
             throw "Source application service $service started unexpectedly during backup."
         }
     }
 
-    $null = Invoke-Compose -Purpose 'Start restore dependencies' -Project $RestoreProject -EnvironmentFile $restoreEnvPath -CommandArguments @('up', '-d', '--wait', '--wait-timeout', '300', '--no-build', 'mysql', 'redis', 'rabbitmq')
+    $restoreDependencyServices = @('mysql', 'redis', 'rabbitmq')
+    if ($script:IncludeSplitChat) {
+        $restoreDependencyServices += 'chat-mysql'
+    }
+    $null = Invoke-Compose -Purpose 'Start restore dependencies' -Project $RestoreProject -EnvironmentFile $restoreEnvPath -CommandArguments (@('up', '-d', '--wait', '--wait-timeout', '300', '--no-build') + $restoreDependencyServices)
     $restoreContainers = @(Get-ProjectContainers -Project $RestoreProject)
-    foreach ($service in @('mysql', 'redis', 'rabbitmq')) {
+    foreach ($service in $restoreDependencyServices) {
         $dependency = Get-RequiredProjectContainer -Containers $restoreContainers -Service $service -Project $RestoreProject
         if (-not $dependency.Running) {
             throw "Restore dependency $service did not remain running."
         }
     }
-    foreach ($service in @('frontend', 'gateway', 'backend', 'notification-service')) {
+    $restoreApplicationServices = @('frontend', 'gateway', 'backend', 'notification-service')
+    if ($script:IncludeSplitChat) {
+        $restoreApplicationServices += 'chat-service'
+    }
+    foreach ($service in $restoreApplicationServices) {
         if (@($restoreContainers | Where-Object { $_.Service -eq $service }).Count -ne 0) {
             throw "Restore dependency startup created application service $service unexpectedly."
         }
     }
     $restoreMysql = Get-RequiredProjectContainer -Containers $restoreContainers -Service 'mysql' -Project $RestoreProject
     $script:RestoreMysqlId = $restoreMysql.Id
+    $restoreChatMysql = $null
+    if ($script:IncludeSplitChat) {
+        $restoreChatMysql = Get-RequiredProjectContainer -Containers $restoreContainers -Service 'chat-mysql' -Project $RestoreProject
+        $script:RestoreChatMysqlId = $restoreChatMysql.Id
+    }
 
     $null = Invoke-Docker -Purpose 'Copy database dump to restore mysql' -Arguments @('cp', $dumpHostPath, "$($restoreMysql.Id):$($script:RestoreDumpContainerPath)")
     $importCommand = 'set -eu; MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root < ' + (ConvertTo-ShellSingleQuoted $script:RestoreDumpContainerPath)
     $null = Invoke-ContainerShell -Purpose 'Import database dump into restore mysql' -ContainerId $restoreMysql.Id -Script $importCommand
+    if ($script:IncludeSplitChat) {
+        $null = Invoke-Docker -Purpose 'Copy chat database dump to restore chat mysql' -Arguments @('cp', $chatDumpHostPath, "$($restoreChatMysql.Id):$($script:RestoreChatDumpContainerPath)")
+        $chatImportCommand = 'set -eu; MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root < ' + (ConvertTo-ShellSingleQuoted $script:RestoreChatDumpContainerPath)
+        $null = Invoke-ContainerShell -Purpose 'Import chat database dump into restore chat mysql' -ContainerId $restoreChatMysql.Id -Script $chatImportCommand
+    }
 
     $restoreCorePreStart = Get-DatabaseSnapshot -ContainerId $restoreMysql.Id -DatabaseName $restoreDatabase -SnapshotName 'restore-core-pre-start'
     $restoreNotificationPreStart = Get-DatabaseSnapshot -ContainerId $restoreMysql.Id -DatabaseName $restoreNotificationDatabase -SnapshotName 'restore-notifications-pre-start'
     $preCoreComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceCoreSnapshot -RestoreSnapshot $restoreCorePreStart -Phase 'restore pre-start core database'
     $preNotificationComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceNotificationSnapshot -RestoreSnapshot $restoreNotificationPreStart -Phase 'restore pre-start notification database'
-    $script:Summary.DatabaseComparisons = @($preCoreComparison, $preNotificationComparison)
+    $restoreChatPreStart = $null
+    $preChatComparison = $null
+    if ($script:IncludeSplitChat) {
+        $restoreChatPreStart = Get-DatabaseSnapshot -ContainerId $restoreChatMysql.Id -DatabaseName $restoreChatDatabase -SnapshotName 'restore-chat-pre-start'
+        $preChatComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceChatSnapshot -RestoreSnapshot $restoreChatPreStart -Phase 'restore pre-start chat database'
+    }
+    $script:Summary.DatabaseComparisons = if ($script:IncludeSplitChat) {
+        @($preCoreComparison, $preNotificationComparison, $preChatComparison)
+    } else {
+        @($preCoreComparison, $preNotificationComparison)
+    }
     $script:Summary.RequiredBusinessTables = @(Get-RequiredBusinessTableSummary -SourceCore $sourceCoreSnapshot -RestoreCore $restoreCorePreStart -SourceNotifications $sourceNotificationSnapshot -RestoreNotifications $restoreNotificationPreStart -RequireStageFixtures:$RequireStageFixtures)
 
     $null = Invoke-Compose -Purpose 'Create stopped restore backend' -Project $RestoreProject -EnvironmentFile $restoreEnvPath -CommandArguments @('create', '--no-build', '--no-recreate', 'backend')
@@ -759,7 +902,12 @@ try {
 
     $null = Invoke-Compose -Purpose 'Start complete restore stack' -Project $RestoreProject -EnvironmentFile $restoreEnvPath -CommandArguments @('up', '-d', '--wait', '--wait-timeout', '300', '--no-build')
     $restoreContainers = @(Get-ProjectContainers -Project $RestoreProject)
-    foreach ($service in @('mysql', 'redis', 'rabbitmq', 'notification-service', 'backend', 'gateway', 'frontend')) {
+    $restoreFullServices = @('mysql', 'redis', 'rabbitmq', 'notification-service', 'backend', 'gateway', 'frontend')
+    if ($script:IncludeSplitChat) {
+        $restoreFullServices += 'chat-mysql'
+        $restoreFullServices += 'chat-service'
+    }
+    foreach ($service in $restoreFullServices) {
         $serviceContainer = Get-RequiredProjectContainer -Containers $restoreContainers -Service $service -Project $RestoreProject
         if (-not $serviceContainer.Running) {
             throw "Restore service $service was not running after full-stack startup."
@@ -768,9 +916,62 @@ try {
 
     $restoreCoreFinal = Get-DatabaseSnapshot -ContainerId (Get-RequiredProjectContainer -Containers $restoreContainers -Service 'mysql' -Project $RestoreProject).Id -DatabaseName $restoreDatabase -SnapshotName 'restore-core-final'
     $restoreNotificationFinal = Get-DatabaseSnapshot -ContainerId (Get-RequiredProjectContainer -Containers $restoreContainers -Service 'mysql' -Project $RestoreProject).Id -DatabaseName $restoreNotificationDatabase -SnapshotName 'restore-notifications-final'
-    $finalCoreComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceCoreSnapshot -RestoreSnapshot $restoreCoreFinal -Phase 'restore final core database' -AllowVolatileChanges
-    $finalNotificationComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceNotificationSnapshot -RestoreSnapshot $restoreNotificationFinal -Phase 'restore final notification database' -ExcludedTables @('notifications') -AllowVolatileChanges
-    $script:Summary.DatabaseComparisons = @($preCoreComparison, $preNotificationComparison, $finalCoreComparison, $finalNotificationComparison)
+    $restoreChatFinal = $null
+    if ($script:IncludeSplitChat) {
+        $restoreChatFinal = Get-DatabaseSnapshot -ContainerId (Get-RequiredProjectContainer -Containers $restoreContainers -Service 'chat-mysql' -Project $RestoreProject).Id -DatabaseName $restoreChatDatabase -SnapshotName 'restore-chat-final'
+    }
+
+    $finalCoreExcludedTables = @()
+    $finalCoreExcludedReasons = @{}
+    $finalChatExcludedTables = @()
+    $finalChatExcludedReasons = @{}
+    $finalNotificationExcludedTables = @('notifications')
+    $finalNotificationExcludedReasons = @{}
+    $expectedAsyncMutations = [System.Collections.Generic.List[object]]::new()
+    if ($script:IncludeSplitChat) {
+        $sourceCoreFinalTableNames = @($sourceCoreSnapshot.Tables | ForEach-Object { $_.Name })
+        $sourceChatFinalTableNames = @($sourceChatSnapshot.Tables | ForEach-Object { $_.Name })
+        if ($sourceChatDecisionStatuses.Pending -gt 0 -or $sourceChatDecisionStatuses.Claimed -gt 0) {
+            $coreReason = 'Expected async chat moderation delivery after restore from source PENDING or CLAIMED decisions; dispatcher may claim, confirm, retry, or fail the decision.'
+            foreach ($tableName in @('chat_report_decisions', 'chat_report_decision_active', 'content_reports', 'community_audit')) {
+                if ($sourceCoreFinalTableNames -contains $tableName) {
+                    $finalCoreExcludedTables += $tableName
+                    $finalCoreExcludedReasons[$tableName] = $coreReason
+                    $expectedAsyncMutations.Add([pscustomobject]@{ Database = 'core'; Table = $tableName; Reason = $coreReason })
+                }
+            }
+            $chatReason = 'Expected async chat moderation delivery after restore from source PENDING or CLAIMED decisions; chat owner may record a receipt and update message/conversation state.'
+            foreach ($tableName in @('chat_moderation_receipts', 'chat_messages', 'chat_conversations')) {
+                if ($sourceChatFinalTableNames -contains $tableName) {
+                    $finalChatExcludedTables += $tableName
+                    $finalChatExcludedReasons[$tableName] = $chatReason
+                    $expectedAsyncMutations.Add([pscustomobject]@{ Database = 'chat'; Table = $tableName; Reason = $chatReason })
+                }
+            }
+        }
+        if ($sourceUndeliveredNotificationOutbox -gt 0) {
+            $notificationReason = 'Expected notification delivery after restore from source PENDING or IN_FLIGHT notification_outbox rows; stream cursor and event rows may advance.'
+            foreach ($tableName in @('notification_stream_cursor', 'notification_stream_event')) {
+                if (@($sourceNotificationSnapshot.Tables | Where-Object { $_.Name -eq $tableName }).Count -gt 0) {
+                    $finalNotificationExcludedTables += $tableName
+                    $finalNotificationExcludedReasons[$tableName] = $notificationReason
+                    $expectedAsyncMutations.Add([pscustomobject]@{ Database = 'notifications'; Table = $tableName; Reason = $notificationReason })
+                }
+            }
+        }
+    }
+    $script:Summary.ExpectedAsyncMutations = @($expectedAsyncMutations.ToArray())
+    $finalCoreComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceCoreSnapshot -RestoreSnapshot $restoreCoreFinal -Phase 'restore final core database' -ExcludedTables $finalCoreExcludedTables -ExcludedTableReasons $finalCoreExcludedReasons -AllowVolatileChanges
+    $finalNotificationComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceNotificationSnapshot -RestoreSnapshot $restoreNotificationFinal -Phase 'restore final notification database' -ExcludedTables $finalNotificationExcludedTables -ExcludedTableReasons $finalNotificationExcludedReasons -AllowVolatileChanges
+    $finalChatComparison = $null
+    if ($script:IncludeSplitChat) {
+        $finalChatComparison = Compare-DatabaseSnapshots -SourceSnapshot $sourceChatSnapshot -RestoreSnapshot $restoreChatFinal -Phase 'restore final chat database' -ExcludedTables $finalChatExcludedTables -ExcludedTableReasons $finalChatExcludedReasons -AllowVolatileChanges
+    }
+    $script:Summary.DatabaseComparisons = if ($script:IncludeSplitChat) {
+        @($preCoreComparison, $preNotificationComparison, $preChatComparison, $finalCoreComparison, $finalNotificationComparison, $finalChatComparison)
+    } else {
+        @($preCoreComparison, $preNotificationComparison, $finalCoreComparison, $finalNotificationComparison)
+    }
     $sourceNotificationTable = @($sourceNotificationSnapshot.Tables | Where-Object { $_.Name -eq 'notifications' })[0]
     $restoreFinalNotificationTable = @($restoreNotificationFinal.Tables | Where-Object { $_.Name -eq 'notifications' })[0]
     $script:Summary.FinalNotificationRuntimeObservation = [ordered]@{

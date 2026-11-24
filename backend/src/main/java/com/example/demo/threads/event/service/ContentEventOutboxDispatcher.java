@@ -1,5 +1,7 @@
 package com.example.demo.threads.event.service;
 
+import com.example.demo.threads.event.port.ContentEventPublisher;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -10,12 +12,12 @@ import java.util.UUID;
 @ConditionalOnProperty(name = "app.content.events.enabled", havingValue = "true")
 public class ContentEventOutboxDispatcher {
     private final ContentEventOutboxService outbox;
-    private final ContentEventPublisherTransport transport;
+    private final ContentEventPublisher publisher;
 
     public ContentEventOutboxDispatcher(ContentEventOutboxService outbox,
-                                        ContentEventPublisherTransport transport) {
+                                        @Qualifier("contentEventPublisherTransport") ContentEventPublisher publisher) {
         this.outbox = outbox;
-        this.transport = transport;
+        this.publisher = publisher;
     }
 
     public void dispatchOnce() {
@@ -27,7 +29,7 @@ public class ContentEventOutboxDispatcher {
             }
             var claimed = delivery.get();
             try {
-                transport.publish(claimed.message());
+                publisher.publish(claimed.message());
                 outbox.markPublished(claimed);
             } catch (RuntimeException failure) {
                 outbox.markFailure(claimed, failure);

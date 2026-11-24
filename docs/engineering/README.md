@@ -16,6 +16,7 @@
 - [内容事件 v1](content-events-v1.md)：内容版本、Outbox 与搜索同步。
 - [媒体处理契约](m3-media-contract.md)、[M3 运行时契约](m3-runtime-contract.md)：Java、RabbitMQ、Go 与结果回传。
 - [版本化摘要任务契约](m4b-summary-task-contract.md)：主动生成、取消、权限和预算账本。
+- [好友、私信与群聊设计方案](messaging-design.md) · 待评审
 - [开发与技术演进路线图](development-roadmap.md)：已确认阶段和可选范围。
 
 ## 运行与恢复

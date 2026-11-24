@@ -15,16 +15,17 @@
         :key="tag.id"
         :to="tagLink(tag.name)"
         :title="`${tag.name} · ${tag.threadCount} 篇帖子`"
-        class="group inline-flex items-center gap-1 rounded-md bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-brandDay-50 hover:text-brandDay-600 dark:bg-gray-700/50 dark:text-gray-300 dark:hover:bg-brandNight-900/30 dark:hover:text-brandNight-300"
+        class="group inline-flex max-w-full items-center gap-1 rounded-md bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-brandDay-50 hover:text-brandDay-600 dark:bg-gray-700/50 dark:text-gray-300 dark:hover:bg-brandNight-900/30 dark:hover:text-brandNight-300"
       >
-        <span>#{{ tag.name }}</span>
-        <span class="text-[10px] text-gray-400 transition-colors group-hover:text-brandDay-400 dark:group-hover:text-brandNight-400">{{ tag.threadCount }}</span>
+        <span class="truncate">#{{ tag.name }}</span>
+        <span class="shrink-0 text-[10px] text-gray-400 transition-colors group-hover:text-brandDay-400 dark:group-hover:text-brandNight-400">{{ tag.threadCount }}</span>
       </router-link>
     </div>
     <div class="mt-3 flex justify-end">
       <button
         type="button"
         class="inline-flex items-center gap-1 text-xs font-medium text-brandDay-700 hover:text-brandDay-800 dark:text-brandNight-400 dark:hover:text-brandNight-300"
+        :aria-expanded="tagsExpanded"
         @click="toggleTagsExpanded"
       >
         <span>{{ tagsExpanded ? '收起标签' : '更多标签' }}</span>
@@ -58,30 +59,32 @@
               class="group inline-flex max-w-full items-center gap-1 rounded-md bg-white px-2 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-brandDay-50 hover:text-brandDay-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-brandNight-900/30 dark:hover:text-brandNight-300"
             >
               <span class="truncate">#{{ tag.name }}</span>
-              <span class="text-[10px] text-gray-400 transition-colors group-hover:text-brandDay-400 dark:group-hover:text-brandNight-400">{{ tag.threadCount }}</span>
+              <span class="shrink-0 text-[10px] text-gray-400 transition-colors group-hover:text-brandDay-400 dark:group-hover:text-brandNight-400">{{ tag.threadCount }}</span>
             </router-link>
           </div>
-          <div class="mt-3 flex items-center justify-between text-[11px] text-gray-400">
-            <span>共 {{ allTagsTotal }} 个标签</span>
-            <div class="flex items-center gap-2">
+          <div v-if="!allTagsError && (!allTagsLoading || allTagsTotal > 0)" class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs ui-muted">
+            <span class="whitespace-nowrap">共 {{ allTagsTotal }} 个标签</span>
+            <nav v-if="allTagsTotalPages > 1" class="ui-pagination-controls" aria-label="标签分页">
               <button
                 type="button"
+                aria-label="上一页"
                 class="rounded border border-gray-200 bg-white px-2 py-1 hover:text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:text-gray-200"
                 :disabled="allTagsPage <= 1 || allTagsLoading"
                 @click="setTagsPage(allTagsPage - 1)"
               >
                 上页
               </button>
-              <span>{{ allTagsPage }} / {{ allTagsTotalPages }}</span>
+              <span class="ui-page-position" aria-live="polite">{{ allTagsPage }} / {{ allTagsTotalPages }}</span>
               <button
                 type="button"
+                aria-label="下一页"
                 class="rounded border border-gray-200 bg-white px-2 py-1 hover:text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:text-gray-200"
                 :disabled="allTagsPage >= allTagsTotalPages || allTagsLoading"
                 @click="setTagsPage(allTagsPage + 1)"
               >
                 下页
               </button>
-            </div>
+            </nav>
           </div>
         </div>
       </div>

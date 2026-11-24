@@ -2,5 +2,6 @@ package com.example.demo.moderation.model;
 
 public enum ReportTargetType {
     THREAD,
-    POST
+    POST,
+    CHAT_MESSAGE
 }

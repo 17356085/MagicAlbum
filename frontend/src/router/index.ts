@@ -8,6 +8,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/sections', name: 'sections', component: () => import('@/pages/SectionsList.vue') },
   { path: '/discover', name: 'discover', component: () => import('@/pages/Discover.vue') },
   { path: '/feed', name: 'feed', component: () => import('@/pages/FollowingFeed.vue'), meta: { requiresAuth: true } },
+  { path: '/messages', name: 'messages', component: () => import('@/pages/Messages.vue'), meta: { requiresAuth: true } },
   { path: '/ranking', name: 'ranking', component: () => import('@/pages/Ranking.vue') },
   { path: '/me', name: 'me', component: () => import('@/pages/MobileMe.vue') },
   { path: '/users', name: 'users', component: () => import('@/pages/UsersSearch.vue') },
@@ -64,7 +65,7 @@ router.beforeEach((to, from) => {
 })
 
 const pageTitles: Record<string, string> = {
-  discover: '发现', sections: '分区', ranking: '排行榜', feed: '关注动态',
+  discover: '发现', sections: '分区', ranking: '排行榜', feed: '关注动态', messages: '消息',
   users: '搜索用户', 'user-profile': '个人主页', 'user-following': '关注', 'user-followers': '粉丝',
   'thread-create': '发帖', 'thread-edit': '编辑帖子', 'thread-detail': '帖子',
   settings: '设置', 'my-threads': '我的帖子', 'my-posts': '我的评论', 'my-bookmarks': '我的收藏',

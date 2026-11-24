@@ -70,7 +70,7 @@ Node prerequisites.
 
 `tests/e2e/playwright/test_layout_fixtures.py` is an exception: it needs only
 the frontend and a browser. All API responses are intercepted with fixed
-fixtures, and no backend account is used. These 39 layout/keyboard checks
+fixtures, and no backend account is used. These 44 layout/keyboard checks
 are not backend acceptance and are not part of mandatory16. Run against an
 isolated frontend preview, for example in PowerShell:
 
@@ -84,7 +84,7 @@ python -m pytest tests/e2e/playwright/test_layout_fixtures.py
 `test_mobile_tasks.py` adds 21 touch-emulated tasks at 320, 390, and 430px:
 bottom navigation, focused composition and feedback, long-thread reply,
 guest login, account actions, phone landscape, and filtered-list return. It shares the same
-intercepted fixtures. Run both files for 60 frontend-only checks. They do
+intercepted fixtures. Run both files for 65 frontend-only checks. They do
 not prove physical-device soft-keyboard, Safari, or backend behavior.
 
 Useful overrides are `TEST_BASE_URL`, `TEST_API_BASE_URL`,
@@ -130,7 +130,7 @@ through the UI, and reads that comment back through the API before cleanup.
 The default fresh-stack gate keeps the deterministic API contract group,
 the dedicated Selenium smoke, and the independent M0 Playwright journey
 (mandatory16). A separate `python-full-regression` CI job runs the entire
-canonical tree: currently 143 tests, including the 60 intercepted frontend
+canonical tree: currently 148 tests, including the 65 intercepted frontend
 layout/mobile checks. The fixture checks do not become backend acceptance
 merely because they share that job.
 

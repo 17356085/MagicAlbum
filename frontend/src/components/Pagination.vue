@@ -3,23 +3,27 @@
     <div class="text-xs text-gray-500 dark:text-gray-400">
       <span v-if="total != null">共 {{ total }} 条 · 每页 {{ size }} 条</span>
     </div>
-    <div class="flex max-w-full flex-wrap items-center gap-2">
+    <div class="ui-pagination-controls">
       <button
+        type="button"
         class="ui-button disabled:opacity-50"
         :disabled="page <= 1"
         @click="$emit('update:page', page - 1)"
       >上一页</button>
-      <span class="text-sm text-gray-600 dark:text-gray-300">第</span>
-      <input
-        v-model="inputPage"
-        class="ui-field !w-14 text-center text-sm"
-        aria-label="页码"
-        inputmode="numeric"
-        @keyup.enter="goToInputPage"
-        @blur="goToInputPage"
-      />
-      <span class="text-sm text-gray-600 dark:text-gray-300">/ {{ totalPages }} 页</span>
+      <label class="ui-page-position ui-muted text-sm">
+        <span>第</span>
+        <input
+          v-model="inputPage"
+          class="ui-field text-center"
+          aria-label="页码"
+          inputmode="numeric"
+          @keyup.enter="goToInputPage"
+          @blur="goToInputPage"
+        />
+        <span>/ {{ totalPages }} 页</span>
+      </label>
       <button
+        type="button"
         class="ui-button disabled:opacity-50"
         :disabled="page >= totalPages"
         @click="$emit('update:page', page + 1)"

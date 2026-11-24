@@ -7,7 +7,6 @@ import com.example.demo.governance.entity.CommunityState;
 import com.example.demo.governance.repo.CommunityAdminRoleRepository;
 import com.example.demo.governance.repo.CommunityAuditRepository;
 import com.example.demo.governance.repo.CommunityStateRepository;
-import com.example.demo.governance.repo.SectionGovernanceRepository;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.sections.entity.Section;
 import com.example.demo.sections.repo.SectionRepository;
@@ -77,9 +76,6 @@ class SectionCacheTransactionH2Test {
 
     @Autowired
     private SectionRepository sectionRepository;
-
-    @Autowired
-    private SectionGovernanceRepository sectionGovernanceRepository;
 
     @Autowired
     private CommunityStateRepository stateRepository;
@@ -156,7 +152,7 @@ class SectionCacheTransactionH2Test {
         Page<Section> result = readWithoutTransaction();
         assertThat(result.getContent()).extracting(Section::getName)
                 .containsExactly("Committed section");
-        assertThat(sectionGovernanceRepository.findBySlug("committed-section")).isPresent();
+        assertThat(sectionRepository.findBySlug("committed-section")).isPresent();
         assertThat(redisEntries).containsKey(RedisKeys.sectionsList(generation, null, 1, 20));
     }
 
@@ -217,7 +213,7 @@ class SectionCacheTransactionH2Test {
                 .hasMessage("force create rollback");
 
         assertThat(generation()).isEqualTo(INITIAL_GENERATION);
-        assertThat(sectionGovernanceRepository.findBySlug("transient-section")).isEmpty();
+        assertThat(sectionRepository.findBySlug("transient-section")).isEmpty();
         assertThat(readWithoutTransaction().getContent()).isEmpty();
         verify(values, never()).set(eq(RedisKeys.sectionsListGeneration()), anyString());
     }

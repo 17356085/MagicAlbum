@@ -256,16 +256,11 @@ function getAuthorAvatarUrl(thread: Thread): string {
 
 <template>
   <div class="ui-page discover-page mx-auto max-w-5xl">
-    <header class="ui-page-header">
-      <div class="min-w-0">
-        <h1 class="ui-title">发现</h1>
-        <p class="ui-description hidden lg:block">浏览社区里正在发生的讨论，按分区、关键词或标签找到下一篇想读的帖子。</p>
-      </div>
-      <div v-if="sectionId !== null && currentSectionName" class="ui-muted text-sm">当前分区：{{ currentSectionName }}</div>
-    </header>
+    <h1 class="sr-only">发现</h1>
 
-    <div v-if="q || tag" class="ui-toolbar mb-4 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)]" aria-label="当前筛选">
+    <div v-if="q || tag || (sectionId !== null && currentSectionName)" class="ui-toolbar mb-4 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)]" aria-label="当前筛选">
       <span class="ui-muted text-sm font-medium">当前筛选</span>
+      <span v-if="sectionId !== null && currentSectionName" class="ui-tag">分区：{{ currentSectionName }}</span>
       <span v-if="q" class="ui-tag">搜索关键字：{{ q }}</span>
       <span v-if="tag" class="ui-tag">标签：#{{ tag }}</span>
     </div>
@@ -334,10 +329,10 @@ function getAuthorAvatarUrl(thread: Thread): string {
       </ul>
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border)] px-4 py-4 sm:px-6">
         <div class="ui-muted text-xs">共 {{ total }} 条 · 每页 {{ size }} 条</div>
-        <nav class="flex min-w-0 flex-wrap items-center gap-2" aria-label="帖子分页">
+        <nav class="ui-pagination-controls" aria-label="帖子分页">
           <button class="ui-button min-h-9 px-3 py-1" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span class="ui-muted text-sm lg:hidden" aria-live="polite">{{ page }} / {{ totalPages }}</span>
-          <label class="ui-muted hidden items-center gap-2 text-sm lg:flex">
+          <span class="ui-page-position ui-muted text-sm lg:hidden" aria-live="polite">{{ page }} / {{ totalPages }}</span>
+          <label class="ui-page-position ui-muted hidden text-sm lg:inline-flex">
             <span>第</span>
             <input
               v-model="inputPage"
@@ -345,7 +340,7 @@ function getAuthorAvatarUrl(thread: Thread): string {
               inputmode="numeric"
               pattern="[0-9]*"
               aria-label="页码"
-              class="ui-field w-16 py-1 text-center"
+              class="ui-field py-1 text-center"
               @keyup.enter="goToInputPage"
               @blur="goToInputPage"
             />

@@ -14,11 +14,12 @@ spring:
         enabled: false
   datasource:
     url: ${NOTIFICATION_DATASOURCE_URL:jdbc:mysql://${NOTIFICATION_DB_HOST:${DB_HOST:localhost}}:${NOTIFICATION_DB_PORT:${DB_PORT:3306}}/${NOTIFICATION_DB_NAME:${DB_NAME:MagicAlbum}}?useSSL=false&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8}
-    username: ${NOTIFICATION_DATASOURCE_USERNAME:${DB_USER:}}
-    password: ${NOTIFICATION_DATASOURCE_PASSWORD:${DB_PASSWORD:}}
+    username: ${NOTIFICATION_DATASOURCE_USERNAME:${NOTIFICATION_DB_USER:${DB_USER:}}}
+    password: ${NOTIFICATION_DATASOURCE_PASSWORD:${NOTIFICATION_DB_PASSWORD:${DB_PASSWORD:}}}
     driver-class-name: ${NOTIFICATION_DATASOURCE_DRIVER:com.mysql.cj.jdbc.Driver}
   flyway:
     enabled: true
+    clean-disabled: true
     locations: classpath:db/migration
     table: notification_flyway_schema_history
 
@@ -34,6 +35,9 @@ logging:
     level: "%5p [requestId=%X{requestId:-none}]"
 
 management:
+  health:
+    rabbit:
+      enabled: ${APP_RABBIT_ENABLED:false}
   endpoints:
     web:
       exposure:

@@ -1,5 +1,5 @@
 <template>
-  <div ref="searchRoot" class="relative flex shrink-0 items-center lg:mx-4 lg:flex-1">
+  <div ref="searchRoot" class="relative flex shrink-0 items-center lg:mx-4 lg:flex-1" @focusout="onSearchFocusOut">
     <button
       ref="searchTrigger"
       type="button"
@@ -53,7 +53,7 @@
             class="ui-field min-h-12 pr-14 text-base"
             @input="onSearchInput"
             @keydown="onInputKeydown"
-            @focus="emit('input-focus')"
+            @focus="onSearchFocus"
             @blur="emit('input-blur')"
           />
           <button
@@ -69,6 +69,30 @@
             <span class="sr-only">搜索</span>
           </button>
 
+          <div v-if="searchShortcutsVisible"
+            class="absolute z-50 mt-2 w-full rounded-md border border-gray-200 bg-white p-2 shadow dark:border-gray-700 dark:bg-gray-800"
+          >
+            <div v-if="history?.length" class="flex items-center justify-between gap-2 px-2 py-1 text-xs">
+              <span class="font-medium">搜索历史</span>
+              <button type="button" class="ui-muted p-1" aria-label="清除搜索历史" @click="emit('clear-history')">清除</button>
+            </div>
+            <ul v-if="history?.length" class="ui-scroll ui-scroll-on-interaction max-h-48 overflow-auto text-sm">
+              <li v-for="entry in history" :key="entry.type + ':' + entry.query">
+                <button type="button" class="flex w-full items-center gap-2 rounded px-2 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700"
+                  @click="useHistory(entry)">
+                  <span class="ui-muted shrink-0 text-xs">{{ entry.type === 'users' ? '用户' : '帖子' }}</span>
+                  <span class="truncate">{{ entry.query }}</span>
+                </button>
+              </li>
+            </ul>
+            <div v-if="popularSearches?.length" class="px-2 py-1 text-xs font-medium">热门搜索</div>
+            <ul v-if="popularSearches?.length" class="flex flex-wrap gap-1 p-2 text-sm">
+              <li v-for="query in popularSearches" :key="query">
+                <button type="button" class="ui-tag" @click="useHistory({ type: searchType, query })">{{ query }}</button>
+              </li>
+            </ul>
+          </div>
+
           <div
             v-if="searchType === 'users' && suggestOpen && String(searchQuery || '').trim()"
             class="absolute z-50 mt-2 w-full max-w-[calc(100vw-1rem)] rounded-md border border-gray-200 bg-white shadow dark:border-gray-700 dark:bg-gray-800"
@@ -76,7 +100,7 @@
             <div class="border-b px-3 py-2 text-xs font-medium dark:border-gray-700">匹配的用户</div>
             <div v-if="suggestLoading" class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">加载中...</div>
             <div v-else-if="suggestError" class="px-3 py-2 text-xs text-red-600">{{ suggestError }}</div>
-          <ul v-else class="ui-scroll max-h-64 overflow-auto p-1 text-sm">
+          <ul v-else class="ui-scroll ui-scroll-on-interaction max-h-64 overflow-auto p-1 text-sm">
               <li v-if="!visibleSuggestions.length" class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">无匹配</li>
               <li
                 v-for="(u, idx) in visibleSuggestions.slice(0, 5)"
@@ -115,15 +139,15 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { normalizeImageUrl } from '@/utils/image'
 import { highlightText } from '@/utils/text'
+import type { SearchHistoryEntry, SearchType } from './searchHistory'
 import type { User, UserProfile } from '@/types'
 
-type SearchType = 'threads' | 'users'
 type SuggestProfile = Pick<UserProfile, 'avatarUrl' | 'nickname'>
 
-defineProps<{
+const props = defineProps<{
   searchType: SearchType
   searchQuery: string
   suggestOpen: boolean
@@ -132,6 +156,8 @@ defineProps<{
   visibleSuggestions: User[]
   suggestProfiles: Record<string, SuggestProfile>
   activeIndex: number
+  history?: SearchHistoryEntry[]
+  popularSearches?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -139,6 +165,8 @@ const emit = defineEmits<{
   'update:search-query': [value: string]
   'update:active-index': [value: number]
   search: []
+  'use-history': [entry: SearchHistoryEntry]
+  'clear-history': []
   'input-keydown': [event: KeyboardEvent]
   'input-focus': []
   'input-blur': []
@@ -149,6 +177,9 @@ const searchRoot = ref<HTMLElement | null>(null)
 const searchTrigger = ref<HTMLButtonElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const mobileSearchOpen = ref(false)
+const historyOpen = ref(false)
+const searchShortcutsVisible = computed(() => historyOpen.value && !props.searchQuery.trim()
+  && Boolean(props.history?.length || props.popularSearches?.length))
 
 function renderHighlightedTextHtml(text: string | null | undefined, keyword: string | null | undefined): string {
   return highlightText(text, keyword)
@@ -163,14 +194,31 @@ function toggleMobileSearch(): void {
 
 function closeMobileSearch(restoreFocus = false): void {
   mobileSearchOpen.value = false
+  historyOpen.value = false
   if (restoreFocus) void nextTick(() => searchTrigger.value?.focus())
 }
 
 function onPanelEscape(event: KeyboardEvent): void {
-  if (!mobileSearchOpen.value) return
+  if (!mobileSearchOpen.value && !searchShortcutsVisible.value) return
   event.preventDefault()
   event.stopPropagation()
-  closeMobileSearch(true)
+  closeMobileSearch(mobileSearchOpen.value)
+}
+
+function onSearchFocus(): void {
+  historyOpen.value = true
+  emit('input-focus')
+}
+
+function onSearchFocusOut(event: FocusEvent): void {
+  if (!(event.relatedTarget instanceof Node) || !searchRoot.value?.contains(event.relatedTarget)) {
+    historyOpen.value = false
+  }
+}
+
+function useHistory(entry: SearchHistoryEntry): void {
+  emit('use-history', entry)
+  closeMobileSearch()
 }
 
 function emitSearch(): void {
@@ -192,7 +240,7 @@ function onInputKeydown(event: KeyboardEvent): void {
 
 function onDocumentPointerDown(event: PointerEvent): void {
   const target = event.target
-  if (!mobileSearchOpen.value || !(target instanceof Node)) return
+  if (!(target instanceof Node)) return
   if (!searchRoot.value?.contains(target)) closeMobileSearch()
 }
 

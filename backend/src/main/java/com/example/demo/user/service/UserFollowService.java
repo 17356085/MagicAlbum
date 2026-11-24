@@ -100,6 +100,39 @@ public class UserFollowService {
         return toUserSummaryPage(ids);
     }
 
+    @Transactional(readOnly = true)
+    public Page<UserSummaryDto> listMutualFriends(Long userId, List<Long> excluded, int page, int size) {
+        int limit = Math.min(Math.max(size, 1), 50);
+        return toUserSummaryPage(userFollowRepository.findMutualIds(userId,
+                excluded.isEmpty() ? List.of(0L) : excluded, PageRequest.of(Math.max(page, 1) - 1, limit)));
+    }
+
+    @Transactional(readOnly = true)
+    public boolean areMutual(Long first, Long second) {
+        return isFollowing(first, second) && isFollowing(second, first);
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void lockForMessaging(Long first, Long second) {
+        lockPair(first, second);
+    }
+
+    /**
+     * Locks a relationship participant set in one stable order. Follow,
+     * block and chat group creation share this boundary so opposite requests
+     * cannot acquire the same user rows in different orders.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void lockUsers(java.util.Collection<Long> ids) {
+        if (ids == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少关系用户");
+        }
+        for (Long id : ids.stream().filter(java.util.Objects::nonNull).sorted().distinct().toList()) {
+            userRepository.findByIdForInteraction(id)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
+        }
+    }
+
     long countFollowers(Long userId) {
         if (userId == null) {
             return 0;
@@ -125,10 +158,7 @@ public class UserFollowService {
         if (first == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录");
         if (second == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在");
         // A stable order also covers simultaneous A->B and B->A requests.
-        for (Long id : java.util.stream.Stream.of(first, second).sorted().distinct().toList()) {
-            userRepository.findByIdForInteraction(id)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "用户不存在"));
-        }
+        lockUsers(java.util.List.of(first, second));
     }
 
     private void validateFollowRequest(Long currentUserId, Long targetUserId) {

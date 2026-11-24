@@ -53,3 +53,31 @@ POST /api/v1/admin/notification-outbox/{id}/retry
 ## 现有性能指标
 
 `application-perf.yml` 已为核心服务开启独立管理端口（默认 `9090`）和 `/actuator/prometheus`，并开启 HTTP server 请求直方图。使用 perf profile 启动后，通过管理端口读取该端点；当前配置没有新增 Outbox Prometheus 指标，也没有部署 Grafana。Outbox 的数量和最老待投递年龄以管理员诊断接口为准。配置存在或端点返回 HTTP 200 只能证明接口可访问，仍应读取实际指标和数据库状态。
+
+## 微服务联调指标
+
+加入 `docker-compose.observability.yml` 后，核心通过私网管理端口提供待投递、投递中、失败记录数和最老待投递年龄。Go 在服务私网端口提供 broker 就绪状态、已认证连接数和收到的广播次数。Prometheus 通过 Docker DNS 分别采集 Go 节点。广播次数统计每个节点收到的变化事件，页面是否收到提示和补齐正文由双节点与浏览器验收确认。[Compose 配置](../../docker-compose.observability.yml) · [采集规则](../../perf/prometheus/microservices.yml)
+
+```powershell
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml -f docker-compose.observability.yml up -d --build --wait
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml -f docker-compose.observability.yml exec -T prometheus promtool query instant http://127.0.0.1:9090 'up'
+```
+
+现有规则检查核心指标无法采集、实时节点中断、Outbox 积压年龄和失败记录。通过查询 `ALERTS` 可以在隔离环境查看触发及恢复。规则里的时间用于联调，生产阈值和通知渠道需按真实流量与值班安排配置。[告警规则](../../perf/prometheus/microservices-alerts.yml)
+
+叠加搜索配置后，内容 Outbox 提供各投递状态的记录数，以及最早待投递记录自可投递时点起的年龄，使用独立于通知 Outbox 的指标和告警。搜索记录事件成功写入索引时的年龄，并累计失败转投请求、重放成功和隔离成功的次数。这些指标使用固定维度，事件内容和账号标识留在业务系统内。[搜索运维说明](m2-search-operations.md)
+### OpenTelemetry 链路与 Loki 日志
+
+在隔离部署中使用 `docker-compose.telemetry.yml` 启动 OpenTelemetry Collector、Tempo 和 Loki。它为网关、核心、独立聊天和通知的 Java 进程启用同一个只读 Java agent。原有 Prometheus 继续采集指标。采集器只接收内部 OTLP，Tempo 与 Loki 的查询端口仅绑定本机环回地址。[Compose 配置](../../docker-compose.telemetry.yml) · [Tempo 接收配置](https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/) · [Loki OTLP](https://grafana.com/docs/loki/latest/send-data/otel/)
+
+从 OpenTelemetry Java agent 的发布页获取 `opentelemetry-javaagent.jar`，将 `BLUEALBUM_OTEL_AGENT_JAR` 设为该文件的绝对路径。保持隔离环境自己的 `.env` 和宿主端口，用以下命令运行和检查网关到核心的请求。验证同时要求 Tempo 有跨进程父子 span，以及 Loki 能检索到同一请求在两个服务的日志。[Java agent 发布页](https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/tag/v2.20.1) · [运行验证](../../scripts/ci/telemetry-runtime.py)
+
+```bash
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.chat.yml \
+  -f docker-compose.telemetry.yml up -d --build --wait
+python scripts/ci/telemetry-runtime.py --gateway http://127.0.0.1:9000 \
+  --tempo http://127.0.0.1:3200 --loki http://127.0.0.1:3100 \
+  --output outputs/telemetry-runtime/checks.json
+```
+
+采集器删除认证头、Cookie、查询参数和数据库语句属性。当前配置使用本机文件存储和 24 小时保留期，应用日志仍需遵守现有敏感字段约定。Go 实时连接和 Go 媒体进程继续使用原有指标及请求 ID，Go span 采集需要另行接入。[采集器配置](../../perf/telemetry/collector.yml)

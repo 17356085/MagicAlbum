@@ -84,6 +84,12 @@ springdoc:
     tags-sorter: alpha
 
 app:
+  chat:
+    owner: ${APP_CHAT_OWNER:local}
+    internal-service-token: ${CHAT_INTERNAL_SERVICE_TOKEN:}
+    governance:
+      url: ${CHAT_GOVERNANCE_URL:http://chat-service:8083}
+      token: ${CHAT_GOVERNANCE_INTERNAL_TOKEN:}
   admin:
     user-id: ${APP_ADMIN_USER_ID:0}
     email: ${APP_ADMIN_EMAIL:}

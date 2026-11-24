@@ -1,0 +1,40 @@
+# Optional TLS-protected Go-to-Java session verification on the Compose network.
+services:
+  backend:
+    environment:
+      APP_CHAT_REALTIME_GRPC_ENABLED: 'true'
+      APP_CHAT_REALTIME_GRPC_ADDRESS: '0.0.0.0:9092'
+      APP_CHAT_REALTIME_GRPC_ALLOW_NON_LOOPBACK: 'true'
+      APP_CHAT_REALTIME_GRPC_TLS_CERTIFICATE_CHAIN: /run/bluealbum-grpc/tls.crt
+      APP_CHAT_REALTIME_GRPC_TLS_PRIVATE_KEY: /run/bluealbum-grpc/tls.key
+      CHAT_REALTIME_GRPC_CREDENTIAL: ${CHAT_REALTIME_GRPC_CREDENTIAL:?Set a private gRPC service credential}
+    volumes:
+      - type: bind
+        source: ${CHAT_REALTIME_GRPC_CERTIFICATE:?Set the gRPC server certificate path}
+        target: /run/bluealbum-grpc/tls.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CHAT_REALTIME_GRPC_PRIVATE_KEY:?Set the gRPC server private key path}
+        target: /run/bluealbum-grpc/tls.key
+        read_only: true
+        bind:
+          create_host_path: false
+  chat-realtime:
+    environment:
+      CHAT_REALTIME_GRPC_ADDR: backend:9092
+      CHAT_REALTIME_GRPC_CREDENTIAL: ${CHAT_REALTIME_GRPC_CREDENTIAL:?Set a private gRPC service credential}
+      CHAT_REALTIME_GRPC_TLS_CA: /run/bluealbum-grpc/ca.crt
+      CHAT_REALTIME_GRPC_TLS_SERVER_NAME: backend
+      CHAT_REALTIME_GRPC_TIMEOUT: 5s
+    volumes:
+      - type: bind
+        source: ${CHAT_REALTIME_GRPC_CA:?Set the gRPC trust certificate path}
+        target: /run/bluealbum-grpc/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      backend:
+        condition: service_healthy

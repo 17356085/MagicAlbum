@@ -21,8 +21,8 @@ function New-LocalSecret {
     return [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
 }
 
-function Wait-LocalHealth([string]$Name, [string]$Url, [int]$ProcessId, [switch]$Actuator) {
-    $deadline = [DateTime]::UtcNow.AddSeconds(150)
+function Wait-LocalHealth([string]$Name, [string]$Url, [int]$ProcessId, [switch]$Actuator, [int]$TimeoutSeconds = 150) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
         if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
             throw "$Name exited. See $blueAlbumRunDir/$Name.err.log and $Name.log."
@@ -64,6 +64,8 @@ if (-not (Test-Path $blueAlbumEnvFile)) {
         'DB_HOST=127.0.0.1', 'DB_PORT=13306', 'DB_NAME=bluealbum_local', 'DB_USER=bluealbum',
         "DB_PASSWORD=$(New-LocalSecret)", "DB_ROOT_PASSWORD=$(New-LocalSecret)",
         'NOTIFICATION_DB_NAME=bluealbum_local_notifications',
+        'NOTIFICATION_DB_USER=bluealbum_notify', "NOTIFICATION_DB_PASSWORD=$(New-LocalSecret)",
+        'NOTIFICATION_DB_MIGRATION_USER=bluealbum_notify_ddl', "NOTIFICATION_DB_MIGRATION_PASSWORD=$(New-LocalSecret)",
         'REDIS_HOST=127.0.0.1', 'REDIS_PORT=16379', "REDIS_PASSWORD=$(New-LocalSecret)",
         'SPRING_RABBITMQ_HOST=127.0.0.1', 'SPRING_RABBITMQ_PORT=15673',
         'SPRING_RABBITMQ_USERNAME=bluealbum', "SPRING_RABBITMQ_PASSWORD=$(New-LocalSecret)",
@@ -126,6 +128,10 @@ try {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
     foreach ($entry in $runtimeValues.GetEnumerator()) {
+        if ($entry.Key -eq 'CHAT_INTERNAL_SERVICE_TOKEN') { continue }
+        if ($entry.Key -in @('NOTIFICATION_DB_USER', 'NOTIFICATION_DB_PASSWORD') -and $entry.Value -eq '') {
+            continue
+        }
         [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, 'Process')
     }
     [Environment]::SetEnvironmentVariable('JAVA_HOME', $JavaHome, 'Process')
@@ -134,21 +140,25 @@ try {
     Push-Location $blueAlbumRoot
     try {
         & docker info --format '{{.ServerVersion}}'
-        if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop must be running.' }
+        if ($LASTEXITCODE -ne 0) { throw 'The current shell could not access the Docker engine. See the docker info error above.' }
 
         & docker compose --env-file $blueAlbumEnvFile -f $blueAlbumComposeFile up -d --wait --wait-timeout 180
         if ($LASTEXITCODE -ne 0) { throw 'Local dependency startup failed.' }
 
-        # Separate histories and schemas: neither service needs automatic Flyway baselining.
-        $notificationDb = [string]$runtimeValues['NOTIFICATION_DB_NAME']
-        $databaseUser = [string]$runtimeValues['DB_USER']
-        $sql = "CREATE DATABASE IF NOT EXISTS ``$notificationDb`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON ``$notificationDb``.* TO '$databaseUser'@'%';"
-        $sql | & docker compose --env-file $blueAlbumEnvFile -f $blueAlbumComposeFile exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root'
+        & docker compose --env-file $blueAlbumEnvFile -f $blueAlbumComposeFile exec -T mysql sh /usr/local/bin/bluealbum-init-notification-db.sh
         if ($LASTEXITCODE -ne 0) { throw 'Notification database initialization failed.' }
 
         if ($DependenciesOnly) {
             Write-Host 'Isolated MySQL, Redis and RabbitMQ dependencies are healthy and were retained.'
             return
+        }
+        $databaseEnvironmentNames = @(
+            'DB_USER', 'DB_PASSWORD', 'DB_ROOT_PASSWORD',
+            'NOTIFICATION_DB_USER', 'NOTIFICATION_DB_PASSWORD',
+            'NOTIFICATION_DB_MIGRATION_USER', 'NOTIFICATION_DB_MIGRATION_PASSWORD'
+        )
+        foreach ($name in $databaseEnvironmentNames) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
         }
         if (-not $NoBuild) {
             Write-Host 'Building all Java modules and running their tests...'
@@ -175,12 +185,71 @@ try {
                 $uploads = Join-Path $blueAlbumRunDir 'uploads'
                 $arguments += "`"--app.storage.local.baseDir=$uploads`""
             }
-            $process = Start-Process -FilePath $blueAlbumJava -ArgumentList $arguments -WorkingDirectory $blueAlbumRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $blueAlbumRunDir "$($app.Name).log") -RedirectStandardError (Join-Path $blueAlbumRunDir "$($app.Name).err.log")
+            $appCredentials = switch ($app.Name) {
+                'backend' { @{
+                    DB_USER = $runtimeValues['DB_USER']
+                    DB_PASSWORD = $runtimeValues['DB_PASSWORD']
+                    CHAT_INTERNAL_SERVICE_TOKEN = $runtimeValues['CHAT_INTERNAL_SERVICE_TOKEN']
+                } }
+                'notification-service' { @{
+                    NOTIFICATION_DB_USER = if ($runtimeValues['NOTIFICATION_DB_USER']) { $runtimeValues['NOTIFICATION_DB_USER'] } else { $runtimeValues['DB_USER'] }
+                    NOTIFICATION_DB_PASSWORD = if ($runtimeValues['NOTIFICATION_DB_PASSWORD']) { $runtimeValues['NOTIFICATION_DB_PASSWORD'] } else { $runtimeValues['DB_PASSWORD'] }
+                    SPRING_FLYWAY_USER = $runtimeValues['NOTIFICATION_DB_MIGRATION_USER']
+                    SPRING_FLYWAY_PASSWORD = $runtimeValues['NOTIFICATION_DB_MIGRATION_PASSWORD']
+                } }
+                default { @{} }
+            }
+            try {
+                foreach ($entry in $appCredentials.GetEnumerator()) {
+                    [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+                }
+                $process = Start-Process -FilePath $blueAlbumJava -ArgumentList $arguments -WorkingDirectory $blueAlbumRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $blueAlbumRunDir "$($app.Name).log") -RedirectStandardError (Join-Path $blueAlbumRunDir "$($app.Name).err.log")
+            } finally {
+                foreach ($name in $appCredentials.Keys) {
+                    Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+                }
+            }
             $entry = @{ Name = $app.Name; ProcessId = $process.Id; StartTime = $process.StartTime.ToUniversalTime().ToString('o') }
             $started.Add($entry)
             Write-LocalProcessSnapshot -Path $blueAlbumStateFile -Entries $started.ToArray()
             Wait-LocalHealth $app.Name "http://127.0.0.1:$($app.Port)/actuator/health" $process.Id -Actuator
             Write-Host "$($app.Name) is healthy."
+        }
+
+        $realtimeBinary = Join-Path $blueAlbumRunDir 'chat-realtime.exe'
+        $goTool = Get-Command go -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        $realtimeBuilt = $NoBuild -and (Test-Path -LiteralPath $realtimeBinary)
+        if ($goTool -and -not $NoBuild) {
+            Push-Location (Join-Path $blueAlbumRoot 'services/chat-realtime')
+            try {
+                & $goTool.Source build -o $realtimeBinary . *> (Join-Path $blueAlbumRunDir 'chat-realtime-build.log')
+                $realtimeBuilt = $LASTEXITCODE -eq 0
+            } finally {
+                Pop-Location
+            }
+        }
+        $realtimePort = Get-NetTCPConnection -LocalPort 8092 -State Listen -ErrorAction SilentlyContinue
+        if ($realtimePort) {
+            Write-Warning 'Port 8092 is already in use. Chat can use HTTP polling if realtime is unavailable.'
+        } elseif (-not $realtimeBuilt) {
+            Write-Warning 'Chat realtime executable is unavailable. Run without -NoBuild with Go installed and check chat-realtime-build.log. Chat can use HTTP polling.'
+        } else {
+            $realtimeProcess = $null
+            try {
+                $realtimeProcess = Start-Process -FilePath $realtimeBinary -WorkingDirectory $blueAlbumRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $blueAlbumRunDir 'chat-realtime.log') -RedirectStandardError (Join-Path $blueAlbumRunDir 'chat-realtime.err.log')
+            } catch {
+                Write-Warning "Chat realtime could not start. $($_.Exception.Message) Chat can use HTTP polling."
+            }
+            if ($realtimeProcess) {
+                $started.Add(@{ Name = 'chat-realtime'; ProcessId = $realtimeProcess.Id; StartTime = $realtimeProcess.StartTime.ToUniversalTime().ToString('o') })
+                Write-LocalProcessSnapshot -Path $blueAlbumStateFile -Entries $started.ToArray()
+                try {
+                    Wait-LocalHealth 'chat-realtime' 'http://127.0.0.1:8092/health' $realtimeProcess.Id -TimeoutSeconds 15
+                    Write-Host 'chat-realtime is healthy.'
+                } catch {
+                    Write-Warning "$($_.Exception.Message) Chat can use HTTP polling while realtime is unavailable."
+                }
+            }
         }
 
         $vite = Join-Path $blueAlbumRoot 'frontend/node_modules/vite/bin/vite.js'

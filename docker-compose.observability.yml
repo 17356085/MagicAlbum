@@ -1,0 +1,13 @@
+# Optional private monitoring for the base Compose topology and split chat.
+services:
+  backend:
+    environment:
+      SPRING_PROFILES_ACTIVE: local,observability
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9090/actuator/health"]
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./perf/prometheus/microservices.yml:/etc/prometheus/prometheus.yml:ro
+      - ./perf/prometheus/microservices-alerts.yml:/etc/prometheus/microservices-alerts.yml:ro

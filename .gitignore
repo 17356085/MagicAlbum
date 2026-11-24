@@ -1,6 +1,7 @@
-# Only the engineering handbook is shared; historical and personal documents stay local.
+# Share the engineering handbook and architecture designs. Keep other documents local.
 /docs/*
 !/docs/engineering/
+!/docs/architecture/
 
 # Local tools, dependency caches and generated deliverables
 /.agents/

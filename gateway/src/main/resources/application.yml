@@ -1,6 +1,15 @@
 server:
   port: ${GATEWAY_PORT:9000}
 
+home:
+  bff:
+    # The home composition endpoint is deliberately opt-in until its downstreams are verified.
+    enabled: ${HOME_BFF_ENABLED:false}
+    call-timeout: ${HOME_BFF_CALL_TIMEOUT:750ms}
+    public-cache-ttl: ${HOME_BFF_PUBLIC_CACHE_TTL:2s}
+    core-base-url: ${HOME_BFF_CORE_BASE_URL:http://127.0.0.1:8080}
+    notification-base-url: ${HOME_BFF_NOTIFICATION_BASE_URL:http://127.0.0.1:8081}
+
 spring:
   application:
     name: bluealbum-gateway

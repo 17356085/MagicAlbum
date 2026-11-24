@@ -32,7 +32,7 @@
       <div v-else-if="notificationError" class="px-3 py-4 text-xs text-red-600">{{ notificationError }}</div>
       <template v-else>
         <div v-if="notificationActionError" class="px-3 py-2 text-xs text-red-600" role="alert">{{ notificationActionError }}</div>
-        <ul class="ui-scroll max-h-[calc(100vh-10rem)] overflow-auto lg:max-h-96">
+        <ul class="ui-scroll ui-scroll-on-interaction max-h-[calc(100vh-10rem)] overflow-auto lg:max-h-96">
           <li
             v-for="item in headerNotifications"
             :key="item.id"
@@ -63,6 +63,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { getHomeOverview, homeOverviewEnabled } from '@/api/homeOverview'
 import { listNotifications, markNotificationRead, NotificationReadAcknowledgementError } from '@/api/notifications'
 import { formatRelativeTime } from '@/composables/time'
 import type { Id, NotificationItem } from '@/types'
@@ -102,7 +103,7 @@ function cancelQueuedRefresh(): void {
   refreshQueued = false
 }
 
-function scheduleNotificationRefresh(): void {
+function scheduleNotificationRefresh(allowHomeOverview = false): void {
   if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden' || refreshQueued) return
   refreshQueued = true
   const currentQueueGeneration = refreshQueueGeneration
@@ -111,7 +112,7 @@ function scheduleNotificationRefresh(): void {
     refreshQueued = false
     if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden') return
     if (notificationOpen.value) void loadHeaderNotifications()
-    else void refreshNotificationBadge().catch(() => {})
+    else void refreshNotificationBadge(allowHomeOverview).catch(() => {})
   })
 }
 
@@ -138,7 +139,7 @@ function notificationTypeLabel(type: string | null | undefined): string {
   return '通知'
 }
 
-async function refreshNotificationBadge(): Promise<void> {
+async function refreshNotificationBadge(allowHomeOverview = false): Promise<void> {
   const currentRequest = ++badgeRequestSeq
   const ownerToken = getStoredAccessToken()
   if (disposed || !props.isLoggedIn || document.visibilityState === 'hidden') {
@@ -148,9 +149,13 @@ async function refreshNotificationBadge(): Promise<void> {
     }
     return
   }
-  const data = await listNotifications({ unread: true, page: 1, size: 1 })
+  const overview = allowHomeOverview && homeOverviewEnabled && route.name === 'discover'
+    ? await getHomeOverview() : null
   if (currentRequest !== badgeRequestSeq || getStoredAccessToken() !== ownerToken) return
-  unreadNotificationCount.value = data.total
+  const unread = overview?.unreadNotifications
+    ?? (await listNotifications({ unread: true, page: 1, size: 1 })).total
+  if (currentRequest !== badgeRequestSeq || getStoredAccessToken() !== ownerToken) return
+  unreadNotificationCount.value = unread
 }
 
 async function loadHeaderNotifications(): Promise<void> {
@@ -306,7 +311,7 @@ watch(() => props.isLoggedIn, (loggedIn) => {
     notificationActionError.value = ''
     return
   }
-  scheduleNotificationRefresh()
+  scheduleNotificationRefresh(true)
 }, { immediate: true })
 
 watch(() => route.fullPath, () => closeNotifications())

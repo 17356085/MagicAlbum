@@ -97,6 +97,97 @@ def test_content_and_header_fit(page: Page, width: int, dark: bool, path: str) -
 
 
 @pytest.mark.ui
+@pytest.mark.parametrize("width", (320, 1280))
+def test_all_ranking_sections_are_reachable_without_a_scrollbar(page: Page, width: int) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+    install_fixtures(page)
+    sections = [{"id": index, "name": f"社区讨论分区 {index}"} for index in range(1, 27)]
+    page.route("**/api/v1/sections?*", lambda route: route.fulfill(
+        json={"items": sections, "page": 1, "size": 50, "total": len(sections)},
+    ))
+    page.goto(BASE_URL + "/ranking?sectionId=3")
+    filters = page.get_by_test_id("ranking-filters")
+    if width >= 1024:
+        expect(filters.get_by_role("button", name="社区讨论分区 3", exact=True)).to_have_attribute("aria-pressed", "true")
+        filters.get_by_role("button", name="社区讨论分区 26", exact=True).click()
+    else:
+        select = filters.get_by_role("combobox", name="排行榜分区")
+        expect(select).to_have_value("3")
+        select.select_option("26")
+    expect(page).to_have_url(BASE_URL + "/ranking?page=1&sectionId=26")
+    assert filters.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    assert_header_fits(page, width)
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("total_tags", (11, 32))
+def test_sidebar_tag_pagination_fits_the_narrow_column(page: Page, total_tags: int) -> None:
+    page.set_viewport_size({"width": 1024, "height": 560})
+    install_fixtures(page)
+
+    def tags_response(route: Route) -> None:
+        query = parse_qs(urlparse(route.request.url).query)
+        current = int(query["page"][0])
+        start = (current - 1) * 18
+        items = [{"id": i, "name": f"标签{i}", "threadCount": 1} for i in range(start, min(start + 18, total_tags))]
+        route.fulfill(json={"items": items, "page": current, "size": 18, "total": total_tags})
+
+    page.route("**/api/v1/tags?*", tags_response)
+    page.goto(BASE_URL + "/discover")
+    heading = page.get_by_role("heading", name="发现", exact=True)
+    expect(heading).to_have_class("sr-only")
+    expect(page.get_by_label("当前筛选")).to_have_count(0)
+    page.get_by_role("button", name="更多标签").click()
+    expect(page.get_by_text(f"共 {total_tags} 个标签", exact=True)).to_be_visible()
+    nav = page.get_by_role("navigation", name="标签分页")
+    if total_tags <= 18:
+        expect(nav).to_have_count(0)
+        return
+
+    previous = nav.get_by_role("button", name="上一页")
+    next_page = nav.get_by_role("button", name="下一页")
+    expect(previous).to_be_disabled()
+    expect(nav.get_by_text("1 / 2", exact=True)).to_be_visible()
+    assert nav.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    for element in (previous, next_page, nav.get_by_text("1 / 2", exact=True)):
+        assert element.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
+    next_page.click()
+    expect(nav.get_by_text("2 / 2", exact=True)).to_be_visible()
+    expect(next_page).to_be_disabled()
+    expect(previous).to_be_enabled()
+
+
+@pytest.mark.ui
+def test_following_arrows_appear_only_when_the_avatar_row_overflows(page: Page) -> None:
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    install_fixtures(page)
+    follows = [{"id": index, "username": f"member{index}", "nickname": f"关注成员{index}"} for index in (902, 903)]
+    page.route("**/api/v1/users/901/following?*", lambda route: route.fulfill(
+        json={"items": follows, "page": 1, "size": 12, "total": len(follows)},
+    ))
+    page.route("**/api/v1/threads/following?*", lambda route: route.fulfill(
+        json={"items": [THREAD], "page": 1, "size": 10, "total": 1},
+    ))
+    page.goto(BASE_URL + "/feed")
+    expect(page.get_by_role("button", name="关注成员903")).to_be_visible()
+    left = page.get_by_role("button", name="向左查看更多关注用户")
+    right = page.get_by_role("button", name="向右查看更多关注用户")
+    expect(left).to_have_count(0)
+    expect(right).to_have_count(0)
+    page.set_viewport_size({"width": 320, "height": 900})
+    expect(left).to_be_disabled()
+    expect(right).to_be_enabled()
+    box = right.bounding_box()
+    assert box and box["height"] == box["width"]
+    right.click()
+    expect(left).to_be_enabled()
+    expect(right).to_be_disabled()
+    page.set_viewport_size({"width": 1280, "height": 900})
+    expect(right).to_have_count(0)
+
+
+@pytest.mark.ui
 @pytest.mark.parametrize("width", (320, 390, 1280))
 def test_optional_tags_are_entered_through_visible_disclosure(page: Page, width: int) -> None:
     page.set_viewport_size({"width": width, "height": 900})
