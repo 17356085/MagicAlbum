@@ -558,13 +558,13 @@ jobs:
           mvn -B -pl notification-service -Ppostgresql -DskipTests package
           mkdir -p outputs/m8-notification-ci
           git rev-parse HEAD > outputs/m8-notification-ci/source-revision.txt
-          sha256sum notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar > outputs/m8-notification-ci/notification-jar.sha256
+          sha256sum notification-service/target/insync-notification-service-0.0.1-SNAPSHOT.jar > outputs/m8-notification-ci/notification-jar.sha256
       - name: Verify both data copies and live notification behavior
         run: |
           python -m pip install PyMySQL 'psycopg[binary]'
           python -m pip freeze > outputs/m8-notification-ci/driver-versions.txt
           python scripts/ci/notification-postgres-pilot.py \
-            --jar notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar \
+            --jar notification-service/target/insync-notification-service-0.0.1-SNAPSHOT.jar \
             --java java --postgres-profile postgresql \
             --output outputs/m8-notification-ci/notification-postgres-pilot.json
       - name: Upload the database migration evidence
@@ -818,7 +818,7 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Rehearse a clean Demo with synthetic actors
         env:
-          BLUEALBUM_DEMO_MODE: rehearsal
+          INSYNC_DEMO_MODE: rehearsal
         run: |
           M0_CI_ARTIFACT_DIR="$PWD/outputs/demo-release-ci/default" bash scripts/ci/compose-browser-smoke.sh
           BLUEALBUM_SPLIT_CHAT_CHECK=1 M0_CI_ARTIFACT_DIR="$PWD/outputs/demo-release-ci/split" bash scripts/ci/compose-browser-smoke.sh

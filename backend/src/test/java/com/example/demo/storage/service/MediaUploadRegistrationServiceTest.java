@@ -1,6 +1,6 @@
 package com.example.demo.storage.service;
 
-import com.example.demo.Demo1Application;
+import com.example.demo.InSyncCoreApplication;
 import com.example.demo.storage.dto.MediaAssetStatus;
 import com.example.demo.storage.dto.MediaUploadIntent;
 import com.example.demo.storage.entity.MediaAsset;
@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
-@SpringBootTest(classes = Demo1Application.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
+@SpringBootTest(classes = InSyncCoreApplication.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode
 @TestPropertySource(properties = {

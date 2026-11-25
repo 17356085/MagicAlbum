@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	authv1 "github.com/17356085/MagicAlbum/services/chat-realtime/internal/authv1"
+	authv1 "github.com/17356085/in-sync/services/chat-realtime/internal/authv1"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"

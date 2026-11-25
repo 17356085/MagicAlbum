@@ -1,4 +1,4 @@
-# BlueAlbum Python tests
+# InSync Python tests
 
 `tests/` is the canonical home for the Python automation suites. The commands
 below describe how to collect or run the suites; they do not imply that every

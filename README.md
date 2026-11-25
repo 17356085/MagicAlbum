@@ -1,8 +1,8 @@
-# 同频 · BlueAlbum
+# 同频 · InSync
 
 同频是一套中文兴趣社区系统，围绕分区讨论、关注动态和即时聊天展开。读者可以在电脑和手机上参与讨论，管理员通过举报审核和审计维护社区。
 
-仓库支持本地开发和隔离 Demo。已验收的演示版本为 [v0.1.0-demo.1](https://github.com/17356085/MagicAlbum/tree/v0.1.0-demo.1)，复演步骤见 [Demo 演练手册](docs/engineering/demo-rehearsal.md)。
+仓库支持本地开发和隔离 Demo。已验收的演示版本为 [v0.1.0-demo.1](https://github.com/17356085/in-sync/tree/v0.1.0-demo.1)，复演步骤见 [Demo 演练手册](docs/engineering/demo-rehearsal.md)。
 
 ## 能体验什么
 
@@ -20,8 +20,8 @@
 准备 PowerShell 7、Git、Docker Desktop、JDK 21、Maven、Node.js 和 pnpm。前端依赖版本见 [package.json](frontend/package.json)。
 
 ```powershell
-git clone https://github.com/17356085/MagicAlbum.git
-cd MagicAlbum
+git clone https://github.com/17356085/in-sync.git InSync
+cd InSync
 cd frontend
 pnpm install --frozen-lockfile
 cd ..

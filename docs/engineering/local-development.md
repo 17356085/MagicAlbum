@@ -2,6 +2,12 @@
 
 从仓库根目录执行本页命令。PowerShell 开发模式在宿主机运行应用，Compose 模式在容器中运行应用。两种模式共用默认端口，选择其中一种启动。需要临时账号和独立数据卷时，使用 [隔离 Demo](demo-rehearsal.md)。
 
+## 名称与兼容
+
+项目英文名为 InSync。GitHub 地址、前端包、Go 模块和 Java 构建产物使用新名称。已有数据库名、RabbitMQ 路由、JWT 签发者、gRPC 协议包和部署变量继续按原配置识别，以便现有数据、会话和跨服务调用继续工作。
+
+新的 PowerShell 运行配置使用 `insync-local` 项目和独立的 InSync 数据库账号。沿用已有数据卷时，继续使用原 `runtime.env` 和原 Compose 项目名。手动指定 `COMPOSE_PROJECT_NAME` 时，启动和停机使用同一个值。隔离 Demo 自动使用独立的 `insync-demo-*` 项目。
+
 ## PowerShell 本地开发
 
 准备 Windows、PowerShell 7、Git、已启动的 Docker Desktop、JDK 21 或更新版本和 Maven。安装 Node.js 22.13 或更新版本及 pnpm 11.5.0，版本要求以 [frontend/package.json](../../frontend/package.json) 为准。

@@ -22,10 +22,10 @@ public class OpenApiConfig {
     public OpenAPI blueAlbumOpenAPI() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("BlueAlbum API")
+                        .title("InSync API")
                         .version("v1")
-                        .description("BlueAlbum 在线论坛后端接口文档，可直接导入 Apifox。")
-                        .contact(new Contact().name("BlueAlbum")))
+                        .description("同频 InSync 社区接口文档，可导入 Apifox。")
+                        .contact(new Contact().name("InSync")))
                 .servers(List.of(
                         new Server().url("http://localhost:9000").description("本地网关"),
                         new Server().url("http://localhost:8080").description("本地后端直连")))

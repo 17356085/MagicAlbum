@@ -60,15 +60,16 @@ Get-Command docker,mvn,node -ErrorAction Stop | Out-Null
 
 if (-not (Test-Path $blueAlbumEnvFile)) {
     $settings = @(
+        'COMPOSE_PROJECT_NAME=insync-local',
         'SPRING_PROFILES_ACTIVE=local',
-        'DB_HOST=127.0.0.1', 'DB_PORT=13306', 'DB_NAME=bluealbum_local', 'DB_USER=bluealbum',
+        'DB_HOST=127.0.0.1', 'DB_PORT=13306', 'DB_NAME=insync_local', 'DB_USER=insync',
         "DB_PASSWORD=$(New-LocalSecret)", "DB_ROOT_PASSWORD=$(New-LocalSecret)",
-        'NOTIFICATION_DB_NAME=bluealbum_local_notifications',
-        'NOTIFICATION_DB_USER=bluealbum_notify', "NOTIFICATION_DB_PASSWORD=$(New-LocalSecret)",
-        'NOTIFICATION_DB_MIGRATION_USER=bluealbum_notify_ddl', "NOTIFICATION_DB_MIGRATION_PASSWORD=$(New-LocalSecret)",
+        'NOTIFICATION_DB_NAME=insync_local_notifications',
+        'NOTIFICATION_DB_USER=insync_notify', "NOTIFICATION_DB_PASSWORD=$(New-LocalSecret)",
+        'NOTIFICATION_DB_MIGRATION_USER=insync_notify_ddl', "NOTIFICATION_DB_MIGRATION_PASSWORD=$(New-LocalSecret)",
         'REDIS_HOST=127.0.0.1', 'REDIS_PORT=16379', "REDIS_PASSWORD=$(New-LocalSecret)",
         'SPRING_RABBITMQ_HOST=127.0.0.1', 'SPRING_RABBITMQ_PORT=15673',
-        'SPRING_RABBITMQ_USERNAME=bluealbum', "SPRING_RABBITMQ_PASSWORD=$(New-LocalSecret)",
+        'SPRING_RABBITMQ_USERNAME=insync', "SPRING_RABBITMQ_PASSWORD=$(New-LocalSecret)",
         'RABBITMQ_MANAGEMENT_PORT=25673',
         'APP_RABBIT_ENABLED=true', 'JWT_ISSUER=MagicAlbum', "JWT_SECRET=$(New-LocalSecret)",
         "INTERNAL_SERVICE_TOKEN=$(New-LocalSecret)",
@@ -168,13 +169,28 @@ try {
 
         # V3 must complete before backend starts and can run V20261014 or dispatch outbox rows.
         $applications = @(
-            @{ Name = 'notification-service'; Jar = 'notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar'; Port = 8081 },
-            @{ Name = 'backend'; Jar = 'backend/target/demo1-0.0.1-SNAPSHOT.jar'; Port = 8080 },
-            @{ Name = 'gateway'; Jar = 'gateway/target/bluealbum-gateway-0.0.1-SNAPSHOT.jar'; Port = 9000 }
+            @{ Name = 'notification-service'; Jar = 'notification-service/target/insync-notification-service-0.0.1-SNAPSHOT.jar'; LegacyJar = 'notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar'; Port = 8081 },
+            @{ Name = 'backend'; Jar = 'backend/target/insync-core-0.0.1-SNAPSHOT.jar'; LegacyJar = 'backend/target/demo1-0.0.1-SNAPSHOT.jar'; Port = 8080 },
+            @{ Name = 'gateway'; Jar = 'gateway/target/insync-gateway-0.0.1-SNAPSHOT.jar'; LegacyJar = 'gateway/target/bluealbum-gateway-0.0.1-SNAPSHOT.jar'; Port = 9000 }
         )
         foreach ($app in $applications) {
-            $jar = Join-Path $blueAlbumRoot $app.Jar
-            if (-not (Test-Path $jar)) { throw "Missing $jar. Run without -NoBuild." }
+            $jarCandidates = @($app.Jar)
+            if ($NoBuild -and $app.LegacyJar) { $jarCandidates += $app.LegacyJar }
+            $jar = $null
+            foreach ($candidate in $jarCandidates) {
+                $candidatePath = Join-Path $blueAlbumRoot $candidate
+                if (Test-Path -LiteralPath $candidatePath) {
+                    $jar = $candidatePath
+                    break
+                }
+            }
+            if (-not $jar) {
+                $hint = if ($NoBuild) { 'Run without -NoBuild to build the canonical artifact.' } else { 'Check the Maven build output.' }
+                throw "Missing canonical artifact $($app.Jar). $hint"
+            }
+            if ($jar -ne (Join-Path $blueAlbumRoot $app.Jar)) {
+                Write-Warning "Using legacy -NoBuild artifact $($app.LegacyJar); run without -NoBuild to migrate to $($app.Jar)."
+            }
             $listener = Get-NetTCPConnection -LocalPort $app.Port -State Listen -ErrorAction SilentlyContinue
             if ($listener) { throw "Port $($app.Port) became occupied. No existing process was stopped." }
             # Windows locks a running JAR. Run a snapshot so future builds remain possible.

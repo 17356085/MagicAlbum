@@ -26,7 +26,7 @@ M2_CI_KAFKA_PILOT=1 bash scripts/ci/content-search-smoke.sh
 mvn -B -pl notification-service -Ppostgresql -DskipTests package
 python -m pip install PyMySQL 'psycopg[binary]'
 python scripts/ci/notification-postgres-pilot.py \
-  --jar notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar \
+  --jar notification-service/target/insync-notification-service-0.0.1-SNAPSHOT.jar \
   --java java --postgres-profile postgresql \
   --output outputs/m8-notification-ci/notification-postgres-pilot.json
 ```

@@ -1,6 +1,6 @@
 package com.example.demo.storage.service;
 
-import com.example.demo.Demo1Application;
+import com.example.demo.InSyncCoreApplication;
 import com.example.demo.storage.dto.MediaClaimResponse;
 import com.example.demo.storage.dto.MediaFailureRequest;
 import com.example.demo.storage.dto.MediaRequestEnvelope;
@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 
-@SpringBootTest(classes = Demo1Application.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
+@SpringBootTest(classes = InSyncCoreApplication.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode
 @TestPropertySource(properties = {

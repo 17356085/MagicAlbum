@@ -12,11 +12,11 @@
     </parent>
 
     <groupId>com.study.spring</groupId>
-    <artifactId>bluealbum-parent</artifactId>
+    <artifactId>insync-parent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>bluealbum-parent</name>
-    <description>BlueAlbum 根父项目（集中属性与构建配置）</description>
+    <name>insync-parent</name>
+    <description>InSync 根父项目（集中属性与构建配置）</description>
 
     <!-- 全局属性（对子模块生效） -->
     <properties>

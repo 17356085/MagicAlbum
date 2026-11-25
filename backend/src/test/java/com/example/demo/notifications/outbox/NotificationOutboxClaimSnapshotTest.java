@@ -49,7 +49,7 @@ import static org.mockito.Mockito.when;
  * Real-database concurrency reproduction for a claim candidate read that outlives
  * the transaction which made the row in-flight.
  */
-@SpringBootTest(classes = com.example.demo.Demo1Application.class,
+@SpringBootTest(classes = com.example.demo.InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode

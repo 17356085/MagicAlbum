@@ -18,7 +18,7 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 FULL_MODE="${BLUEALBUM_FULL_PYTHON_REGRESSION:-0}"
-DEMO_MODE="${BLUEALBUM_DEMO_MODE:-off}"
+DEMO_MODE="${INSYNC_DEMO_MODE:-${BLUEALBUM_DEMO_MODE:-off}}"
 SPLIT_CHAT="${BLUEALBUM_SPLIT_CHAT_CHECK:-0}"
 CUTOVER_MODE="${BLUEALBUM_CHAT_CUTOVER_CHECK:-0}"
 CHAT_REALTIME_CHECK="${BLUEALBUM_CHAT_REALTIME_CHECK:-0}"
@@ -86,7 +86,7 @@ case "$DEMO_MODE" in
     }
     ;;
   *)
-    printf 'ERROR: BLUEALBUM_DEMO_MODE must be off, rehearsal, or interactive\n' >&2
+    printf 'ERROR: INSYNC_DEMO_MODE must be off, rehearsal, or interactive\n' >&2
     exit 1
     ;;
 esac
@@ -182,7 +182,7 @@ if [[ "$FULL_MODE" == "1" ]]; then
   PROJECT="${PROJECT}-full"
 fi
 if [[ "$DEMO_MODE" != off ]]; then
-  PROJECT="${PROJECT}-demo"
+  PROJECT="${PROJECT/#bluealbum-ci-/insync-demo-}"
 fi
 if [[ "$SPLIT_CHAT" == "1" ]]; then
   PROJECT="${PROJECT}-split-chat"
@@ -208,7 +208,7 @@ if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   source "$SCRIPT_DIR/compose-chat-backup.sh"
 fi
 
-if [[ ! "$PROJECT" =~ ^bluealbum-ci-[a-z0-9-]+$ ]]; then
+if [[ ! "$PROJECT" =~ ^(bluealbum-ci|insync-demo)-[a-z0-9-]+$ ]]; then
   die "invalid Compose project name: $PROJECT"
 fi
 
@@ -461,7 +461,7 @@ trap cleanup EXIT
 assert_project_unused
 
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SCREENSHOT_DIR"
-"$PYTHON_BIN" - "$ARTIFACT_DIR/source-revision.json" "$PROJECT" "$FULL_MODE" "$SPLIT_CHAT" "$CUTOVER_MODE" \
+"$PYTHON_BIN" - "$ARTIFACT_DIR/source-revision.json" "$PROJECT" "$DEMO_MODE" "$FULL_MODE" "$SPLIT_CHAT" "$CUTOVER_MODE" \
   "$CHAT_REALTIME_CHECK" "$CHAT_BACKUP_CHECK" "$CHAT_AUTH_TIMING_CHECK" "$CHAT_GRPC_CHECK" \
   "$TELEMETRY_CHECK" "$COMMENT_EVENTS_CHECK" "${BLUEALBUM_HOME_BFF_ENABLED:-false}" "$RPC_LOAD_CHECK" <<'PY'
 import json
@@ -470,7 +470,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-output, project, *settings = sys.argv[1:]
+output, project, demo_mode, *settings = sys.argv[1:]
 revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 clean = not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
 expected = os.environ.get("GITHUB_SHA")
@@ -480,7 +480,7 @@ keys = ("fullRegression", "splitChat", "cutover", "dualRealtime", "backup",
         "authorizationTiming", "grpc", "telemetry", "commentEvents", "homeBff", "rpcLoad")
 Path(output).write_text(json.dumps({
     "commit": revision, "cleanWorktree": clean, "project": project,
-    "demoMode": os.environ.get("BLUEALBUM_DEMO_MODE", "off"),
+    "demoMode": demo_mode,
     "configuration": {key: value in ("1", "true") for key, value in zip(keys, settings, strict=True)},
 }, indent=2) + "\n", encoding="utf-8")
 PY

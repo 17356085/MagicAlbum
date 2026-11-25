@@ -39,7 +39,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(classes = com.example.demo.Demo1Application.class,
+@SpringBootTest(classes = com.example.demo.InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode

@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	authv1 "github.com/17356085/MagicAlbum/services/chat-realtime/internal/authv1"
+	authv1 "github.com/17356085/in-sync/services/chat-realtime/internal/authv1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"

@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/17356085/MagicAlbum/services/media-service/internal/config"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/consumer"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/coreclient"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
+	"github.com/17356085/in-sync/services/media-service/internal/config"
+	"github.com/17356085/in-sync/services/media-service/internal/consumer"
+	"github.com/17356085/in-sync/services/media-service/internal/coreclient"
+	"github.com/17356085/in-sync/services/media-service/internal/telemetry"
 )
 
 var version = "dev"
