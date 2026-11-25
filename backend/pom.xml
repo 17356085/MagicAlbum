@@ -4,15 +4,15 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>com.study.spring</groupId>
-        <artifactId>bluealbum-parent</artifactId>
+        <artifactId>insync-parent</artifactId>
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <groupId>com.study.spring</groupId>
-    <artifactId>demo1</artifactId>
+    <artifactId>insync-core</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>demo1</name>
-    <description>demo1</description>
+    <name>insync-core</name>
+    <description>InSync 核心服务</description>
     <url/>
     <licenses>
         <license/>
@@ -320,7 +320,7 @@
                 <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
-                    <mainClass>com.example.demo.Demo1Application</mainClass>
+                    <mainClass>com.example.demo.InSyncCoreApplication</mainClass>
                 </configuration>
                 <executions>
                     <execution>

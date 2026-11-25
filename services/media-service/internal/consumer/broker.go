@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
+	"github.com/17356085/in-sync/services/media-service/internal/telemetry"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 

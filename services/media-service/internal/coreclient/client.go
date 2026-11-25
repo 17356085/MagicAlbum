@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/17356085/MagicAlbum/services/media-service/internal/config"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/processor"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/wire"
+	"github.com/17356085/in-sync/services/media-service/internal/config"
+	"github.com/17356085/in-sync/services/media-service/internal/processor"
+	"github.com/17356085/in-sync/services/media-service/internal/telemetry"
+	"github.com/17356085/in-sync/services/media-service/internal/wire"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )

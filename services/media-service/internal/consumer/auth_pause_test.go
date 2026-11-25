@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/17356085/MagicAlbum/services/media-service/internal/coreclient"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/processor"
-	"github.com/17356085/MagicAlbum/services/media-service/internal/telemetry"
+	"github.com/17356085/in-sync/services/media-service/internal/coreclient"
+	"github.com/17356085/in-sync/services/media-service/internal/processor"
+	"github.com/17356085/in-sync/services/media-service/internal/telemetry"
 )
 
 func authCoreError(operation string) error {

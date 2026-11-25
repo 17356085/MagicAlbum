@@ -23,7 +23,7 @@ const (
 	otelTracesExporterEnv = "OTEL_TRACES_EXPORTER"
 	otelServiceNameEnv    = "OTEL_SERVICE_NAME"
 	defaultServiceName    = "bluealbum-chat-realtime"
-	instrumentationName   = "github.com/17356085/MagicAlbum/services/chat-realtime"
+	instrumentationName   = "github.com/17356085/in-sync/services/chat-realtime"
 )
 
 // traceContextPropagator is deliberately only the W3C trace-context format.

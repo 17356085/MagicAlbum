@@ -129,8 +129,8 @@ const file_bluealbum_chat_realtime_auth_v1_verify_session_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\x02 \x01(\x03R\texpiresAt2\x8f\x01\n" +
 	"\rVerifySession\x12~\n" +
-	"\rVerifySession\x125.bluealbum.chat.realtime.auth.v1.VerifySessionRequest\x1a6.bluealbum.chat.realtime.auth.v1.VerifySessionResponseB\x91\x01\n" +
-	"+com.example.demo.chat.realtimegrpc.contractB\x12VerifySessionProtoP\x01ZLgithub.com/17356085/MagicAlbum/services/chat-realtime/internal/authv1;authv1b\x06proto3"
+	"\rVerifySession\x125.bluealbum.chat.realtime.auth.v1.VerifySessionRequest\x1a6.bluealbum.chat.realtime.auth.v1.VerifySessionResponseB\x8e\x01\n" +
+	"+com.example.demo.chat.realtimegrpc.contractB\x12VerifySessionProtoP\x01ZIgithub.com/17356085/in-sync/services/chat-realtime/internal/authv1;authv1b\x06proto3"
 
 var (
 	file_bluealbum_chat_realtime_auth_v1_verify_session_proto_rawDescOnce sync.Once

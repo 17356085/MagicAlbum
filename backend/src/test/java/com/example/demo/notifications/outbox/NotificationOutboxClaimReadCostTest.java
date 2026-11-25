@@ -27,7 +27,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Regression guard for Hibernate entity materialization during one-row claims. */
-@SpringBootTest(classes = com.example.demo.Demo1Application.class,
+@SpringBootTest(classes = com.example.demo.InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode

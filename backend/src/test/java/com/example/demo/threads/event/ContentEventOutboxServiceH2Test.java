@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(classes = com.example.demo.Demo1Application.class,
+@SpringBootTest(classes = com.example.demo.InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode

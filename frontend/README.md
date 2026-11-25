@@ -1,4 +1,4 @@
-# BlueAlbum frontend
+# InSync frontend
 
 This directory contains the Vue 3 + Vite frontend. The instructions below cover
 local development and frontend checks; they do not establish backend integration,
@@ -8,7 +8,7 @@ production readiness, or a production performance target.
 
 - Node.js 22.13 or newer (Node.js 24 is used by CI and the frontend Docker build)
 - pnpm 11.5.0 (the version declared by `package.json`)
-- A running BlueAlbum gateway when using the local API proxy
+- A running InSync gateway when using the local API proxy
 
 Install dependencies from this directory:
 

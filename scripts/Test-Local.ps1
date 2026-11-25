@@ -23,9 +23,10 @@ function Assert-Local([bool]$Condition, [string]$Name) {
     Write-Host "PASS $Name"
 }
 
-function Send-Local([string]$Method, [string]$Path, $Body, [string]$Token, [int]$Expected = 200) {
+function Send-Local([string]$Method, [string]$Path, $Body, [string]$Token, [int]$Expected = 200, [string]$IdempotencyKey = '') {
     $headers = @{ 'X-Device-Id'=$script:blueAlbumDeviceId }
     if ($Token) { $headers['Authorization'] = "Bearer $Token" }
+    if ($IdempotencyKey) { $headers['Idempotency-Key'] = $IdempotencyKey }
     $options = @{ Uri="$blueAlbumApi$Path"; Method=$Method; Headers=$headers; TimeoutSec=35; SkipHttpErrorCheck=$true }
     if ($null -ne $Body) {
         $options['ContentType'] = 'application/json'
@@ -129,10 +130,12 @@ try {
 
     $stream = Send-Local POST '/ai/chat/stream' @{messages=@(@{role='user';content='你好，请做一个简短的本地试运行回复'});maxOutputTokens=64} $owner.Token
     Assert-Local ($stream -match 'data:' -and $stream -match '\[DONE\]') 'Authenticated AI mock SSE stream completes'
+    $summaryTask = Send-Local POST "/ai/summary/$($thread.id)" $null $owner.Token -IdempotencyKey ([Guid]::NewGuid().ToString())
+    Assert-Local (-not [string]::IsNullOrWhiteSpace([string]$summaryTask.taskId)) 'Owner starts a summary task'
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     $summary = $null
     do {
-        $summaryResponse = Invoke-WebRequest -Uri "$blueAlbumApi/ai/summary/$($thread.id)" -Headers @{Authorization="Bearer $($owner.Token)"} -TimeoutSec 10 -SkipHttpErrorCheck
+        $summaryResponse = Invoke-WebRequest -Uri "$blueAlbumApi/ai/summary/tasks/$($summaryTask.taskId)" -Headers @{Authorization="Bearer $($owner.Token)"} -TimeoutSec 10 -SkipHttpErrorCheck
         if ($summaryResponse.StatusCode -ne 200) { throw "Summary status lookup returned HTTP $($summaryResponse.StatusCode)." }
         $summary = ConvertFrom-Json -InputObject $summaryResponse.Content
         if ($summary.status -in @('COMPLETED','FAILED')) { break }

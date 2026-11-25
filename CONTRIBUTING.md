@@ -13,7 +13,7 @@
 
 合并后核对改动已纳入主线、分支没有待保留的改动或开放 PR，并确认相关工作已结束，再清理短期分支。采用 squash merge 时通过已合并的 PR 和实际改动确认集成状态。清理现有历史分支由维护者确认。
 
-项目由 Vue 前端、Spring Boot 核心服务、网关、通知服务和 Go 媒体 worker 组成，站点显示名称为「同频」。
+同频由 Vue 前端、Java 核心、网关、通知、可独立部署的聊天应用，以及 Go 实时接入和媒体 worker 组成。
 
 - [目录与文件归属](docs/engineering/repository-layout.md)
 - [前后端编码与验证规范](docs/engineering/coding-standards.md)

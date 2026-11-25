@@ -21,7 +21,7 @@ import (
 const (
 	otelTracesExporterEnv = "OTEL_TRACES_EXPORTER"
 	defaultServiceName    = "bluealbum-media-worker"
-	instrumentationName   = "github.com/17356085/MagicAlbum/services/media-service"
+	instrumentationName   = "github.com/17356085/in-sync/services/media-service"
 )
 
 // traceContextPropagator is deliberately limited to W3C trace context. The

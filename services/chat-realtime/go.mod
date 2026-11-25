@@ -1,4 +1,4 @@
-module github.com/17356085/MagicAlbum/services/chat-realtime
+module github.com/17356085/in-sync/services/chat-realtime
 
 go 1.26.0
 

@@ -1,6 +1,6 @@
 package com.example.demo.user.service;
 
-import com.example.demo.Demo1Application;
+import com.example.demo.InSyncCoreApplication;
 import com.example.demo.common.DistributedRateLimiter;
 import com.example.demo.user.connected.service.ConnectedAccountsService;
 import com.example.demo.user.connected.service.ConnectedAccountBindingTag;
@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the timeout is never treated as a successful request.
  */
 @SpringBootTest(
-        classes = Demo1Application.class,
+        classes = InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
                 "spring.cloud.discovery.enabled=false",

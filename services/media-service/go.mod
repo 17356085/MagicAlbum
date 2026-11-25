@@ -1,4 +1,4 @@
-module github.com/17356085/MagicAlbum/services/media-service
+module github.com/17356085/in-sync/services/media-service
 
 go 1.26.0
 

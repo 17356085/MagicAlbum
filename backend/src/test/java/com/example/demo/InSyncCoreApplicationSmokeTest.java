@@ -5,10 +5,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.aot.DisabledInAotMode;
 
-@SpringBootTest(classes = Demo1Application.class)
+@SpringBootTest(classes = InSyncCoreApplication.class)
 @ActiveProfiles("test")
 @DisabledInAotMode
-class Demo1ApplicationSmokeTest {
+class InSyncCoreApplicationSmokeTest {
 
     @Test
     void contextLoads() {

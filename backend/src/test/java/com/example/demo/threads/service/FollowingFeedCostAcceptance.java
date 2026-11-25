@@ -1,6 +1,6 @@
 package com.example.demo.threads.service;
 
-import com.example.demo.Demo1Application;
+import com.example.demo.InSyncCoreApplication;
 import com.example.demo.threads.dto.FollowingFeedPage;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadFeedView;
@@ -60,7 +60,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * count. The JDBC measurements and plans use the exact current status/follow
  * predicates and ordering without changing the public API.</p>
  */
-@SpringBootTest(classes = Demo1Application.class,
+@SpringBootTest(classes = InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("test")
 @TestPropertySource(properties = {

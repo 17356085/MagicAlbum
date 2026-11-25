@@ -1,7 +1,7 @@
 # Go media worker
 
 这是 M3 异步图片处理进程，模块路径为
-`github.com/17356085/MagicAlbum/services/media-service`。Java 拥有资源权限、任务版本、租约和结果；Go 不连接业务数据库，也不持有对象存储凭据。完整配置见 [M3 运行手册](../../docs/engineering/m3-operations.md)。图片内核仍可独立调用：
+`github.com/17356085/in-sync/services/media-service`。Java 拥有资源权限、任务版本、租约和结果；Go 不连接业务数据库，也不持有对象存储凭据。完整配置见 [M3 运行手册](../../docs/engineering/m3-operations.md)。图片内核仍可独立调用：
 
 ```go
 result, err := processor.Transform(ctx, input, processor.PresetThumbnail)

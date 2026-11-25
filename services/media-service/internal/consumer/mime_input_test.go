@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/17356085/MagicAlbum/services/media-service/internal/processor"
+	"github.com/17356085/in-sync/services/media-service/internal/processor"
 )
 
 type mimeInputBaselineCase struct {

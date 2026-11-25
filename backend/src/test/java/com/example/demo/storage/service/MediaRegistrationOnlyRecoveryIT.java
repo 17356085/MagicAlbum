@@ -1,6 +1,6 @@
 package com.example.demo.storage.service;
 
-import com.example.demo.Demo1Application;
+import com.example.demo.InSyncCoreApplication;
 import com.example.demo.storage.dto.MediaUploadIntent;
 import com.example.demo.storage.entity.MediaAsset;
 import com.example.demo.storage.service.provider.s3.S3StorageService;
@@ -56,7 +56,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * real; only unrelated Redis access and RabbitMQ are isolated.</p>
  */
 @SpringBootTest(
-        classes = Demo1Application.class,
+        classes = InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.MOCK,
         properties = {
                 "spring.datasource.driver-class-name=org.h2.Driver",

@@ -5,7 +5,7 @@
 ## 现场演示
 
 ```bash
-BLUEALBUM_DEMO_MODE=interactive bash scripts/ci/compose-browser-smoke.sh
+INSYNC_DEMO_MODE=interactive bash scripts/ci/compose-browser-smoke.sh
 ```
 
 脚本创建专用 Compose 项目、新数据库卷和合成账号。默认演示地址为 `http://127.0.0.1:15173`，其它演示端口为 13306、16379、15673、15674、18080、18081 和 19000。发现端口或项目已占用时退出。需要调整时，先选择未占用的端口，再通过 `COMPOSE_*_PORT` 变量指定。脚本就绪后会显示页面地址和本地凭证文件路径。浏览器可通过独立窗口分别登录作者、读者和管理员。
@@ -22,8 +22,8 @@ BLUEALBUM_DEMO_MODE=interactive bash scripts/ci/compose-browser-smoke.sh
 ```bash
 python -m pip install -r tests/requirements.txt
 python -m playwright install chromium
-BLUEALBUM_DEMO_MODE=rehearsal bash scripts/ci/compose-browser-smoke.sh
-BLUEALBUM_DEMO_MODE=rehearsal BLUEALBUM_SPLIT_CHAT_CHECK=1 bash scripts/ci/compose-browser-smoke.sh
+INSYNC_DEMO_MODE=rehearsal bash scripts/ci/compose-browser-smoke.sh
+INSYNC_DEMO_MODE=rehearsal BLUEALBUM_SPLIT_CHAT_CHECK=1 bash scripts/ci/compose-browser-smoke.sh
 ```
 
 Linux 如缺少浏览器系统依赖，可用 `python -m playwright install --with-deps chromium`。自动彩排初始化并读回合成数据，再运行真实浏览器旅程。输出目录含 `source-revision.json`、脱敏读回 JSON、浏览器 JUnit 和清理结果。CI 只上传这些公开验收产物。

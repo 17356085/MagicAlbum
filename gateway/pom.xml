@@ -5,14 +5,14 @@
 
     <parent>
         <groupId>com.study.spring</groupId>
-        <artifactId>bluealbum-parent</artifactId>
+        <artifactId>insync-parent</artifactId>
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>bluealbum-gateway</artifactId>
-    <name>bluealbum-gateway</name>
-    <description>BlueAlbum Spring Cloud Gateway</description>
+    <artifactId>insync-gateway</artifactId>
+    <name>insync-gateway</name>
+    <description>InSync Spring Cloud Gateway</description>
 
     <properties>
         <java.checkstyle.config>${project.basedir}/../config/checkstyle.xml</java.checkstyle.config>
@@ -62,7 +62,7 @@
                 <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
-                    <mainClass>com.example.gateway.BlueAlbumGatewayApplication</mainClass>
+                    <mainClass>com.example.gateway.InSyncGatewayApplication</mainClass>
                 </configuration>
                 <executions combine.self="override">
                     <execution>

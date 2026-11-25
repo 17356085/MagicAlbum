@@ -6,10 +6,10 @@ import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 
 @SpringBootApplication
 @EnableDiscoveryClient
-public class Demo1Application {
+public class InSyncCoreApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(Demo1Application.class, args);
+        SpringApplication.run(InSyncCoreApplication.class, args);
     }
 
 }

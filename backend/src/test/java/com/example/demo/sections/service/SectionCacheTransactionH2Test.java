@@ -55,7 +55,7 @@ import static org.mockito.Mockito.when;
  * map, so these tests prove the application transaction and cache-generation
  * callback contract without claiming a Redis-server integration test.</p>
  */
-@SpringBootTest(classes = com.example.demo.Demo1Application.class,
+@SpringBootTest(classes = com.example.demo.InSyncCoreApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("test")
 @DisabledInAotMode

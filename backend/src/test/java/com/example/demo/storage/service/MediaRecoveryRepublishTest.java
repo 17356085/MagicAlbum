@@ -1,6 +1,6 @@
 package com.example.demo.storage.service;
 
-import com.example.demo.Demo1Application;
+import com.example.demo.InSyncCoreApplication;
 import com.example.demo.storage.dto.MediaClaimResponse;
 import com.example.demo.storage.dto.MediaRequestEnvelope;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>The publisher is represented only by the real outbox claim/published
  * transactions. This is not evidence that RabbitMQ accepted a message.</p>
  */
-@SpringBootTest(classes = Demo1Application.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
+@SpringBootTest(classes = InSyncCoreApplication.class, webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @ActiveProfiles("test")
 @DisabledInAotMode
 @TestPropertySource(properties = {

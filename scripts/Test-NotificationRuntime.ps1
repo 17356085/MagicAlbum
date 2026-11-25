@@ -202,7 +202,7 @@ try {
     & docker exec @withoutMigration -e 'NOTIFICATION_DB_USER=' -e 'NOTIFICATION_DB_PASSWORD=' $mysqlContainer sh $notificationInitializer
     Check ($LASTEXITCODE -eq 0) 'Notification database initialized with the legacy shared account'
 
-    $notificationJar='notification-service/target/bluealbum-notification-service-0.0.1-SNAPSHOT.jar'
+    $notificationJar='notification-service/target/insync-notification-service-0.0.1-SNAPSHOT.jar'
     $legacyNotification = Start-App 'notification-legacy' $notificationJar $NotificationPort -Extra @('--spring.flyway.target=3') -Database $notificationDatabase -DatabaseUser $coreDatabaseUser -DatabasePassword $coreDatabasePassword
     Check ((Sql "SELECT COUNT(*) FROM notification_flyway_schema_history WHERE version IN ('1','2','3') AND success=1;" -Account core -Database $notificationDatabase) -eq '3') 'The legacy application created the V3 notification database'
     Check ((Sql "SELECT COUNT(*) FROM notification_flyway_schema_history WHERE version='4';" -Account core -Database $notificationDatabase) -eq '0') 'Notification V4 is pending before the account switch'
@@ -239,7 +239,7 @@ try {
         "--app.notifications.client.base-url=http://127.0.0.1:$NotificationPort",'--feature.mp.read.threads=false',
         '--app.storage.type=local',"`"--app.storage.local.baseDir=$(Join-Path $ArtifactDirectory 'uploads')`"",
         '--spring.data.redis.host=127.0.0.1',"--spring.data.redis.port=$redisPort",'--spring.data.redis.password=')
-    $null = Start-App 'core' 'backend/target/demo1-0.0.1-SNAPSHOT.jar' $CorePort -Extra $coreExtra -Database $coreDatabase -DatabaseUser $coreDatabaseUser -DatabasePassword $coreDatabasePassword
+    $null = Start-App 'core' 'backend/target/insync-core-0.0.1-SNAPSHOT.jar' $CorePort -Extra $coreExtra -Database $coreDatabase -DatabaseUser $coreDatabaseUser -DatabasePassword $coreDatabasePassword
     Check ((Sql "SELECT COUNT(*) FROM ba_verify_core.flyway_schema_history WHERE version='20261014' AND success=1;") -eq '1') 'Core Outbox migration committed and Hibernate validate passed'
     # Spring replaces a collection when command-line entries override it; provide full routes.
     $gatewayExtra = @('--spring.cloud.gateway.server.webflux.routes[0].id=verification-notification-stream',
@@ -263,7 +263,7 @@ try {
         '--spring.cloud.gateway.server.webflux.routes[4].order=-1',
         '--spring.cloud.gateway.server.webflux.routes[4].predicates[0]=Path=/api/v1/notifications/{id}/read',
         '--spring.cloud.gateway.server.webflux.routes[4].predicates[1]=Method=PATCH')
-    $null = Start-App 'gateway' 'gateway/target/bluealbum-gateway-0.0.1-SNAPSHOT.jar' $GatewayPort -Extra $gatewayExtra
+    $null = Start-App 'gateway' 'gateway/target/insync-gateway-0.0.1-SNAPSHOT.jar' $GatewayPort -Extra $gatewayExtra
     $accounts=@()
     foreach ($role in @('owner','reader')) {
         $password = New-VerificationSecret

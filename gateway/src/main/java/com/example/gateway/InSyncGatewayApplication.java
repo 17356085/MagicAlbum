@@ -6,9 +6,9 @@ import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 
 @EnableDiscoveryClient
 @SpringBootApplication
-public class BlueAlbumGatewayApplication {
+public class InSyncGatewayApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(BlueAlbumGatewayApplication.class, args);
+        SpringApplication.run(InSyncGatewayApplication.class, args);
     }
 }
