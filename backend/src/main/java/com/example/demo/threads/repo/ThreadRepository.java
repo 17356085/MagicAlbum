@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -29,7 +30,7 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
     @Query("SELECT t FROM Thread t WHERE t.id = :id")
     Optional<com.example.demo.threads.entity.Thread> findByIdForInteraction(@Param("id") Long id);
 
-    @Query(value = """
+    String FOLLOWING_FEED_SELECT = """
             SELECT
                 t.id AS id,
                 t.sectionId AS sectionId,
@@ -49,22 +50,34 @@ public interface ThreadRepository extends JpaRepository<com.example.demo.threads
             LEFT JOIN com.example.demo.sections.entity.Section s ON s.id = t.sectionId
             LEFT JOIN com.example.demo.user.entity.User u ON u.id = t.authorId
             LEFT JOIN com.example.demo.user.entity.UserProfile up ON up.userId = t.authorId
+            """;
+
+    String FOLLOWING_FEED_FILTER = """
             WHERE t.status = 'NORMAL'
               AND EXISTS (
                   SELECT uf.id FROM UserFollow uf
                   WHERE uf.followerId = :userId AND uf.followingId = t.authorId
               )
-            ORDER BY t.createdAt DESC, t.id DESC
-            """,
-            countQuery = """
-            SELECT COUNT(t) FROM Thread t
-            WHERE t.status = 'NORMAL'
-              AND EXISTS (
-                  SELECT uf.id FROM UserFollow uf
-                  WHERE uf.followerId = :userId AND uf.followingId = t.authorId
-              )
-            """)
+            """;
+
+    @Query(value = FOLLOWING_FEED_SELECT + FOLLOWING_FEED_FILTER + "ORDER BY t.createdAt DESC, t.id DESC",
+            countQuery = "SELECT COUNT(t) FROM Thread t\n" + FOLLOWING_FEED_FILTER)
     Page<ThreadFeedView> findFollowingFeed(Long userId, Pageable pageable);
+
+    @Query("SELECT COUNT(t) FROM Thread t\n" + FOLLOWING_FEED_FILTER)
+    long countFollowingFeed(Long userId);
+
+    @Query(FOLLOWING_FEED_SELECT + FOLLOWING_FEED_FILTER + """
+            AND (t.createdAt < :createdAt OR (t.createdAt = :createdAt AND t.id < :threadId))
+            ORDER BY t.createdAt DESC, t.id DESC
+            """)
+    List<ThreadFeedView> findFollowingFeedOlder(Long userId, Instant createdAt, Long threadId, Pageable pageable);
+
+    @Query(FOLLOWING_FEED_SELECT + FOLLOWING_FEED_FILTER + """
+            AND (t.createdAt > :createdAt OR (t.createdAt = :createdAt AND t.id > :threadId))
+            ORDER BY t.createdAt ASC, t.id ASC
+            """)
+    List<ThreadFeedView> findFollowingFeedNewer(Long userId, Instant createdAt, Long threadId, Pageable pageable);
 
     @Query(value = """
             SELECT

@@ -1,6 +1,8 @@
 package com.example.demo.threads.service;
 
 import com.example.demo.Demo1Application;
+import com.example.demo.threads.dto.FollowingFeedPage;
+import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadFeedView;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -17,6 +20,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,6 +44,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Explicit-only MySQL 8 acceptance for the current following-feed query.
@@ -121,6 +126,9 @@ class FollowingFeedCostAcceptance {
     private ThreadRepository threadRepository;
 
     @Autowired
+    private ThreadService threadService;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     @Autowired
@@ -156,6 +164,12 @@ class FollowingFeedCostAcceptance {
         FeedSnapshot deepPageOneRepeat = repositorySnapshot(fixture.deepViewerId(), 0, PAGE_SIZE);
         FeedSnapshot deepPageTwoBefore = repositorySnapshot(
                 fixture.deepViewerId(), 1, PAGE_SIZE);
+        long viewer = fixture.deepViewerId();
+        FollowingFeedPage firstWindow = threadService.followingWindow(viewer, 1, PAGE_SIZE, null, null);
+        assertThat(firstWindow.items()).extracting(ThreadDto::getId).containsExactlyElementsOf(deepPageOne.ids());
+        assertThat(firstWindow.total()).isEqualTo(deepPageOne.total());
+        assertThat(firstWindow.previousCursor()).isNull();
+        assertThat(firstWindow.nextCursor()).isNotBlank();
 
         assertThat(shallowPage.total()).isEqualTo(fixture.expectedShallowTotal());
         assertThat(deepPageOne.total()).isEqualTo(fixture.expectedDeepTotal());
@@ -185,6 +199,20 @@ class FollowingFeedCostAcceptance {
         assertThat(offsetDuplicateIds)
                 .as("an insert before the offset page boundary must demonstrate the current duplicate risk")
                 .isNotEmpty();
+
+        FollowingFeedPage secondWindow = threadService.followingWindow(viewer, 2, PAGE_SIZE, firstWindow.nextCursor(), null);
+        assertThat(secondWindow.items()).extracting(ThreadDto::getId)
+                .containsExactlyElementsOf(deepPageTwoBefore.ids()).doesNotContainAnyElementsOf(deepPageOne.ids());
+        assertThat(secondWindow.total()).isEqualTo(firstWindow.total() + 1);
+        assertThat(secondWindow.previousCursor()).isNotBlank();
+        FollowingFeedPage back = threadService.followingWindow(viewer, 1, PAGE_SIZE, null, secondWindow.previousCursor());
+        assertThat(back.items()).extracting(ThreadDto::getId).containsExactlyElementsOf(deepPageOne.ids());
+        assertThat(back.previousCursor()).isNull();
+        FollowingFeedPage reanchored = threadService.followingWindow(viewer, 1, PAGE_SIZE, null, null);
+        assertThat(reanchored.items().getFirst().getTitle()).isEqualTo("feed-mutation-insert");
+        assertRejectedCursor(viewer, "invalid!", null);
+        assertRejectedCursor(viewer, firstWindow.nextCursor(), secondWindow.previousCursor());
+        assertRejectedCursor(fixture.shallowViewerId(), firstWindow.nextCursor(), null);
 
         Row cursor = deepPageOne.rows().get(deepPageOne.rows().size() - 1);
         List<Row> keysetBeforeMutation = keysetPage(
@@ -216,6 +244,14 @@ class FollowingFeedCostAcceptance {
         assertThat(keysetAfterMutation).allSatisfy(row ->
                 assertThat(row.authorId()).isNotEqualTo(unfollowed.authorId()));
 
+        FollowingFeedPage filtered = threadService.followingWindow(viewer, 2, PAGE_SIZE, firstWindow.nextCursor(), null);
+        assertThat(filtered.items()).extracting(ThreadDto::getId).containsExactlyElementsOf(keysetAfterIds);
+        assertThat(filtered.items()).allSatisfy(item -> {
+            assertThat(item.getAuthorId()).isNotEqualTo(unfollowed.authorId());
+            assertThat(item.getStatus()).isEqualTo("NORMAL");
+        });
+        assertThat(filtered.total()).isEqualTo(secondWindow.total() - (THREADS_PER_AUTHOR - 2L) - 2L);
+
         Map<String, Object> evidence = new LinkedHashMap<>();
         evidence.put("schemaVersion", 1);
         evidence.put("test", "FollowingFeedCostAcceptance");
@@ -227,6 +263,12 @@ class FollowingFeedCostAcceptance {
         evidence.put("repositoryMeasurements", List.of(
                 shallowBenchmark.toEvidence(), deepBenchmark.toEvidence()));
         evidence.put("matchedDeepKeyset", deepKeyset);
+        evidence.put("deployedCursorContract", Map.of(
+                "nextPageStable", true,
+                "previousPageStable", true,
+                "directJumpReanchors", true,
+                "liveVisibility", true,
+                "invalidAndOtherOwnerRejected", true));
         evidence.put("plans", plans.toEvidence());
         evidence.put("mutationFlags", Map.of(
                 "staticTieOrderingStable", deepPageOne.ids().equals(deepPageOneRepeat.ids()),
@@ -247,6 +289,12 @@ class FollowingFeedCostAcceptance {
                         + "offsetDuplicate=%s keysetMutationChecks=true%n",
                 fixture.threadCount(), fixture.expectedShallowTotal(), fixture.expectedDeepTotal(),
                 !offsetDuplicateIds.isEmpty());
+    }
+
+    private void assertRejectedCursor(long viewer, String after, String before) {
+        assertThatThrownBy(() -> threadService.followingWindow(viewer, 2, PAGE_SIZE, after, before))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
     }
 
     private Fixture seedFixture() {

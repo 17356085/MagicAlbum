@@ -74,12 +74,17 @@ def verify_report(path, database):
     mysql = result["mysql"]
     checks = result["mutationFlags"]
     keyset = result["matchedDeepKeyset"]
+    contract = result["deployedCursorContract"]
     completed = (
         mysql["product"] == "MySQL" and mysql["database"] == database
         and result["fixture"]["threadCount"] >= 20_000
         and len(result["repositoryMeasurements"]) == 2 and len(result["plans"]) == 4
         and all(isinstance(plan.get("query_block"), dict) for plan in result["plans"].values())
         and keyset["sameOrderedIds"] is True and keyset["prototypePage"]["samples"] == 8
+        and all(contract[key] is True for key in (
+            "nextPageStable", "previousPageStable", "directJumpReanchors", "liveVisibility",
+            "invalidAndOtherOwnerRejected",
+        ))
         and all(checks[key] is True for key in (
             "staticTieOrderingStable", "offsetDuplicateObserved", "keysetAvoidedDuplicate",
             "keysetDropsHidden", "keysetDropsDeleted", "keysetDropsUnfollowed",
@@ -129,7 +134,8 @@ def run(args):
         environment = {
             **os.environ,
             "FEED_CHECK_MYSQL_URL": (f"jdbc:mysql://127.0.0.1:{port.group(1)}/{database}"
-                                     "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"),
+                                     "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+                                     "&rewriteBatchedStatements=true"),
             "FEED_CHECK_DATABASE": database,
             "FEED_CHECK_USER": credentials["MYSQL_USER"],
             "FEED_CHECK_PASSWORD": password,

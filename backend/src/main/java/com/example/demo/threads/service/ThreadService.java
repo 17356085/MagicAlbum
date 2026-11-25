@@ -8,6 +8,8 @@ import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.tags.service.TagService;
 import com.example.demo.threads.dto.CreateThreadRequest;
+import com.example.demo.threads.dto.FollowingFeedPage;
+import com.example.demo.threads.dto.ThreadFeedView;
 import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.ThreadQueryView;
 import com.example.demo.threads.dto.ThreadRankingView;
@@ -253,10 +255,64 @@ public class ThreadService {
     public Page<ThreadDto> listFollowing(Long userId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 20);
         int pageIndex = Math.max(page, 1) - 1;
-        Page<com.example.demo.threads.dto.ThreadFeedView> result = threadRepository.findFollowingFeed(
-                userId, PageRequest.of(pageIndex, limit));
+        Page<ThreadFeedView> result = threadRepository.findFollowingFeed(userId, PageRequest.of(pageIndex, limit));
         return new PageImpl<>(result.getContent().stream().map(dtoMapper::toFeedDto).toList(),
                 result.getPageable(), result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public FollowingFeedPage followingWindow(Long userId, int page, int size, String after, String before) {
+        int position = Math.max(page, 1);
+        int limit = Math.min(Math.max(size, 1), 20);
+        if (after != null && before != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只能指定一个关注流游标");
+        }
+        if (after == null && before == null) {
+            if ((position - 1L) * limit > Integer.MAX_VALUE) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "页码超出范围");
+            }
+            Page<ThreadFeedView> result = threadRepository.findFollowingFeed(userId, PageRequest.of(position - 1, limit));
+            return followingPage(userId, position, limit, result.getTotalElements(), result.getContent(),
+                    result.hasNext(), result.hasPrevious());
+        }
+
+        boolean forward = before == null;
+        FollowingFeedCursor cursor = FollowingFeedCursor.decode(forward ? after : before, userId);
+        PageRequest requested = PageRequest.of(0, limit + 1);
+        List<ThreadFeedView> matches = forward
+                ? threadRepository.findFollowingFeedOlder(userId, cursor.createdAt(), cursor.threadId(), requested)
+                : threadRepository.findFollowingFeedNewer(userId, cursor.createdAt(), cursor.threadId(), requested);
+        long total = threadRepository.countFollowingFeed(userId);
+        if (matches.isEmpty()) {
+            return new FollowingFeedPage(List.of(), position, limit, total, null, null);
+        }
+
+        boolean moreInDirection = matches.size() > limit;
+        List<ThreadFeedView> rows = matches.subList(0, Math.min(matches.size(), limit));
+        if (!forward) {
+            rows = rows.reversed();
+        }
+        PageRequest probe = PageRequest.of(0, 1);
+        ThreadFeedView first = rows.getFirst();
+        ThreadFeedView last = rows.getLast();
+        boolean hasNext = forward ? moreInDirection
+                : !threadRepository.findFollowingFeedOlder(userId, last.getCreatedAt(), last.getId(), probe).isEmpty();
+        boolean hasPrevious = position > 1 && (forward
+                ? !threadRepository.findFollowingFeedNewer(userId, first.getCreatedAt(), first.getId(), probe).isEmpty()
+                : moreInDirection);
+        return followingPage(userId, position, limit, total, rows, hasNext, hasPrevious);
+    }
+
+    private FollowingFeedPage followingPage(long userId, int position, int limit, long total,
+                                             List<ThreadFeedView> rows, boolean hasNext, boolean hasPrevious) {
+        if (rows.isEmpty()) {
+            return new FollowingFeedPage(List.of(), position, limit, total, null, null);
+        }
+        ThreadFeedView first = rows.getFirst();
+        ThreadFeedView last = rows.getLast();
+        String next = hasNext ? new FollowingFeedCursor(last.getCreatedAt(), last.getId()).encode(userId) : null;
+        String previous = hasPrevious ? new FollowingFeedCursor(first.getCreatedAt(), first.getId()).encode(userId) : null;
+        return new FollowingFeedPage(rows.stream().map(dtoMapper::toFeedDto).toList(), position, limit, total, next, previous);
     }
 
     @Transactional(readOnly = true)
