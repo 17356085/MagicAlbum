@@ -328,7 +328,8 @@ def _verify_following_feed_cursor(
 ) -> None:
     """Exercise cursor navigation from the real following-feed route."""
 
-    endpoint = "/api/v1/threads/following"
+    api_path = "/threads/following"
+    endpoint = f"/api/v1{api_path}"
     title_prefix = f"M0 cursor feed {uuid4().hex[:10]}"
     following = False
     feed_root = page.locator("main section.ui-page").filter(
@@ -478,7 +479,7 @@ def _verify_following_feed_cursor(
         invisible = _request(
             follower,
             "GET",
-            endpoint,
+            api_path,
             params={"pagination": "cursor", "page": 2, "size": 10, "after": next_cursor},
         )
         _assert_status(invisible, (200,), "following-feed readback after unfollow")
