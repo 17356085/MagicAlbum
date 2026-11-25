@@ -323,7 +323,8 @@ function Invoke-DemoHistory([string]$Password) {
                 'backup', $legacy, $dump) | Out-Null
         }
     }
-    $checksum = (Invoke-Docker @('exec', $containerName, 'sha256sum', $dump) -split '\s+')[0]
+    $checksumLine = Invoke-Docker @('exec', $containerName, 'sha256sum', $dump)
+    $checksum = ($checksumLine -split '\s+')[0]
     Check ($checksum -match '^[a-f0-9]{64}$') 'Synthetic historical backup has a verified digest'
     Check ($versions.seedLegacyBackup -eq $versions.verifyRollbackBackup) 'Rollback restored the historical Flyway version'
     Save-Json (Join-Path $ArtifactDirectory 'history-readback.json') ([ordered]@{
