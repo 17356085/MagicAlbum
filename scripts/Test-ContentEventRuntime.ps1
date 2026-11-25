@@ -7,7 +7,8 @@ param(
     [ValidateRange(128, 4096)]
     [int]$MySqlMemoryMiB = 512,
     [ValidateRange(512, 16384)]
-    [int]$MinimumFreeCommitMiB = 2048
+    [int]$MinimumFreeCommitMiB = 2048,
+    [switch]$DemoHistory
 )
 
 # Disposable MySQL 8 acceptance for the content-event M2.1 transaction boundary.
@@ -25,7 +26,8 @@ function New-RandomHex([int]$ByteCount) {
 if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-RandomHex 5 }
 if ($RunId -notmatch '^[0-9a-f]{10,32}$') { throw 'RunId must be 10-32 lowercase hexadecimal characters' }
 if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) {
-    $ArtifactDirectory = Join-Path $verificationOutputRoot "m2-mysql-20261019/$RunId"
+    $folder = if ($DemoHistory) { 'demo-history' } else { 'm2-mysql-20261019' }
+    $ArtifactDirectory = Join-Path $verificationOutputRoot "$folder/$RunId"
 }
 $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
 if (-not $ArtifactDirectory.StartsWith($verificationOutputRoot + [IO.Path]::DirectorySeparatorChar,
@@ -73,6 +75,10 @@ $environmentKeys = @(
     'CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME',
     'CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD',
     'CONTENT_EVENT_TEST_UPGRADE_EXPECTED_DATABASE',
+    'DEMO_HISTORY_JDBC_URL',
+    'DEMO_HISTORY_DB',
+    'DEMO_HISTORY_JDBC_USER',
+    'DEMO_HISTORY_JDBC_PASSWORD',
     'MAVEN_OPTS',
     'JAVA_TOOL_OPTIONS',
     'SPRING_CONFIG_IMPORT'
@@ -129,7 +135,7 @@ function Invoke-Sql([string]$Database, [string]$Query) {
     if ([string]::IsNullOrWhiteSpace($Database)) {
         $scriptText = $Query
     } else {
-        if ($Database -notmatch '^ba_content_(runtime|upgrade)_[0-9a-f]{10,32}$') {
+        if ($Database -notmatch '^ba_(content_(runtime|upgrade)|demo_history_(legacy|candidate|rollback))_[0-9a-f]{10,32}$') {
             throw 'SQL database guard rejected the database name'
         }
         $scriptText = "USE $Database;`n$Query"
@@ -254,6 +260,80 @@ function Assert-SurefireReports([string]$Name, [string]$ReportsDirectory,
     ))
 }
 
+function Confirm-DemoHistoryProvenance {
+    $legacy = 'a6fa06f46f680284834300271a824bfe13ae431a'
+    $migrationPath = 'backend/src/main/resources/db/migration/mysql'
+    $commit = (& git -C $verificationRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE) { throw 'Cannot identify the Demo candidate revision' }
+    $changes = @(& git -C $verificationRoot status --porcelain)
+    if ($LASTEXITCODE) { throw 'Cannot read the candidate worktree state' }
+    if ($env:GITHUB_SHA -and ($env:GITHUB_SHA -ne $commit -or $changes.Count)) {
+        throw 'Demo history needs the clean checkout of the configured CI revision'
+    }
+    $original = @(& git -C $verificationRoot ls-tree -r $legacy -- $migrationPath)
+    if ($LASTEXITCODE -or -not $original.Count) { throw 'Historical Demo revision is missing from the checkout' }
+    $present = @(& git -C $verificationRoot ls-tree -r HEAD -- $migrationPath)
+    if ($LASTEXITCODE -or @($original | Where-Object { $_ -notin $present }).Count) {
+        throw 'A historical migration changed or is absent from the candidate'
+    }
+    $migrationChanges = @(& git -C $verificationRoot status --porcelain -- $migrationPath)
+    if ($LASTEXITCODE -or $migrationChanges.Count) { throw 'Demo history requires committed Flyway migrations' }
+    Save-Json (Join-Path $ArtifactDirectory 'source-revision.json') ([ordered]@{
+        commit = $commit
+        cleanWorktree = ($changes.Count -eq 0)
+        historicalCommit = $legacy
+        historicalFlywayVersion = '20261124.3'
+        historicalMigrationFilesVerified = $original.Count
+    })
+}
+
+function Invoke-DemoHistory([string]$Password) {
+    $legacy = "ba_demo_history_legacy_$RunId"
+    $candidate = "ba_demo_history_candidate_$RunId"
+    $rollback = "ba_demo_history_rollback_$RunId"
+    foreach ($database in @($legacy, $candidate, $rollback)) {
+        Invoke-SqlScalar '' "CREATE DATABASE $database CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" | Out-Null
+    }
+    $class = 'com.example.demo.threads.event.DemoHistoryMySqlAcceptance'
+    $stages = [ordered]@{ seedLegacyBackup = $legacy; upgradeRestoredBackup = $candidate; verifyRollbackBackup = $rollback }
+    $dump = "/tmp/bluealbum-demo-history-$RunId.sql"
+    $versions = [ordered]@{}
+    foreach ($stage in $stages.GetEnumerator()) {
+        $database = $stage.Value
+        if ($database -ne $legacy) {
+            Invoke-Docker @('exec', $containerName, 'sh', '-ec',
+                'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h 127.0.0.1 -u root "$1" < "$2"',
+                'restore', $database, $dump) | Out-Null
+        }
+        Set-ProcessEnvironment @{
+            DEMO_HISTORY_JDBC_URL = "jdbc:mysql://127.0.0.1:$mysqlPort/$database`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+            DEMO_HISTORY_DB = $database
+            DEMO_HISTORY_JDBC_USER = 'root'
+            DEMO_HISTORY_JDBC_PASSWORD = $Password
+            MAVEN_OPTS = '-Xmx384m -XX:ActiveProcessorCount=2'
+            JAVA_TOOL_OPTIONS = '-Xmx384m -XX:ActiveProcessorCount=2'
+        }
+        $reports = Join-Path $ArtifactDirectory "$($stage.Key)/reports"
+        Invoke-MavenRound $stage.Key "$class#$($stage.Key)" $reports
+        Assert-SurefireReports $stage.Key $reports 1 @('DemoHistoryMySqlAcceptance')
+        $versions[$stage.Key] = Invoke-SqlScalar $database 'SELECT version FROM flyway_schema_history WHERE success=1 AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1;'
+        if ($database -eq $legacy) {
+            Invoke-Docker @('exec', $containerName, 'sh', '-ec',
+                'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump --protocol=TCP -h 127.0.0.1 -u root --single-transaction --no-tablespaces --set-gtid-purged=OFF "$1" > "$2"',
+                'backup', $legacy, $dump) | Out-Null
+        }
+    }
+    $checksum = (Invoke-Docker @('exec', $containerName, 'sha256sum', $dump) -split '\s+')[0]
+    Check ($checksum -match '^[a-f0-9]{64}$') 'Synthetic historical backup has a verified digest'
+    Check ($versions.seedLegacyBackup -eq $versions.verifyRollbackBackup) 'Rollback restored the historical Flyway version'
+    Save-Json (Join-Path $ArtifactDirectory 'history-readback.json') ([ordered]@{
+        status = 'passed'
+        backupSha256 = $checksum
+        versions = $versions
+        rollbackStrategy = 'restore_original_backup_into_separate_database'
+    })
+}
+
 function Assert-FinalReadback {
     foreach ($databaseName in @($runtimeDatabase, $upgradeDatabase)) {
         $version = Invoke-SqlScalar $databaseName 'SELECT version FROM flyway_schema_history WHERE success=1 ORDER BY installed_rank DESC LIMIT 1;'
@@ -311,6 +391,7 @@ function Assert-FinalReadback {
 }
 
 try {
+    if ($DemoHistory) { Confirm-DemoHistoryProvenance }
     $dockerVersionRaw = Invoke-Docker @('version', '--format', '{{json .Server}}')
     $dockerInfoRaw = Invoke-Docker @('info', '--format', '{{json .}}')
     $dockerVersion = $dockerVersionRaw | ConvertFrom-Json
@@ -396,37 +477,41 @@ try {
     }
     Check $databaseReady 'Temporary MySQL is ready'
     Check ((Invoke-SqlScalar '' 'SELECT VERSION();') -match '^8\.') 'Temporary database reports MySQL 8'
-    Invoke-SqlScalar '' "CREATE DATABASE $runtimeDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE $upgradeDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" | Out-Null
+    if ($DemoHistory) {
+        Invoke-DemoHistory $databasePassword
+    } else {
+        Invoke-SqlScalar '' "CREATE DATABASE $runtimeDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE $upgradeDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" | Out-Null
 
-    $runtimeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$runtimeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
-    $upgradeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$upgradeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
-    Set-ProcessEnvironment @{
-        CONTENT_EVENT_TEST_DATASOURCE_URL = $runtimeUrl
-        CONTENT_EVENT_TEST_DATASOURCE_DRIVER = 'com.mysql.cj.jdbc.Driver'
-        CONTENT_EVENT_TEST_DATASOURCE_USERNAME = 'root'
-        CONTENT_EVENT_TEST_DATASOURCE_PASSWORD = $databasePassword
-        CONTENT_EVENT_TEST_JPA_DDL_AUTO = 'validate'
-        CONTENT_EVENT_TEST_HIBERNATE_DIALECT = 'org.hibernate.dialect.MySQLDialect'
-        CONTENT_EVENT_TEST_FLYWAY_ENABLED = 'true'
-        CONTENT_EVENT_TEST_EXPECT_MYSQL = 'true'
-        CONTENT_EVENT_TEST_EXPECTED_DATABASE = $runtimeDatabase
-        CONTENT_EVENT_TEST_UPGRADE_JDBC_URL = $upgradeUrl
-        CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME = 'root'
-        CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD = $databasePassword
-        CONTENT_EVENT_TEST_UPGRADE_EXPECTED_DATABASE = $upgradeDatabase
-        MAVEN_OPTS = '-Xmx512m -XX:ActiveProcessorCount=2'
-        JAVA_TOOL_OPTIONS = '-Xmx512m -XX:ActiveProcessorCount=2'
-        SPRING_CONFIG_IMPORT = ''
+        $runtimeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$runtimeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
+        $upgradeUrl = "jdbc:mysql://127.0.0.1:$mysqlPort/$upgradeDatabase`?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=utf8"
+        Set-ProcessEnvironment @{
+            CONTENT_EVENT_TEST_DATASOURCE_URL = $runtimeUrl
+            CONTENT_EVENT_TEST_DATASOURCE_DRIVER = 'com.mysql.cj.jdbc.Driver'
+            CONTENT_EVENT_TEST_DATASOURCE_USERNAME = 'root'
+            CONTENT_EVENT_TEST_DATASOURCE_PASSWORD = $databasePassword
+            CONTENT_EVENT_TEST_JPA_DDL_AUTO = 'validate'
+            CONTENT_EVENT_TEST_HIBERNATE_DIALECT = 'org.hibernate.dialect.MySQLDialect'
+            CONTENT_EVENT_TEST_FLYWAY_ENABLED = 'true'
+            CONTENT_EVENT_TEST_EXPECT_MYSQL = 'true'
+            CONTENT_EVENT_TEST_EXPECTED_DATABASE = $runtimeDatabase
+            CONTENT_EVENT_TEST_UPGRADE_JDBC_URL = $upgradeUrl
+            CONTENT_EVENT_TEST_UPGRADE_JDBC_USERNAME = 'root'
+            CONTENT_EVENT_TEST_UPGRADE_JDBC_PASSWORD = $databasePassword
+            CONTENT_EVENT_TEST_UPGRADE_EXPECTED_DATABASE = $upgradeDatabase
+            MAVEN_OPTS = '-Xmx512m -XX:ActiveProcessorCount=2'
+            JAVA_TOOL_OPTIONS = '-Xmx512m -XX:ActiveProcessorCount=2'
+            SPRING_CONFIG_IMPORT = ''
+        }
+
+        $roundOneReports = Join-Path $ArtifactDirectory 'round-1/reports'
+        Invoke-MavenRound 'round-1' 'com.example.demo.threads.event.ContentEventMySqlUpgradeAcceptance,com.example.demo.threads.event.ThreadContentEventIntegrationTest' $roundOneReports
+        Assert-SurefireReports 'round-1' $roundOneReports 7 @('ContentEventMySqlUpgradeAcceptance', 'ThreadContentEventIntegrationTest')
+
+        $roundTwoReports = Join-Path $ArtifactDirectory 'round-2/reports'
+        Invoke-MavenRound 'round-2' 'com.example.demo.threads.event.ThreadContentEventIntegrationTest#all_content_commands_commit_versions_events_and_real_tags_together' $roundTwoReports
+        Assert-SurefireReports 'round-2' $roundTwoReports 1 @('ThreadContentEventIntegrationTest')
+        Assert-FinalReadback
     }
-
-    $roundOneReports = Join-Path $ArtifactDirectory 'round-1/reports'
-    Invoke-MavenRound 'round-1' 'com.example.demo.threads.event.ContentEventMySqlUpgradeAcceptance,com.example.demo.threads.event.ThreadContentEventIntegrationTest' $roundOneReports
-    Assert-SurefireReports 'round-1' $roundOneReports 7 @('ContentEventMySqlUpgradeAcceptance', 'ThreadContentEventIntegrationTest')
-
-    $roundTwoReports = Join-Path $ArtifactDirectory 'round-2/reports'
-    Invoke-MavenRound 'round-2' 'com.example.demo.threads.event.ThreadContentEventIntegrationTest#all_content_commands_commit_versions_events_and_real_tags_together' $roundTwoReports
-    Assert-SurefireReports 'round-2' $roundTwoReports 1 @('ThreadContentEventIntegrationTest')
-    Assert-FinalReadback
     $runtimeSucceeded = $true
 } catch {
     $failureMessage = $_.Exception.Message

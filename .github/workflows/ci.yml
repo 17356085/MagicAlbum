@@ -800,6 +800,106 @@ jobs:
             outputs/m4b-runtime-ci/**/logs/*.log
             outputs/m4b-runtime-ci/**/screenshots/*.png
 
+  demo-rehearsal:
+    name: Isolated Demo rehearsal
+    runs-on: ubuntu-latest
+    needs: [repository, frontend, backend, python-tests]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+      - name: Install browser acceptance dependencies
+        run: |
+          python -m pip install -r tests/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Rehearse a clean Demo with synthetic actors
+        env:
+          BLUEALBUM_DEMO_MODE: rehearsal
+        run: |
+          M0_CI_ARTIFACT_DIR="$PWD/outputs/demo-release-ci/default" bash scripts/ci/compose-browser-smoke.sh
+          BLUEALBUM_SPLIT_CHAT_CHECK=1 M0_CI_ARTIFACT_DIR="$PWD/outputs/demo-release-ci/split" bash scripts/ci/compose-browser-smoke.sh
+      - name: Require exact-revision evidence and verify cleanup
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          names = {"trusted-admin-readback", "writable-section-readback", "ordinary-user-a-readback",
+                   "ordinary-user-b-readback", "sample-threads-readback", "comment-readback", "follower-feed-readback"}
+          for topology in ("default", "split"):
+              root = Path("outputs/demo-release-ci") / topology
+              revision = json.loads((root / "source-revision.json").read_text())
+              cleanup = json.loads((root / "demo-cleanup.json").read_text())
+              if (revision["commit"] != os.environ["GITHUB_SHA"] or not revision["cleanWorktree"]
+                      or revision["demoMode"] != "rehearsal"
+                      or revision["configuration"]["splitChat"] != (topology == "split")):
+                  raise SystemExit(f"{topology} Demo evidence has the wrong source revision or mode")
+              if cleanup != {"scenarioExit": 0, "cleanupExit": 0}:
+                  raise SystemExit(f"{topology} Demo run or cleanup failed")
+              for name in ("demo-accounts.json", "full-regression.env", "ci-runtime.env"):
+                  if (root / name).exists():
+                      raise SystemExit("A private Demo credential file remains")
+              readback = json.loads((root / "demo-readback.json").read_text())
+              cases = {item["name"]: item["result"] for item in readback["cases"]}
+              ids = readback["ids"]
+              counts = readback["counts"]
+              if (not (root / "ui-junit.xml").is_file() or set(cases) != names or set(cases.values()) != {"passed"}
+                      or len({ids["adminUserId"], ids["userAId"], ids["userBId"]}) != 3
+                      or counts["ordinaryAccounts"] != 2 or counts["threads"] != 2
+                      or counts["comments"] != 1 or counts["followerFeedMatches"] != 2):
+                  raise SystemExit(f"{topology} Demo role or workflow readback is incomplete")
+          PY
+      - name: Upload redacted Demo evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            outputs/demo-release-ci/*/source-revision.json
+            outputs/demo-release-ci/*/demo-readback.json
+            outputs/demo-release-ci/*/demo-cleanup.json
+            outputs/demo-release-ci/*/ui-junit.xml
+            outputs/demo-release-ci/*/chat-owner-checks.txt
+            outputs/demo-release-ci/*/logs/compose-down.log
+
+  demo-history:
+    name: Demo historical MySQL backup and upgrade
+    runs-on: ubuntu-latest
+    needs: [repository, backend]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+      - name: Replay the historical backup on isolated MySQL 8
+        shell: pwsh
+        run: ./scripts/Test-ContentEventRuntime.ps1 -DemoHistory -MavenExecutable mvn -ArtifactDirectory "$PWD/outputs/demo-history-ci"
+      - name: Upload historical migration evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-history-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            outputs/demo-history-ci/source-revision.json
+            outputs/demo-history-ci/history-readback.json
+            outputs/demo-history-ci/checks.json
+            outputs/demo-history-ci/**/matched-reports/*.xml
+            outputs/demo-history-ci/**/summary.txt
+            outputs/demo-history-ci/**/maven.log
+
   restore-runtime:
     name: Independent database, permissions and summary restore
     runs-on: ubuntu-latest
@@ -836,6 +936,23 @@ jobs:
           ./scripts/Test-ComposeRuntime.ps1 -PythonExecutable $pythonExecutable -BrowserChannel '' -IncludeStageFixtures -ArtifactDirectory (Join-Path $PWD 'outputs/restore-ci')
       - name: Require database, upload, stage readback and cleanup evidence
         run: python scripts/ci/check-restore-evidence.py outputs/restore-ci
+      - name: Bind the restore evidence to the checkout
+        if: ${{ always() }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          clean = not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+          if commit != os.environ["GITHUB_SHA"] or not clean:
+              raise SystemExit("Restore evidence needs the clean checkout of its CI revision")
+          root = Path("outputs/restore-ci")
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "source-revision.json").write_text(
+              json.dumps({"commit": commit, "cleanWorktree": clean}, indent=2) + "\n", encoding="utf-8")
+          PY
       - name: Upload sanitized restore evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -845,6 +962,7 @@ jobs:
           retention-days: 7
           path: |
             outputs/restore-ci/checks.json
+            outputs/restore-ci/source-revision.json
             outputs/restore-ci/*-junit.xml
             outputs/restore-ci/browser-results.xml
             outputs/restore-ci/stage-*.json

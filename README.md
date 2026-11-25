@@ -10,7 +10,7 @@ BlueAlbum 是一个 Vue 3 + Spring Boot 的论坛项目，可在本机体验注�
 
 - Windows、PowerShell 7、Git、运行中的 Docker Desktop。
 - JDK 21 或更新版本（需要 `javac`）、Maven、Node.js 22.13 或更新版本（建议 24）、pnpm 11.5.0。版本要求见 [`frontend/package.json`](./frontend/package.json)；运行前可用 `java -version`、`mvn -version`、`node --version`、`pnpm --version` 检查。
-- 空闲的本机端口：`5173`（前端）、`9000`（网关）、`8080`（后端）、`8081`（通知服务）、`13306`（MySQL）、`16379`（Redis）、`15673`/`25673`（RabbitMQ）。启动脚本遇到应用端口冲突会停止，不会终止别人的进程。
+- 空闲的本机端口：`5173`（前端）、`9000`（网关）、`8080`（后端）、`8081`（通知服务）、可选的 `8092`（Go 实时聊天）、`13306`（MySQL）、`16379`（Redis）、`15673`/`25673`（RabbitMQ）。核心应用端口冲突时脚本会退出。`8092` 已被占用时脚本会提示，聊天可回退到 HTTP 轮询。
 
 在 PowerShell 中运行：
 
@@ -28,7 +28,7 @@ cd ..
 
 启动成功后打开 <http://127.0.0.1:5173>。`Test-Local.ps1` 会执行本地接口冒烟检查，**会创建测试账号、帖子和评论**；它不是只读检查。前端通过网关 `http://127.0.0.1:9000` 访问 API，数据库、Redis、RabbitMQ 由独立的本地 Compose 配置提供。
 
-`Start-Local.ps1` 会先等待 MySQL、Redis、RabbitMQ 等本地依赖健康，再在默认构建完成后按以下顺序启动应用：`notification-service`（8081）→ `backend`（8080）→ `gateway`（9000）→ Vite 前端（5173）。三个 Java 服务要先通过各自的 `/actuator/health`，前端要先能访问 `/`，脚本才会继续；这样核心后端启动时通知服务的 V3 幂等迁移和 HTTP 端点已经就绪。`-NoBuild` 只跳过 Maven 构建，仍会执行这套启动顺序和健康检查。
+`Start-Local.ps1` 会先等待 MySQL、Redis 和 RabbitMQ 就绪，再构建并依次启动通知服务（8081）、Core（8080）、网关（9000）、可选的 Go 实时聊天（8092）和 Vite 前端（5173）。三个 Java 服务通过各自的 `/actuator/health` 后才继续，前端需能访问 `/`。Go 环境、构建、端口或健康检查异常时，脚本会提示并继续，聊天可回退到 HTTP 轮询。`-NoBuild` 使用已有的 Maven 和 Go 构建产物，并执行同样的启动顺序和健康检查。
 
 运行目录中的 `runtime.env` 首次不存在时由脚本生成随机凭证；已有文件只读取，不会重写其中的密钥。为兼容旧文件，脚本只在进程内补齐缺失的 `RABBITMQ_MANAGEMENT_PORT=25673` 和 `VITE_AUTH_VERIFY_MODE=off`，不会把默认值写回文件。启动前会检查必需键、数据库／用户标识符格式、回环地址、通知服务 URL、端口范围与重复端口，以及凭证的基本格式；失败时不会停止已有进程。脚本会在结束或失败清理时恢复调用进程原有的相关环境变量。
 
@@ -93,6 +93,8 @@ docker compose --env-file .env up -d --build
 
 ## 已有能力与边界
 
+现场演示与自动彩排见[隔离 Demo 演练](docs/engineering/demo-rehearsal.md)。
+
 | 能力 | 当前本地状态 |
 | --- | --- |
 | 账号、资料、发帖、评论、分区与搜索 | 草稿与最近浏览按账号保存在当前浏览器；可选 Elasticsearch 提供全文索引、重建和故障降级。 |
@@ -107,9 +109,13 @@ docker compose --env-file .env up -d --build
 
 ```text
 backend/               论坛核心 API（8080）
+platform-web/          Java 共享 Web 组件
+chat-domain/           Java 聊天领域模块
+chat-service/          可选独立聊天 Java 服务（Compose 分库模式）
 gateway/               前端 API 网关（9000）
 notification-service/  站内通知服务（8081）
 frontend/              Vue 前端（5173）
+services/chat-realtime/ Go WebSocket 实时聊天服务（可选，8092）
 services/media-service/ Go 异步媒体 worker
 config/                Java 静态检查与共享工程规则
 scripts/               本地运行、数据库辅助命令与仓库检查
@@ -155,7 +161,7 @@ docker compose --env-file .env up -d --wait --build
 
 ### 独立聊天进程演练
 
-使用干净的 Compose 项目可演练独立聊天进程。按 `.env.example` 为聊天库设置独立的运行账号、Flyway 账号和管理员密码，并分别生成 `CHAT_INTERNAL_SERVICE_TOKEN` 与 `CHAT_GOVERNANCE_INTERNAL_TOKEN`。聊天服务复用后端镜像，通过私有网络访问核心的认证、公开资料和联系判定接口，使用自己的 MySQL 数据库。前端仍访问原有 API，好友、拉黑和 WebSocket 路径沿用现有入口。
+使用干净的 Compose 项目可演练独立聊天进程。按 `.env.example` 为聊天库设置独立的运行账号、Flyway 账号和管理员密码，并分别生成 `CHAT_INTERNAL_SERVICE_TOKEN` 与 `CHAT_GOVERNANCE_INTERNAL_TOKEN`。聊天服务由 `chat-service/Dockerfile` 构建，使用专用 MySQL，通过私有网络访问 Core 的认证、公开资料和联系判定接口。Core 使用 `backend/Dockerfile` 构建。前端继续通过原来的 API 访问好友、拉黑和 WebSocket。
 
 ```powershell
 docker compose --env-file .env -p bluealbum-chat-drill -f docker-compose.yml -f docker-compose.chat.yml up -d --build --wait

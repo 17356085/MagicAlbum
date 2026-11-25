@@ -18,6 +18,7 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 FULL_MODE="${BLUEALBUM_FULL_PYTHON_REGRESSION:-0}"
+DEMO_MODE="${BLUEALBUM_DEMO_MODE:-off}"
 SPLIT_CHAT="${BLUEALBUM_SPLIT_CHAT_CHECK:-0}"
 CUTOVER_MODE="${BLUEALBUM_CHAT_CUTOVER_CHECK:-0}"
 CHAT_REALTIME_CHECK="${BLUEALBUM_CHAT_REALTIME_CHECK:-0}"
@@ -76,6 +77,27 @@ if [[ "$CHAT_POLL_LOAD" == "1" ]]; then CUTOVER_MODE=1; fi
   printf 'ERROR: BLUEALBUM_CHAT_AUTH_TIMING_CHECK must be 0 or 1\n' >&2
   exit 1
 }
+case "$DEMO_MODE" in
+  off|rehearsal) ;;
+  interactive)
+    [[ -t 0 && -z "${GITHUB_ACTIONS:-}" ]] || {
+      printf 'ERROR: interactive Demo requires a local terminal\n' >&2
+      exit 1
+    }
+    ;;
+  *)
+    printf 'ERROR: BLUEALBUM_DEMO_MODE must be off, rehearsal, or interactive\n' >&2
+    exit 1
+    ;;
+esac
+if [[ "$DEMO_MODE" != off && (
+  "$FULL_MODE" == 1 || "$CUTOVER_MODE" == 1 || "$CHAT_REALTIME_CHECK" == 1 ||
+  "$CHAT_BACKUP_CHECK" == 1 || "$CHAT_AUTH_TIMING_CHECK" == 1 || "$CHAT_GRPC_CHECK" == 1 ||
+  "$TELEMETRY_CHECK" == 1 || "$COMMENT_EVENTS_CHECK" == 1
+) ]]; then
+  printf 'ERROR: run Demo only with its default or split-chat topology\n' >&2
+  exit 1
+fi
 if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
   if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
     printf 'ERROR: run the chat authorization timing check in its own project\n' >&2
@@ -100,6 +122,8 @@ elif [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
 elif [[ "$CUTOVER_MODE" == "1" ]]; then
   SPLIT_CHAT=1
   ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-cutover-ci}"
+elif [[ "$DEMO_MODE" != off ]]; then
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/demo-release-$(date -u +%Y%m%d%H%M%S)-$$}"
 elif [[ "$SPLIT_CHAT" == "1" ]]; then
   ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/split-chat-ci}"
 elif [[ "$FULL_MODE" == "1" ]]; then
@@ -129,6 +153,8 @@ FULL_CREDENTIALS_FILE="$ARTIFACT_DIR/full-regression.env"
 FULL_EVIDENCE_FILE="$ARTIFACT_DIR/full-regression-bootstrap.json"
 FULL_COLLECT_FILE="$ARTIFACT_DIR/full-collect.txt"
 FULL_JUNIT_FILE="$ARTIFACT_DIR/full-python-junit.xml"
+DEMO_ACCOUNTS_FILE="$ARTIFACT_DIR/demo-accounts.json"
+DEMO_EVIDENCE_FILE="$ARTIFACT_DIR/demo-readback.json"
 CHAT_CUTOVER_STATE="$ARTIFACT_DIR/chat-cutover-state.json"
 CHAT_CUTOVER_OVERRIDE="$ARTIFACT_DIR/chat-cutover.override.yml"
 CHAT_CUTOVER_EVIDENCE="$ARTIFACT_DIR/chat-cutover-checks.txt"
@@ -137,6 +163,7 @@ PROJECT=""
 COMPOSE_TOUCHED=0
 CREDENTIALS_CREATED=0
 FULL_CREDENTIALS_CREATED=0
+DEMO_ACCOUNTS_OWNED=0
 CUTOVER_STATE_OWNED=0
 
 die() {
@@ -153,6 +180,9 @@ else
 fi
 if [[ "$FULL_MODE" == "1" ]]; then
   PROJECT="${PROJECT}-full"
+fi
+if [[ "$DEMO_MODE" != off ]]; then
+  PROJECT="${PROJECT}-demo"
 fi
 if [[ "$SPLIT_CHAT" == "1" ]]; then
   PROJECT="${PROJECT}-split-chat"
@@ -403,6 +433,9 @@ cleanup() {
   if (( FULL_CREDENTIALS_CREATED == 1 )) && [[ -f "$FULL_CREDENTIALS_FILE" ]]; then
     rm -f -- "$FULL_CREDENTIALS_FILE" || cleanup_status=1
   fi
+  if (( DEMO_ACCOUNTS_OWNED == 1 )) && [[ -f "$DEMO_ACCOUNTS_FILE" ]]; then
+    rm -f -- "$DEMO_ACCOUNTS_FILE" || cleanup_status=1
+  fi
   if [[ -n "$GRPC_FIXTURE_DIR" ]]; then
     rm -f -- "$GRPC_FIXTURE_DIR/tls.crt" "$GRPC_FIXTURE_DIR/tls.key" || cleanup_status=1
     rmdir -- "$GRPC_FIXTURE_DIR" || cleanup_status=1
@@ -411,6 +444,10 @@ cleanup() {
     rm -f -- "$CHAT_CUTOVER_STATE" "${CHAT_CUTOVER_STATE%.json}.tmp" || cleanup_status=1
   fi
 
+  if [[ "$DEMO_MODE" != off ]]; then
+    printf '{"scenarioExit":%d,"cleanupExit":%d}\n' "$original_status" "$cleanup_status" \
+      >"$ARTIFACT_DIR/demo-cleanup.json" || cleanup_status=1
+  fi
   if (( cleanup_status != 0 )); then
     printf 'ERROR: Compose cleanup failed for %s; inspect %s\n' "$PROJECT" "$LOG_DIR" >&2
     original_status=1
@@ -443,6 +480,7 @@ keys = ("fullRegression", "splitChat", "cutover", "dualRealtime", "backup",
         "authorizationTiming", "grpc", "telemetry", "commentEvents", "homeBff", "rpcLoad")
 Path(output).write_text(json.dumps({
     "commit": revision, "cleanWorktree": clean, "project": project,
+    "demoMode": os.environ.get("BLUEALBUM_DEMO_MODE", "off"),
     "configuration": {key: value in ("1", "true") for key, value in zip(keys, settings, strict=True)},
 }, indent=2) + "\n", encoding="utf-8")
 PY
@@ -465,6 +503,16 @@ backend_port="${COMPOSE_BACKEND_PORT:-8080}"
 notification_port="${COMPOSE_NOTIFICATION_PORT:-8081}"
 gateway_port="${COMPOSE_GATEWAY_PORT:-9000}"
 frontend_port="${COMPOSE_FRONTEND_PORT:-5173}"
+if [[ "$DEMO_MODE" != off ]]; then
+  mysql_port="${COMPOSE_MYSQL_PORT:-13306}"
+  redis_port="${COMPOSE_REDIS_PORT:-16379}"
+  rabbitmq_port="${COMPOSE_RABBITMQ_PORT:-15673}"
+  rabbitmq_management_port="${COMPOSE_RABBITMQ_MANAGEMENT_PORT:-15674}"
+  backend_port="${COMPOSE_BACKEND_PORT:-18080}"
+  notification_port="${COMPOSE_NOTIFICATION_PORT:-18081}"
+  gateway_port="${COMPOSE_GATEWAY_PORT:-19000}"
+  frontend_port="${COMPOSE_FRONTEND_PORT:-15173}"
+fi
 
 port_names=(mysql redis rabbitmq rabbitmq-management backend notification gateway frontend)
 port_values=(
@@ -577,7 +625,7 @@ services:
     environment:
       JAVA_OPTS: "-Xmx384m -XX:ActiveProcessorCount=2"
 EOF
-if [[ "$FULL_MODE" == "1" ]]; then
+if [[ "$FULL_MODE" == "1" || "$DEMO_MODE" != off ]]; then
   cat >>"$OVERRIDE_FILE" <<'EOF'
       AI_PROVIDER: "mock"
       AI_API_KEY: ""
@@ -749,7 +797,7 @@ PY
   die 'gateway did not expose the sections API after backend recreation'
 }
 
-if [[ "$FULL_MODE" == "1" ]]; then
+if [[ "$FULL_MODE" == "1" || "$DEMO_MODE" != off ]]; then
   [[ ! -e "$FULL_CREDENTIALS_FILE" ]] || die "temporary full-regression credentials file already exists: $FULL_CREDENTIALS_FILE"
   FULL_CREDENTIALS_CREATED=1
   "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
@@ -770,7 +818,31 @@ if [[ "$FULL_MODE" == "1" ]]; then
   # connection.  Probe only a read-only public API through the gateway before
   # performing the one login and the seed writes below.
   wait_for_gateway_api
+fi
 
+if [[ "$DEMO_MODE" != off ]]; then
+  [[ ! -e "$DEMO_ACCOUNTS_FILE" && ! -e "$DEMO_EVIDENCE_FILE" ]] || die 'Demo output already exists'
+  DEMO_ACCOUNTS_OWNED=1
+  "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
+    --base-url "$TEST_API_BASE_URL" \
+    --credentials-file "$FULL_CREDENTIALS_FILE" \
+    --prepare-demo \
+    --demo-accounts-file "$DEMO_ACCOUNTS_FILE" \
+    --evidence-file "$DEMO_EVIDENCE_FILE"
+  if [[ "$DEMO_MODE" == interactive ]]; then
+    printf 'Demo URL %s\nPrivate login file %s\n' "$TEST_BASE_URL" "$DEMO_ACCOUNTS_FILE"
+    printf 'Press Enter to stop this isolated Demo and remove its synthetic data.\n'
+    read -r _
+  else
+    "$PYTHON_BIN" -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py \
+      -q --junitxml "$UI_JUNIT_FILE"
+    validate_junit "$UI_JUNIT_FILE" 1 '' 31
+    verify_split_chat_owner
+  fi
+  exit 0
+fi
+
+if [[ "$FULL_MODE" == "1" ]]; then
   "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
     --base-url "$TEST_API_BASE_URL" \
     --credentials-file "$FULL_CREDENTIALS_FILE" \
