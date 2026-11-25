@@ -1,6 +1,18 @@
 # 独立服务
 
-当前此目录包含 [Go 媒体 worker](media-service/README.md)。Java 核心、Gateway 和通知服务仍是根 Maven 聚合模块，分别位于 `backend/`、`gateway/`、`notification-service/`。
+此目录包含 Go 实时接入与媒体处理组件。核心、网关、通知和可独立部署的聊天应用由根 Maven 工程构建。
+
+## 聊天实时接入
+
+[`chat-realtime/`](chat-realtime/) 管理 WebSocket 连接，核验会话，并消费 RabbitMQ 上的聊天变更信号。Java 聊天应用负责业务规则和消息持久化，客户端收到信号后通过 API 补拉。分库启动与恢复演练见 [独立聊天部署](../docs/engineering/local-development.md#独立聊天部署)，鉴权与协议见 [服务构建和通信契约](../docs/architecture/12-M7-service-build-and-contracts.md)。
+
+从仓库根目录进入服务目录，执行 Go 检查。
+
+```sh
+cd services/chat-realtime
+go vet ./...
+go test -race -count=1 ./...
+```
 
 ## 媒体 worker
 

@@ -18,6 +18,7 @@
 - [版本化摘要任务契约](m4b-summary-task-contract.md)：主动生成、取消、权限和预算账本。
 - [好友、私信与群聊设计方案](messaging-design.md) · 待评审
 - [开发与技术演进路线图](development-roadmap.md)：已确认阶段和可选范围。
+- [Feed 与服务提取评估](../architecture/14-M9-M10-capacity-and-extraction.md)记录关注流实测、分页方案和服务提取条件。
 
 ## 运行与恢复
 
@@ -46,5 +47,6 @@
 - [2026-10-18 代码健康度](project-health-2026-10-18.md)、[复审与 M1 推进](review-and-m1-2026-10-18.md)。
 - [身份与内容生命周期复审](final-auth-content-review-2026-10-20.md)。
 - [整体复审与当前版本恢复](final-review-and-restore-2026-10-20.md)。
+- [2026-10-21 职责与替换边界讨论](responsibility-and-replacement-boundaries-2026-10-21.md)记录当时的模块与技术替换分析。
 
 新增工程手册时放在本目录，并在相应分组添加链接。已有文档被代码、脚本或其他记录引用时，先核对调用方再迁移；不要为了分组移动全部历史文件。`docs/` 的其他本机资料、私有配置及 `outputs/` 证据不随克隆交付。
