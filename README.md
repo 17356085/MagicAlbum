@@ -1,18 +1,23 @@
 # 同频 · BlueAlbum
 
-BlueAlbum 是一个 Vue 3 + Spring Boot 的论坛项目，可在本机体验注册登录、分区浏览、发帖与评论、关注动态、收藏、站内通知，以及基础的举报审核。当前交付目标是**本地开发与试运行**；仓库中的本地认证、Mock AI 和端口配置不能直接作为公网部署方案。
+同频是一套中文兴趣社区系统，围绕分区讨论、关注动态和即时聊天展开。读者可以在电脑和手机上参与讨论，管理员通过举报审核和审计维护社区。
 
-> 本文面向刚克隆仓库的使用者。先按下面的 Windows 本地流程启动；设计讨论和历史记录不应替代本页的运行步骤。
+仓库支持本地开发和隔离 Demo。已验收的演示版本为 [v0.1.0-demo.1](https://github.com/17356085/MagicAlbum/tree/v0.1.0-demo.1)，复演步骤见 [Demo 演练手册](docs/engineering/demo-rehearsal.md)。
 
-## 从 `git clone` 到打开论坛
+## 能体验什么
 
-### 准备环境
+| 场景 | 功能 |
+| --- | --- |
+| 浏览与讨论 | 分区和标签筛选、搜索、排行、发帖、评论、点赞、收藏、草稿与浏览记录 |
+| 社交与消息 | 关注动态、好友申请、私聊、群聊、站内通知 |
+| 社区治理 | 举报审核、内容隐藏与恢复、版主权限和审计 |
+| 媒体与摘要 | 图片上传、可选异步预览、帖子摘要。Demo 使用 Mock AI |
 
-- Windows、PowerShell 7、Git、运行中的 Docker Desktop。
-- JDK 21 或更新版本（需要 `javac`）、Maven、Node.js 22.13 或更新版本（建议 24）、pnpm 11.5.0。版本要求见 [`frontend/package.json`](./frontend/package.json)；运行前可用 `java -version`、`mvn -version`、`node --version`、`pnpm --version` 检查。
-- 空闲的本机端口：`5173`（前端）、`9000`（网关）、`8080`（后端）、`8081`（通知服务）、可选的 `8092`（Go 实时聊天）、`13306`（MySQL）、`16379`（Redis）、`15673`/`25673`（RabbitMQ）。核心应用端口冲突时脚本会退出。`8092` 已被占用时脚本会提示，聊天可回退到 HTTP 轮询。
+## 快速开始
 
-在 PowerShell 中运行：
+### Windows 本地开发
+
+准备 PowerShell 7、Git、Docker Desktop、JDK 21、Maven、Node.js 和 pnpm。前端依赖版本见 [package.json](frontend/package.json)。
 
 ```powershell
 git clone https://github.com/17356085/MagicAlbum.git
@@ -21,180 +26,37 @@ cd frontend
 pnpm install --frozen-lockfile
 cd ..
 ./scripts/Start-Local.ps1
-./scripts/Test-Local.ps1
 ```
 
-如果 `JAVA_HOME` 未指向可用的 JDK，可在启动时传入你自己的路径，例如 `./scripts/Start-Local.ps1 -JavaHome 'C:\path\to\jdk-21'`。不要照搬其他电脑的 JDK 绝对路径。首次启动会构建 Java 模块并运行测试，时间取决于依赖下载和机器性能。
+启动后打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)。要运行接口冒烟，可以单独执行 `./scripts/Test-Local.ps1`，它会创建测试账号、帖子和评论。用 `./scripts/Stop-Local.ps1` 停止本机栈。
 
-启动成功后打开 <http://127.0.0.1:5173>。`Test-Local.ps1` 会执行本地接口冒烟检查，**会创建测试账号、帖子和评论**；它不是只读检查。前端通过网关 `http://127.0.0.1:9000` 访问 API，数据库、Redis、RabbitMQ 由独立的本地 Compose 配置提供。
+端口、日志、故障排查和现有数据库注意事项见 [本地开发手册](docs/engineering/local-development.md#powershell-本地开发)。
 
-`Start-Local.ps1` 会先等待 MySQL、Redis 和 RabbitMQ 就绪，再构建并依次启动通知服务（8081）、Core（8080）、网关（9000）、可选的 Go 实时聊天（8092）和 Vite 前端（5173）。三个 Java 服务通过各自的 `/actuator/health` 后才继续，前端需能访问 `/`。Go 环境、构建、端口或健康检查异常时，脚本会提示并继续，聊天可回退到 HTTP 轮询。`-NoBuild` 使用已有的 Maven 和 Go 构建产物，并执行同样的启动顺序和健康检查。
+### Compose 与隔离 Demo
 
-运行目录中的 `runtime.env` 首次不存在时由脚本生成随机凭证；已有文件只读取，不会重写其中的密钥。为兼容旧文件，脚本只在进程内补齐缺失的 `RABBITMQ_MANAGEMENT_PORT=25673` 和 `VITE_AUTH_VERIFY_MODE=off`，不会把默认值写回文件。启动前会检查必需键、数据库／用户标识符格式、回环地址、通知服务 URL、端口范围与重复端口，以及凭证的基本格式；失败时不会停止已有进程。脚本会在结束或失败清理时恢复调用进程原有的相关环境变量。
+[完整 Compose](docs/engineering/local-development.md#完整-compose) 会在容器内构建和启动应用。两种开发启动方式共用默认端口，每次选一种运行。开发配置绑定本机地址。
 
-应用进程的 PID 和启动时间会写入 `test-artifacts/local-runtime/processes.json`；停机时还会核对进程命令行是否包含本仓库工作区路径。`Stop-Local.ps1` 只有在这三项归属检查都匹配时才会停止进程；快照无效、PID 已被其他进程复用或命令行不属于本仓库时，会保留该进程并报告错误。停机仍保留数据库卷、本地上传文件和 `runtime.env`，不要手动删除正在使用的运行状态。
+[隔离 Demo](docs/engineering/demo-rehearsal.md) 有默认部署和独立聊天两种模式，使用单独的项目、数据卷和合成账号。手册包含交互演示、自动彩排及旧版 MySQL 备份演练。
 
-```powershell
-./scripts/Stop-Local.ps1
-# 代码未变且已构建过时，可在下次启动时跳过 Java 构建
-./scripts/Start-Local.ps1 -NoBuild
-```
+## 项目结构
 
-停止脚本保留本地数据库卷、上传文件和随机生成的凭证。`./scripts/Stop-Local.ps1 -KeepDependencies` 仅停止应用，保留依赖容器。运行时文件位于被 Git 忽略的 `test-artifacts/local-runtime/`；其中 `runtime.env` 和 `test-account.json` 含敏感信息，不要提交或分享。
-
-### 常见启动问题
-
-| 现象 | 检查方式 |
+| 目录 | 职责 |
 | --- | --- |
-| 找不到 JDK / `javac` | 配置 `JAVA_HOME`，或使用 `-JavaHome` 指向实际 JDK 目录。 |
-| 找不到前端依赖 | 在 `frontend/` 执行 `pnpm install --frozen-lockfile`，不要混用 npm 锁文件。 |
-| Docker 未运行或端口被占用 | 启动 Docker Desktop；检查上表端口，保留其他应用并自行解决冲突。 |
-| 服务健康检查失败 | 查看 `test-artifacts/local-runtime/` 中对应服务的 `.log` 和 `.err.log`，以及 `build.log`。 |
+| [frontend](frontend/README.md) | Vue 3 社区界面 |
+| [gateway](gateway/) · [backend](backend/) | API 网关、首页聚合、账号、内容、社交和治理 |
+| [chat-domain](chat-domain/) · [chat-service](chat-service/) | 聊天业务及可独立运行的 Java 聊天服务 |
+| [notification-service](notification-service/) | 站内通知、持久化和 SSE |
+| [platform-web](platform-web/) | Java 共享 Web 组件 |
+| [services](services/README.md) | Go WebSocket 实时接入和异步媒体 worker |
+| [scripts](scripts/README.md) · [tests](tests/README.md) · [perf](perf/README.md) | 运行脚本、API 与浏览器验收、性能实验 |
 
-如果启动失败，先查看 `test-artifacts/local-runtime/` 中相应服务日志，再核对端口、Docker Desktop 和私有环境变量。此目录只留在本机，不应提交。
+基础运行依赖 MySQL、Redis 和 RabbitMQ。默认部署由 Java Core 承担聊天业务。分库模式使用独立聊天服务和 MySQL，Go 实时接入负责在线信号。Kafka 内容事件与通知库 PostgreSQL 的验证范围见 [数据与事件试点](docs/architecture/13-M8-data-and-event-pilots.md)。
 
-### 独立通知投递验证
+## 开发与验收
 
-通知可靠投递有独立的运行时验证脚本，不依赖正在运行的本地栈。先使用 PowerShell 7.4 或更高版本、JDK 21 或更高版本和 Docker，并在仓库根目录完成一次 Maven 构建：
+- [贡献指南](CONTRIBUTING.md) 说明短期分支、PR、合并和发布规则。
+- [架构总览](docs/architecture/01-总体架构设计.md) 说明服务边界、数据归属和运行拓扑。
+- [工程文档索引](docs/engineering/README.md) 集中收录本地开发、Compose、管理员初始化、数据库迁移与恢复手册。
+- [自动化测试](tests/README.md) 说明 Python API 与浏览器验证入口。[CI 配置](.github/workflows/ci.yml) 列出各模块检查和隔离验收。
 
-```powershell
-mvn -B package
-pwsh -File ./scripts/Test-NotificationRuntime.ps1 -JavaHome 'C:\path\to\jdk-21'
-```
-
-脚本使用临时 MySQL／Redis 容器和独立宿主机端口（默认核心 19080、通知 19081、网关 19090），在 `outputs/notification-runtime/` 保存结果。它从通知 V3 旧库出发，使用正式初始化脚本开通运行与迁移账号，验证重复初始化、跨库拒绝、旧数据保留、专用账号执行 V4 以及运行账号的 DDL 拒绝。随后验证公网网关拦截、内部直连、停机补投、幂等和 SSE 补拉。
-
-## 异步媒体与实时通知
-
-异步图片预览按 [M3 运行手册](docs/engineering/m3-operations.md) 通过可选 Compose 扩展启用，Java 保留资源权限和任务状态，原图上传保持兼容。通知长连接支持按账号断线补拉，仍以普通列表及持久化记录为准。完成情况和运行证据见[阶段进度](docs/engineering/stage-progress.md)。
-
-## 管理员与审核
-
-管理员初始化默认关闭。先登录可信账号，通过当前用户接口读回其持久化 ID，再在 `test-artifacts/local-runtime/runtime.env`（完整 Compose 使用私有 `.env`）设置 `APP_ADMIN_USER_ID=该用户ID`，重新启动后端。可同时配置 `APP_ADMIN_EMAIL` 核对邮箱一致性；只有邮箱而没有 ID 时，账号邮箱必须已验证，否则拒绝启动。不要仅凭未经核对的注册邮箱选择管理员。
-
-初始化只在社区治理尚未初始化时授予首个管理员；后续角色以数据库为准，重启不会恢复已撤销角色。后台支持成员角色、版主分区、发帖限制、分区管理、举报审核恢复与审计，实际完成情况见[阶段进度](docs/engineering/stage-progress.md)。
-
-初始化后可清空两个选择器，已有角色继续保留。升级旧库时联系方式验证标记默认为 false；如果仍使用旧的邮箱初始化配置，应先清空选择器或改为经过可信登录核对的用户 ID，再启动新版本。
-
-## 另一种方式：完整 Compose
-
-需要自定义 MySQL JDBC 连接 URL 时，先看 [MySQL JDBC 时区配置手册](./docs/engineering/mysql-jdbc-timezone.md)。默认配置已带 `serverTimezone=UTC&forceConnectionTimeZoneToSession=true`；显式整条 URL 覆盖时必须自行保留这两个参数。
-
-根目录的 [`docker-compose.yml`](./docker-compose.yml) 会构建完整应用镜像，与上面的 PowerShell 原生应用模式**二选一**，不要同时占用相同端口。先复制 [`.env.example`](./.env.example) 为 `.env`，填写所有必填账号和高强度随机密钥，首次启动时保持 `APP_ADMIN_EMAIL` 为空、`APP_ADMIN_USER_ID=0`：
-
-```powershell
-Copy-Item .env.example .env
-# 用编辑器填写 .env 中的空值后再继续
-docker compose --env-file .env config --quiet
-docker compose --env-file .env up -d --build
-```
-
-访问 <http://127.0.0.1:5173>。停止使用 `docker compose --env-file .env down`；不要加 `-v`，否则会删除命名卷中的数据。上传文件有独立命名卷，但仍应自行备份。完整镜像、浏览器旅程和独立数据库／上传恢复已有隔离 CI 运行记录，详见[阶段进度](docs/engineering/stage-progress.md)和[恢复验收](docs/engineering/m0-runtime-verification.md)。这些记录不等于公网生产验收。Compose 仅绑定本机回环地址，并启用本地认证与 Mock AI，不可直接暴露公网。
-
-## 已有能力与边界
-
-现场演示与自动彩排见[隔离 Demo 演练](docs/engineering/demo-rehearsal.md)。
-
-| 能力 | 当前本地状态 |
-| --- | --- |
-| 账号、资料、发帖、评论、分区与搜索 | 草稿与最近浏览按账号保存在当前浏览器；可选 Elasticsearch 提供全文索引、重建和故障降级。 |
-| 关注动态、点赞、收藏、站内通知 | 收藏与通知持久化；通知支持 Outbox 可靠投递、SSE 和断线补拉。 |
-| 图片上传与预览 | 支持本地与 S3 存储适配；可选 Go worker 异步生成预览，由 Java 管理任务与结果。外部对象存储备份和云 ACL 另验。 |
-| 社区管理与举报 | 持久化管理员／版主范围、发帖限制、举报隐藏与恢复、审计；可信用户 ID 初始化规则见上文。 |
-| AI 摘要 | 作者或有权限的管理者主动生成，任务版本、取消和预算账本持久化；默认 Mock，受控协议测试通过不能代替真实外部模型验收。 |
-| 第三方账号与外部发送通道 | 有适配代码和局部测试；外部账号、凭据及真实投递需单独验收。 |
-| 多租户与完整运营后台 | 不在当前可用范围。 |
-
-## 项目结构与验证
-
-```text
-backend/               论坛核心 API（8080）
-platform-web/          Java 共享 Web 组件
-chat-domain/           Java 聊天领域模块
-chat-service/          可选独立聊天 Java 服务（Compose 分库模式）
-gateway/               前端 API 网关（9000）
-notification-service/  站内通知服务（8081）
-frontend/              Vue 前端（5173）
-services/chat-realtime/ Go WebSocket 实时聊天服务（可选，8092）
-services/media-service/ Go 异步媒体 worker
-config/                Java 静态检查与共享工程规则
-scripts/               本地运行、数据库辅助命令与仓库检查
-scripts/ci/            隔离运行验收与证据门禁
-scripts/__tests__/     工程脚本回归
-tests/                 Python API 与浏览器测试
-perf/                  压测实验材料；不代表已达到性能目标
-docs/engineering/      目录及编码规范（随仓库交付）
-docs/architecture/     同频微服务架构设计（随仓库交付）
-docs/ 其他目录          本机文档与历史资料（默认不跟踪）
-outputs/               本机审查结果、截图及文件归档（默认不跟踪）
-```
-
-修改代码后可按需运行：
-
-```powershell
-mvn -B package
-cd frontend
-pnpm lint
-pnpm type-check
-pnpm test
-pnpm build
-```
-
-Go worker 的检查入口见[服务说明](services/README.md)，工程脚本见[脚本索引](scripts/README.md)。Python 接口和浏览器测试需要隔离环境及专用账号，见 [`tests/README.md`](./tests/README.md)。单元测试、完整 Python 回归和各专项运行门禁分别记录结果；已有 CI 证据以对应提交及实际报告为准。
-
-### 通知库独立账号
-
-新生成的本地 `runtime.env` 分别创建通知运行账号和 Flyway 迁移账号。已有本地环境先备份，再用 `scripts/Stop-Local.ps1 -KeepDependencies` 停止应用。在原环境文件中设置运行账号的 `NOTIFICATION_DB_USER`、`NOTIFICATION_DB_PASSWORD`，以及迁移账号的 `NOTIFICATION_DB_MIGRATION_USER`、`NOTIFICATION_DB_MIGRATION_PASSWORD`，然后用 `scripts/Start-Local.ps1` 启动。
-
-完整 Compose 在 `.env` 中设置同样的四项。两个账号和密码需各自独立，并与核心库账号和数据库管理员凭证区分。使用 24 至 128 位随机密码，字符可以是字母、数字或 `_+=@%./:-`。新卷会自动初始化。已有卷先备份，再在原数据库卷上按顺序执行以下命令，每一步成功后继续。
-
-```powershell
-docker compose --env-file .env stop backend notification-service
-docker compose --env-file .env up -d --wait mysql
-docker compose --env-file .env exec -T mysql sh /docker-entrypoint-initdb.d/01-notification-db.sh
-docker compose --env-file .env up -d --wait --build
-```
-
-初始化脚本核验专用凭证，为 Flyway 授予通知库迁移权限，将运行账号收紧为本库的 `SELECT`、`INSERT`、`UPDATE`，并撤销核心账号原有的通知库授权。切换保留原通知表、Flyway 历史和数据卷，脚本可以重复执行。
-
-兼容配置中，仅设置运行账号时，由该账号兼做迁移。四项都省略时沿用原共享授权。需要回切时，先停止两个应用并备份，再调整配置并重复初始化。自管部署可向通知服务单独传入 `SPRING_FLYWAY_USER` 和 `SPRING_FLYWAY_PASSWORD`，沿用通知库连接地址。
-
-### 独立聊天进程演练
-
-使用干净的 Compose 项目可演练独立聊天进程。按 `.env.example` 为聊天库设置独立的运行账号、Flyway 账号和管理员密码，并分别生成 `CHAT_INTERNAL_SERVICE_TOKEN` 与 `CHAT_GOVERNANCE_INTERNAL_TOKEN`。聊天服务由 `chat-service/Dockerfile` 构建，使用专用 MySQL，通过私有网络访问 Core 的认证、公开资料和联系判定接口。Core 使用 `backend/Dockerfile` 构建。前端继续通过原来的 API 访问好友、拉黑和 WebSocket。
-
-```powershell
-docker compose --env-file .env -p bluealbum-chat-drill -f docker-compose.yml -f docker-compose.chat.yml up -d --build --wait
-```
-
-`scripts/ci/compose-browser-smoke.sh` 支持以下隔离验证。每次使用临时账号，结束时清理本次创建的容器和数据卷。
-
-- `BLUEALBUM_SPLIT_CHAT_CHECK=1` 运行 API 与浏览器用例，并核验实际写入的位置和数据库权限。
-- `BLUEALBUM_CHAT_REALTIME_CHECK=1` 启动两个 Go 实时节点，验证同一条写入的扇出、单节点停机、重连后按游标补拉和无关账号隔离。
-- `BLUEALBUM_CHAT_CUTOVER_CHECK=1` 验证已有历史的前向切换、聊天进程停机后的举报补发、目标写入后的反向对账和回退。
-- `BLUEALBUM_CHAT_BACKUP_CHECK=1` 停止临时项目的写入，将核心、通知和独立聊天的备份导入全新项目，验证消息历史、待审核决定与待投递通知的恢复。需要 PowerShell 7.4 或更高版本。
-
-持有聊天历史的环境按分库演练步骤做迁移和对账。[数据库切换](docs/architecture/03-数据库归属与迁移.md#聊天首次分库演练) · [服务间通信规范](docs/architecture/04-服务间通信规范.md)
-
-在 Compose 的 `up` 前加上 `-f docker-compose.observability.yml` 可启用私网 Prometheus，采集核心 Outbox 与每个 Go 实时节点的状态。[指标与告警](docs/engineering/observability.md#微服务联调指标)
-
-## 开发资料
-
-- [同频微服务架构设计](docs/architecture/01-总体架构设计.md)
-- [工程文档索引](docs/engineering/README.md)：按架构、运维、阶段实施和历史评审查找资料。
-- [前端说明](./frontend/README.md)：依赖、代理与前端检查。
-- [Python 测试](./tests/README.md)：接口及浏览器测试环境。
-- [性能实验](./perf/README.md)：隔离压测配置和结果解释；历史数字不是当前性能承诺。
-- [通知投递与运维](./docs/engineering/notification-delivery.md)：Outbox、重试、租约、凭证与迁移边界。
-- [目录与文件归属](./docs/engineering/repository-layout.md)：共享工程目录及运行产物边界。
-- [手机号唯一性与迁移验证](./docs/engineering/phone-uniqueness.md)：MySQL 唯一约束、只读重复检查、冲突响应和隔离验收；已有库部署前先核对重复数据。
-- [产品开发与技术演进报告](./docs/engineering/development-roadmap.md)：后续里程碑、微服务边界、Go 媒体处理、搜索、观测及验收计划；属于建议方案。
-- [分阶段推进记录](./docs/engineering/stage-progress.md)：M0–M4 实施状态和下一阶段的验收要求。
-- [M0 完整容器验收](./docs/engineering/m0-runtime-verification.md)：隔离浏览器旅程、重启持久化、数据库与图片恢复，以及 CI 入口。
-- 论坛核心 API 在 `backend/`，入口统一为 `/api/v1`；浏览器经 `gateway/` 转发。具体请求与权限以 Controller、Security 配置和测试为准。
-
-开发和目录调整遵循 [CONTRIBUTING](./CONTRIBUTING.md)。运行 `node scripts/Check-Repository.mjs` 可检查目录、包声明、本地导入和工程文档链接。
-
-`docs/engineering/` 为共享工程手册；`docs/` 中的其他设计、历史记录及个人材料仅保留在本机。克隆用户运行本项目以本文、各模块配置和上述开发资料为准。
-
-当前仓库没有可核实的独立 `LICENSE` 文件，因此本页不宣称开源许可证；再分发或商用前请先确认授权。
+实际运行证据以对应提交和测试报告为准。再分发或商用前请先确认授权。

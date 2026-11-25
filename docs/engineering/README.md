@@ -21,6 +21,8 @@
 
 ## 运行与恢复
 
+- [本地开发与 Compose 手册](local-development.md)覆盖端口、启动、停机、管理员初始化和分库配置。
+- [隔离 Demo](demo-rehearsal.md)提供交互演示、自动彩排和历史数据库备份演练。
 - [M0 完整容器验收](m0-runtime-verification.md)：真实浏览器、重启、两库及上传恢复。
 - [通知投递与运维](notification-delivery.md)：Outbox、幂等与通知数据库。
 - [请求观测](observability.md)：请求关联、日志和故障排查入口。
