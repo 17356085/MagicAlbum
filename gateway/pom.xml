@@ -62,7 +62,7 @@
                 <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
-                    <mainClass>com.example.gateway.BlueAlbumGatewayApplication</mainClass>
+                    <mainClass>com.example.gateway.InSyncGatewayApplication</mainClass>
                 </configuration>
                 <executions combine.self="override">
                     <execution>
