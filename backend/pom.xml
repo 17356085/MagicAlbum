@@ -41,6 +41,14 @@
     </properties>
   <dependencies>
         <dependency>
+            <groupId>com.study.spring</groupId>
+            <artifactId>platform-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.study.spring</groupId>
+            <artifactId>chat-domain</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
@@ -70,6 +78,10 @@
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
         </dependency>
 
         <!-- Security & JWT (占位，为后续使用做准备) -->
@@ -239,6 +251,18 @@
                 </excludes>
             </resource>
         </resources>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <!-- Compare both migration sets in tests without packaging the chat database in Core. -->
+            <testResource>
+                <directory>${project.basedir}/../chat-service/src/main/resources</directory>
+                <includes>
+                    <include>db/chat/mysql/*.sql</include>
+                </includes>
+            </testResource>
+        </testResources>
         <plugins>
             <!-- Generate Java protobuf and gRPC stubs from the versioned contract. -->
             <plugin>
@@ -296,7 +320,7 @@
                 <version>${spring-boot.plugin.version}</version>
                 <configuration>
                     <skip>false</skip>
-                    <mainClass>com.example.chatprocess.BackendProcessLauncher</mainClass>
+                    <mainClass>com.example.demo.Demo1Application</mainClass>
                 </configuration>
                 <executions>
                     <execution>

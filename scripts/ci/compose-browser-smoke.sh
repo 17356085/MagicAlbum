@@ -18,13 +18,21 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 FULL_MODE="${BLUEALBUM_FULL_PYTHON_REGRESSION:-0}"
+DEMO_MODE="${BLUEALBUM_DEMO_MODE:-off}"
 SPLIT_CHAT="${BLUEALBUM_SPLIT_CHAT_CHECK:-0}"
 CUTOVER_MODE="${BLUEALBUM_CHAT_CUTOVER_CHECK:-0}"
 CHAT_REALTIME_CHECK="${BLUEALBUM_CHAT_REALTIME_CHECK:-0}"
 CHAT_BACKUP_CHECK="${BLUEALBUM_CHAT_BACKUP_CHECK:-0}"
+CHAT_AUTH_TIMING_CHECK="${BLUEALBUM_CHAT_AUTH_TIMING_CHECK:-0}"
 CHAT_POLL_LOAD="${BLUEALBUM_CHAT_POLL_LOAD_CHECK:-0}"
 CHAT_GRPC_CHECK="${BLUEALBUM_CHAT_GRPC_CHECK:-0}"
 TELEMETRY_CHECK="${BLUEALBUM_TELEMETRY_CHECK:-0}"
+RPC_LOAD_CHECK="${BLUEALBUM_CHAT_RPC_LOAD_CHECK:-0}"
+[[ "$RPC_LOAD_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_RPC_LOAD_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+if [[ "$RPC_LOAD_CHECK" == 1 ]]; then CHAT_GRPC_CHECK=1; fi
 COMMENT_EVENTS_CHECK="${BLUEALBUM_COMMENT_EVENTS_CHECK:-0}"
 [[ "$CHAT_GRPC_CHECK" =~ ^[01]$ ]] || {
   printf 'ERROR: BLUEALBUM_CHAT_GRPC_CHECK must be 0 or 1\n' >&2
@@ -65,7 +73,39 @@ if [[ "$CHAT_POLL_LOAD" == "1" ]]; then CUTOVER_MODE=1; fi
   printf 'ERROR: BLUEALBUM_CHAT_BACKUP_CHECK must be 0 or 1\n' >&2
   exit 1
 }
-if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+[[ "$CHAT_AUTH_TIMING_CHECK" =~ ^[01]$ ]] || {
+  printf 'ERROR: BLUEALBUM_CHAT_AUTH_TIMING_CHECK must be 0 or 1\n' >&2
+  exit 1
+}
+case "$DEMO_MODE" in
+  off|rehearsal) ;;
+  interactive)
+    [[ -t 0 && -z "${GITHUB_ACTIONS:-}" ]] || {
+      printf 'ERROR: interactive Demo requires a local terminal\n' >&2
+      exit 1
+    }
+    ;;
+  *)
+    printf 'ERROR: BLUEALBUM_DEMO_MODE must be off, rehearsal, or interactive\n' >&2
+    exit 1
+    ;;
+esac
+if [[ "$DEMO_MODE" != off && (
+  "$FULL_MODE" == 1 || "$CUTOVER_MODE" == 1 || "$CHAT_REALTIME_CHECK" == 1 ||
+  "$CHAT_BACKUP_CHECK" == 1 || "$CHAT_AUTH_TIMING_CHECK" == 1 || "$CHAT_GRPC_CHECK" == 1 ||
+  "$TELEMETRY_CHECK" == 1 || "$COMMENT_EVENTS_CHECK" == 1
+) ]]; then
+  printf 'ERROR: run Demo only with its default or split-chat topology\n' >&2
+  exit 1
+fi
+if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
+  if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
+    printf 'ERROR: run the chat authorization timing check in its own project\n' >&2
+    exit 1
+  fi
+  SPLIT_CHAT=1
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-auth-timing-ci}"
+elif [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   if [[ "$CUTOVER_MODE" == "1" || "$FULL_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" ]]; then
     printf 'ERROR: run the chat backup check in its own project\n' >&2
     exit 1
@@ -82,6 +122,8 @@ elif [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
 elif [[ "$CUTOVER_MODE" == "1" ]]; then
   SPLIT_CHAT=1
   ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/chat-cutover-ci}"
+elif [[ "$DEMO_MODE" != off ]]; then
+  ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/demo-release-$(date -u +%Y%m%d%H%M%S)-$$}"
 elif [[ "$SPLIT_CHAT" == "1" ]]; then
   ARTIFACT_DIR="${M0_CI_ARTIFACT_DIR:-$ROOT_DIR/outputs/split-chat-ci}"
 elif [[ "$FULL_MODE" == "1" ]]; then
@@ -111,6 +153,8 @@ FULL_CREDENTIALS_FILE="$ARTIFACT_DIR/full-regression.env"
 FULL_EVIDENCE_FILE="$ARTIFACT_DIR/full-regression-bootstrap.json"
 FULL_COLLECT_FILE="$ARTIFACT_DIR/full-collect.txt"
 FULL_JUNIT_FILE="$ARTIFACT_DIR/full-python-junit.xml"
+DEMO_ACCOUNTS_FILE="$ARTIFACT_DIR/demo-accounts.json"
+DEMO_EVIDENCE_FILE="$ARTIFACT_DIR/demo-readback.json"
 CHAT_CUTOVER_STATE="$ARTIFACT_DIR/chat-cutover-state.json"
 CHAT_CUTOVER_OVERRIDE="$ARTIFACT_DIR/chat-cutover.override.yml"
 CHAT_CUTOVER_EVIDENCE="$ARTIFACT_DIR/chat-cutover-checks.txt"
@@ -119,6 +163,7 @@ PROJECT=""
 COMPOSE_TOUCHED=0
 CREDENTIALS_CREATED=0
 FULL_CREDENTIALS_CREATED=0
+DEMO_ACCOUNTS_OWNED=0
 CUTOVER_STATE_OWNED=0
 
 die() {
@@ -136,6 +181,9 @@ fi
 if [[ "$FULL_MODE" == "1" ]]; then
   PROJECT="${PROJECT}-full"
 fi
+if [[ "$DEMO_MODE" != off ]]; then
+  PROJECT="${PROJECT}-demo"
+fi
 if [[ "$SPLIT_CHAT" == "1" ]]; then
   PROJECT="${PROJECT}-split-chat"
 fi
@@ -146,6 +194,10 @@ fi
 if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
   PROJECT="${PROJECT}-realtime"
   source "$SCRIPT_DIR/compose-chat-realtime.sh"
+fi
+if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
+  PROJECT="${PROJECT}-auth-timing"
+  source "$SCRIPT_DIR/compose-chat-permissions.sh"
 fi
 if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   PROJECT="${PROJECT}-backup"
@@ -168,6 +220,9 @@ COMPOSE_ARGS=(
 )
 if [[ "$SPLIT_CHAT" == "1" ]]; then
   COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.chat.yml")
+fi
+if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+  COMPOSE_ARGS+=(--file "$ROOT_DIR/docker-compose.chat-observability.yml")
 fi
 GRPC_FIXTURE_DIR=""
 if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
@@ -315,6 +370,15 @@ if sys.argv[4]:
     properties = root.findall(".//property[@name='realtime_chat_offline_backlog']")
     if [item.get("value") for item in properties] != [sys.argv[4]]:
         raise SystemExit("Browser journey did not verify the realtime chat offline backlog")
+    properties = root.findall(".//property[@name='realtime_chat_connected_signal_loss']")
+    if [item.get("value") for item in properties] != ["ordered_without_reconnect"]:
+        raise SystemExit("Browser journey did not verify signal loss on an open WebSocket")
+    recovery = [item.get("value", "") for item in root.findall(".//property[@name='realtime_chat_connected_recovery_ms']")]
+    if len(recovery) != 1 or not recovery[0].isdecimal() or not 0 < int(recovery[0]) <= 15_000:
+        raise SystemExit("Browser journey did not record recovery within its polling deadline")
+    properties = root.findall(".//property[@name='friend_removal_browser']")
+    if [item.get("value") for item in properties] != ["peer_follow_preserved"]:
+        raise SystemExit("Browser journey did not verify friend removal preserves the peer's follow")
 print(f"JUnit gate passed: tests={len(cases)} expected={expected} skipped=0 failures=0 errors=0")
 PY
 }
@@ -330,6 +394,16 @@ cleanup() {
     cleanup_chat_backup || cleanup_status=1
   fi
   if (( COMPOSE_TOUCHED == 1 )); then
+    if [[ "${RPC_LOAD_CHECK:-0}" == 1 ]]; then
+      local load_nodes load_node_ids
+      load_nodes="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
+        --filter "label=com.docker.compose.service=chat-realtime" \
+        --filter 'label=com.docker.compose.oneoff=True')" || cleanup_status=1
+      if [[ -n "$load_nodes" ]]; then
+        mapfile -t load_node_ids <<< "$load_nodes"
+        docker rm -f "${load_node_ids[@]}" >"$LOG_DIR/rpc-load-cleanup.log" 2>&1 || cleanup_status=1
+      fi
+    fi
     compose logs --no-color --timestamps --tail=500 >"$LOG_DIR/compose.log" 2>&1 || cleanup_status=1
     compose down --volumes --remove-orphans >"$LOG_DIR/compose-down.log" 2>&1 || cleanup_status=1
 
@@ -359,6 +433,9 @@ cleanup() {
   if (( FULL_CREDENTIALS_CREATED == 1 )) && [[ -f "$FULL_CREDENTIALS_FILE" ]]; then
     rm -f -- "$FULL_CREDENTIALS_FILE" || cleanup_status=1
   fi
+  if (( DEMO_ACCOUNTS_OWNED == 1 )) && [[ -f "$DEMO_ACCOUNTS_FILE" ]]; then
+    rm -f -- "$DEMO_ACCOUNTS_FILE" || cleanup_status=1
+  fi
   if [[ -n "$GRPC_FIXTURE_DIR" ]]; then
     rm -f -- "$GRPC_FIXTURE_DIR/tls.crt" "$GRPC_FIXTURE_DIR/tls.key" || cleanup_status=1
     rmdir -- "$GRPC_FIXTURE_DIR" || cleanup_status=1
@@ -367,6 +444,10 @@ cleanup() {
     rm -f -- "$CHAT_CUTOVER_STATE" "${CHAT_CUTOVER_STATE%.json}.tmp" || cleanup_status=1
   fi
 
+  if [[ "$DEMO_MODE" != off ]]; then
+    printf '{"scenarioExit":%d,"cleanupExit":%d}\n' "$original_status" "$cleanup_status" \
+      >"$ARTIFACT_DIR/demo-cleanup.json" || cleanup_status=1
+  fi
   if (( cleanup_status != 0 )); then
     printf 'ERROR: Compose cleanup failed for %s; inspect %s\n' "$PROJECT" "$LOG_DIR" >&2
     original_status=1
@@ -380,6 +461,29 @@ trap cleanup EXIT
 assert_project_unused
 
 mkdir -p "$ARTIFACT_DIR" "$LOG_DIR" "$SCREENSHOT_DIR"
+"$PYTHON_BIN" - "$ARTIFACT_DIR/source-revision.json" "$PROJECT" "$FULL_MODE" "$SPLIT_CHAT" "$CUTOVER_MODE" \
+  "$CHAT_REALTIME_CHECK" "$CHAT_BACKUP_CHECK" "$CHAT_AUTH_TIMING_CHECK" "$CHAT_GRPC_CHECK" \
+  "$TELEMETRY_CHECK" "$COMMENT_EVENTS_CHECK" "${BLUEALBUM_HOME_BFF_ENABLED:-false}" "$RPC_LOAD_CHECK" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+output, project, *settings = sys.argv[1:]
+revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+clean = not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+expected = os.environ.get("GITHUB_SHA")
+if expected and (expected != revision or not clean):
+    raise SystemExit("This Compose gate needs a clean checkout of its configured GitHub SHA.")
+keys = ("fullRegression", "splitChat", "cutover", "dualRealtime", "backup",
+        "authorizationTiming", "grpc", "telemetry", "commentEvents", "homeBff", "rpcLoad")
+Path(output).write_text(json.dumps({
+    "commit": revision, "cleanWorktree": clean, "project": project,
+    "demoMode": os.environ.get("BLUEALBUM_DEMO_MODE", "off"),
+    "configuration": {key: value in ("1", "true") for key, value in zip(keys, settings, strict=True)},
+}, indent=2) + "\n", encoding="utf-8")
+PY
 [[ ! -e "$ENV_FILE" ]] || die "temporary credential file already exists: $ENV_FILE"
 chat_cutover_admin=''
 if [[ "$CUTOVER_MODE" == "1" || "$CHAT_REALTIME_CHECK" == "1" || "$CHAT_BACKUP_CHECK" == "1" ]]; then
@@ -399,6 +503,16 @@ backend_port="${COMPOSE_BACKEND_PORT:-8080}"
 notification_port="${COMPOSE_NOTIFICATION_PORT:-8081}"
 gateway_port="${COMPOSE_GATEWAY_PORT:-9000}"
 frontend_port="${COMPOSE_FRONTEND_PORT:-5173}"
+if [[ "$DEMO_MODE" != off ]]; then
+  mysql_port="${COMPOSE_MYSQL_PORT:-13306}"
+  redis_port="${COMPOSE_REDIS_PORT:-16379}"
+  rabbitmq_port="${COMPOSE_RABBITMQ_PORT:-15673}"
+  rabbitmq_management_port="${COMPOSE_RABBITMQ_MANAGEMENT_PORT:-15674}"
+  backend_port="${COMPOSE_BACKEND_PORT:-18080}"
+  notification_port="${COMPOSE_NOTIFICATION_PORT:-18081}"
+  gateway_port="${COMPOSE_GATEWAY_PORT:-19000}"
+  frontend_port="${COMPOSE_FRONTEND_PORT:-15173}"
+fi
 
 port_names=(mysql redis rabbitmq rabbitmq-management backend notification gateway frontend)
 port_values=(
@@ -481,6 +595,7 @@ if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then
   MSYS2_ARG_CONV_EXCL="/CN=" openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=backend \
     -addext subjectAltName=DNS:backend -keyout "$GRPC_FIXTURE_DIR/tls.key" \
     -out "$GRPC_FIXTURE_DIR/tls.crt" >/dev/null 2>&1
+  chmod 644 "$GRPC_FIXTURE_DIR/tls.crt"
   grpc_mount_dir="$GRPC_FIXTURE_DIR"
   if command -v cygpath >/dev/null 2>&1; then grpc_mount_dir="$(cygpath -am "$GRPC_FIXTURE_DIR")"; fi
   cat >>"$ENV_FILE" <<EOF
@@ -510,7 +625,7 @@ services:
     environment:
       JAVA_OPTS: "-Xmx384m -XX:ActiveProcessorCount=2"
 EOF
-if [[ "$FULL_MODE" == "1" ]]; then
+if [[ "$FULL_MODE" == "1" || "$DEMO_MODE" != off ]]; then
   cat >>"$OVERRIDE_FILE" <<'EOF'
       AI_PROVIDER: "mock"
       AI_API_KEY: ""
@@ -535,12 +650,14 @@ if [[ "$SPLIT_CHAT" == "1" ]]; then
 EOF
 fi
 scale_options=()
-if [[ "$CHAT_REALTIME_CHECK" == "1" ]]; then
+if [[ "$CHAT_REALTIME_CHECK" == 1 || "$TELEMETRY_CHECK" == 1 ]]; then
   cat >>"$OVERRIDE_FILE" <<'EOF'
   chat-realtime:
     ports:
       - "127.0.0.1::8092"
 EOF
+fi
+if [[ "$CHAT_REALTIME_CHECK" == 1 ]]; then
   scale_options=(--scale chat-realtime=2)
 fi
 if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
@@ -550,19 +667,53 @@ fi
 COMPOSE_TOUCHED=1
 compose config --quiet
 services=(backend notification-service chat-realtime gateway frontend)
+if [[ "$SPLIT_CHAT" == "1" ]]; then
+  services+=(chat-service)
+fi
 for service in "${services[@]}"; do
   compose build "$service"
 done
 compose up -d --wait --wait-timeout 300 "${scale_options[@]}"
 if [[ "$TELEMETRY_CHECK" == 1 ]]; then
+  chat_transport=http
+  if [[ "$CHAT_GRPC_CHECK" == 1 ]]; then chat_transport=grpc; fi
+  realtime_probe="$(compose port --index 1 chat-realtime 8092)"
+  realtime_probe="${realtime_probe//$'\r'/}"
+  [[ "$realtime_probe" =~ ^127\.0\.0\.1:([0-9]+)$ ]] || die 'traced Go listener must be on loopback'
+  telemetry_args=(--realtime "http://$realtime_probe")
+  if [[ "${BLUEALBUM_HOME_BFF_ENABLED:-false}" == true ]]; then telemetry_args+=(--home-bff); fi
   "$PYTHON_BIN" "$SCRIPT_DIR/telemetry-runtime.py" \
     --gateway "http://127.0.0.1:$gateway_port" \
     --tempo "http://127.0.0.1:$telemetry_tempo_port" \
     --loki "http://127.0.0.1:$telemetry_loki_port" \
-    --output "$ARTIFACT_DIR/telemetry-runtime.json"
+    --frontend "http://127.0.0.1:$frontend_port" --chat-transport "$chat_transport" \
+    --output "$ARTIFACT_DIR/telemetry-runtime.json" "${telemetry_args[@]}"
 fi
 
-if [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
+if [[ "$RPC_LOAD_CHECK" == 1 ]]; then
+  # Separate temporary listeners let both transports reach the same Java Core and RabbitMQ.
+  rpc_run=(run --detach --no-deps --publish '127.0.0.1::8092' --env OTEL_TRACES_EXPORTER=none)
+  http_node="$(compose "${rpc_run[@]}" --name "$PROJECT-rpc-load-http" \
+    --env CHAT_REALTIME_GRPC_ADDR= --env CHAT_REALTIME_GRPC_CREDENTIAL= chat-realtime)"
+  grpc_node="$(compose "${rpc_run[@]}" --name "$PROJECT-rpc-load-grpc" chat-realtime)"
+  "$PYTHON_BIN" "$SCRIPT_DIR/chat-auth-load.py" \
+    --gateway "http://127.0.0.1:$gateway_port" --frontend "http://127.0.0.1:$frontend_port" \
+    --project "$PROJECT" --http-container "${http_node//$'\r'/}" --grpc-container "${grpc_node//$'\r'/}" \
+    --output "$ARTIFACT_DIR/chat-auth-load.json"
+  if [[ "$TELEMETRY_CHECK" == 1 ]]; then verify_split_chat_owner 1; fi
+  exit 0
+fi
+
+if [[ "$CHAT_AUTH_TIMING_CHECK" == "1" ]]; then
+  chat_mysql_id=$(compose ps --quiet chat-mysql)
+  "$PYTHON_BIN" "$SCRIPT_DIR/chat-auth-timing.py" \
+    --api-url "http://127.0.0.1:$gateway_port/api/v1" \
+    --project "$PROJECT" --mysql-container "${chat_mysql_id//$'\r'/}" \
+    --output "$ARTIFACT_DIR/chat-auth-timing-checks.json"
+  verify_split_chat_owner 3
+  verify_chat_permissions
+  exit 0
+elif [[ "$CHAT_BACKUP_CHECK" == "1" ]]; then
   run_chat_backup
   printf 'Split-chat backup and recovery passed for %s\n' "$PROJECT"
   exit 0
@@ -646,7 +797,7 @@ PY
   die 'gateway did not expose the sections API after backend recreation'
 }
 
-if [[ "$FULL_MODE" == "1" ]]; then
+if [[ "$FULL_MODE" == "1" || "$DEMO_MODE" != off ]]; then
   [[ ! -e "$FULL_CREDENTIALS_FILE" ]] || die "temporary full-regression credentials file already exists: $FULL_CREDENTIALS_FILE"
   FULL_CREDENTIALS_CREATED=1
   "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
@@ -667,7 +818,31 @@ if [[ "$FULL_MODE" == "1" ]]; then
   # connection.  Probe only a read-only public API through the gateway before
   # performing the one login and the seed writes below.
   wait_for_gateway_api
+fi
 
+if [[ "$DEMO_MODE" != off ]]; then
+  [[ ! -e "$DEMO_ACCOUNTS_FILE" && ! -e "$DEMO_EVIDENCE_FILE" ]] || die 'Demo output already exists'
+  DEMO_ACCOUNTS_OWNED=1
+  "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
+    --base-url "$TEST_API_BASE_URL" \
+    --credentials-file "$FULL_CREDENTIALS_FILE" \
+    --prepare-demo \
+    --demo-accounts-file "$DEMO_ACCOUNTS_FILE" \
+    --evidence-file "$DEMO_EVIDENCE_FILE"
+  if [[ "$DEMO_MODE" == interactive ]]; then
+    printf 'Demo URL %s\nPrivate login file %s\n' "$TEST_BASE_URL" "$DEMO_ACCOUNTS_FILE"
+    printf 'Press Enter to stop this isolated Demo and remove its synthetic data.\n'
+    read -r _
+  else
+    "$PYTHON_BIN" -m pytest -c pytest.ini tests/e2e/playwright/test_m0_journey.py \
+      -q --junitxml "$UI_JUNIT_FILE"
+    validate_junit "$UI_JUNIT_FILE" 1 '' 31
+    verify_split_chat_owner
+  fi
+  exit 0
+fi
+
+if [[ "$FULL_MODE" == "1" ]]; then
   "$PYTHON_BIN" scripts/ci/prepare-python-full-regression.py \
     --base-url "$TEST_API_BASE_URL" \
     --credentials-file "$FULL_CREDENTIALS_FILE" \

@@ -5,6 +5,9 @@ COPY pom.xml /workspace/pom.xml
 COPY notification-service/pom.xml /workspace/notification-service/pom.xml
 COPY backend/pom.xml /workspace/backend/pom.xml
 COPY gateway/pom.xml /workspace/gateway/pom.xml
+COPY platform-web/pom.xml /workspace/platform-web/pom.xml
+COPY chat-domain/pom.xml /workspace/chat-domain/pom.xml
+COPY chat-service/pom.xml /workspace/chat-service/pom.xml
 COPY config /workspace/config
 
 RUN mvn -q -e -pl notification-service -am dependency:go-offline

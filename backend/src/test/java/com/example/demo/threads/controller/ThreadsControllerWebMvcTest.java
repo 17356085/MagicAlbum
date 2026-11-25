@@ -1,5 +1,6 @@
 package com.example.demo.threads.controller;
 
+import com.example.demo.threads.dto.FollowingFeedPage;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.service.ThreadService;
 import com.example.demo.search.service.ThreadSearchService;
@@ -12,6 +13,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -24,8 +26,11 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -111,13 +116,37 @@ class ThreadsControllerWebMvcTest {
                 .andExpect(jsonPath("$.page").value(2))
                 .andExpect(jsonPath("$.size").value(20))
                 .andExpect(jsonPath("$.total").value(51))
-                .andExpect(jsonPath("$.items[0].id").value(51));
+                .andExpect(jsonPath("$.items[0].id").value(51))
+                .andExpect(jsonPath("$.nextCursor").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.previousCursor").doesNotHaveJsonPath());
+    }
+
+    @Test
+    void following_cursor_should_return_page_metadata_and_explicit_boundary() throws Exception {
+        ThreadDto dto = new ThreadDto();
+        dto.setId(51L);
+        when(threadService.followingWindow(1L, 2, 10, "position", null))
+                .thenReturn(new FollowingFeedPage(List.of(dto), 2, 10, 11, null, "previous"));
+
+        mockMvc.perform(get("/api/v1/threads/following").param("pagination", "cursor")
+                        .param("page", "2").param("after", "position"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                .andExpect(jsonPath("$.page").value(2))
+                .andExpect(jsonPath("$.size").value(10))
+                .andExpect(jsonPath("$.total").value(11))
+                .andExpect(jsonPath("$.items[0].id").value(51))
+                .andExpect(jsonPath("$.nextCursor").hasJsonPath())
+                .andExpect(jsonPath("$.nextCursor").value(nullValue()))
+                .andExpect(jsonPath("$.previousCursor").value("previous"));
     }
 
     @Test
     void following_should_require_authenticated_user() throws Exception {
         SecurityContextHolder.clearContext();
         mockMvc.perform(get("/api/v1/threads/following"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/threads/following").param("pagination", "cursor"))
                 .andExpect(status().isUnauthorized());
     }
 

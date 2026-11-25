@@ -7,7 +7,7 @@
 本地完整入口是 [`scripts/Test-ComposeRuntime.ps1`](../../scripts/Test-ComposeRuntime.ps1)。它按顺序完成以下工作：
 
 1. 检查独立 Compose 项目、固定端口和 Python 测试解释器，生成随机凭证和 Compose override。
-2. 校验 Compose 配置；默认构建带本次 `RunId` 标签的后端、通知服务、网关和前端镜像，然后等待完整源栈健康。
+2. 校验 Compose 配置，默认构建带本次 `RunId` 标签的后端、通知服务、聊天实时服务、网关和前端镜像，然后等待完整源栈健康。恢复项目复用这些镜像。
 3. 运行 [`tests/e2e/playwright/test_m0_journey.py`](../../tests/e2e/playwright/test_m0_journey.py)。该浏览器旅程用两个新账号覆盖注册、发帖、评论、点赞、收藏/取消收藏、通知已读与跳转、举报和反向归属权限，并通过 API 重新读回持久化结果。
 4. 采集一次 `docker stats` 和五次顺序的本地线程列表请求，产出诊断样本。这里的延迟样本明确标记为“不是容量基准”，不能据此宣称吞吐或性能达标。
 5. 创建带图片的持久化数据，重启应用服务并读回；停止源栈的应用服务后调用 [`scripts/Test-ComposeBackup.ps1`](../../scripts/Test-ComposeBackup.ps1) 在独立恢复项目中导入数据库和上传文件。
@@ -83,7 +83,7 @@ pwsh -NoProfile -File .\scripts\Test-ComposeRuntime.ps1
 | `-ArtifactDirectory` | `outputs/m0-compose/<RunId>` | 未显式指定时按本次 `RunId` 生成独立目录；会转为绝对路径，且必须位于仓库 `outputs` 目录下。显式目录仍兼容，用于日志、报告、测试产物、转储和上传文件副本。 |
 | `-PythonExecutable` | `tests/.venv/Scripts/python.exe` | 必须是存在的 Python 文件，并已安装测试依赖。可传相对仓库根目录的路径或绝对路径。 |
 | `-BrowserChannel` | `chrome` | 传给 `TEST_PLAYWRIGHT_CHANNEL`。`chrome` 使用已安装 Chrome；传空字符串使用 Playwright bundled Chromium。 |
-| `-NoBuild` | 未启用 | 跳过 `docker compose build`。只有当以下镜像已按本次 `RunId` 准备好时才可使用：`bluealbum-m0-backend:<RunId>`、`bluealbum-m0-notification:<RunId>`、`bluealbum-m0-gateway:<RunId>`、`bluealbum-m0-frontend:<RunId>`。 |
+| `-NoBuild` | 未启用 | 跳过 `docker compose build`。本次 `RunId` 对应的镜像应已准备好，包括 `bluealbum-m0-backend:<RunId>`、`bluealbum-m0-notification:<RunId>`、`bluealbum-m0-chat-realtime:<RunId>`、`bluealbum-m0-gateway:<RunId>` 和 `bluealbum-m0-frontend:<RunId>`。 |
 
 显式指定一次运行 ID 和产物目录的例子：
 

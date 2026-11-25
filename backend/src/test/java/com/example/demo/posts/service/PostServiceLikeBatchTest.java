@@ -6,7 +6,7 @@ import com.example.demo.posts.repo.PostLikeRepository;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.domain.PageImpl;
@@ -30,7 +30,7 @@ class PostServiceLikeBatchTest {
         PostRepository posts = mock(PostRepository.class);
         PostLikeRepository likes = mock(PostLikeRepository.class);
         ThreadRepository threads = mock(ThreadRepository.class);
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         PostQueryView view = view(1L);
         when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
@@ -54,7 +54,7 @@ class PostServiceLikeBatchTest {
         PostRepository posts = mock(PostRepository.class);
         PostLikeRepository likes = mock(PostLikeRepository.class);
         ThreadRepository threads = mock(ThreadRepository.class);
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         PostQueryView view = view(1L);
         PostLikeCountView count = mock(PostLikeCountView.class);
         when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
@@ -81,7 +81,7 @@ class PostServiceLikeBatchTest {
         PostRepository posts = mock(PostRepository.class);
         PostLikeRepository likes = mock(PostLikeRepository.class);
         ThreadRepository threads = mock(ThreadRepository.class);
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
@@ -98,7 +98,7 @@ class PostServiceLikeBatchTest {
     void nullLikeRepositoryKeepsZeroCountAndFalseViewerState() {
         PostRepository posts = mock(PostRepository.class);
         ThreadRepository threads = mock(ThreadRepository.class);
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         PostQueryView view = view(1L);
         when(threads.findReadStateById(7L)).thenReturn(Optional.of(normalThreadReadState()));
         when(posts.findByThreadAscView(7L, PageRequest.of(0, 20)))
@@ -113,10 +113,9 @@ class PostServiceLikeBatchTest {
     }
 
     private static PostService service(PostRepository posts, PostLikeRepository likes,
-                                       ThreadRepository threads, UserRepository users) {
+                                       ThreadRepository threads, UserReadService users) {
         return new PostService(posts, likes, threads, users,
-                (org.springframework.data.redis.core.StringRedisTemplate) null,
-                (com.fasterxml.jackson.databind.ObjectMapper) null,
+                (com.example.demo.posts.port.PostPageCache) null,
                 (com.example.demo.notifications.client.NotificationClient) null);
     }
 

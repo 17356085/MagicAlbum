@@ -35,3 +35,29 @@ tests:
       - alertname: BlueAlbumContentEventDeliveryFailed
         eval_time: 3m
         exp_alerts: []
+
+  - interval: 15s
+    input_series:
+      - series: 'bluealbum_content_kafka_outbox_oldest_pending_seconds{job="bluealbum-core",instance="backend:9090"}'
+        values: '360+0x9 0+0x5'
+      - series: 'bluealbum_content_kafka_outbox_rows{job="bluealbum-core",instance="backend:9090",status="failed"}'
+        values: '2+0x9 0+0x5'
+    alert_rule_test:
+      - alertname: BlueAlbumContentKafkaPendingTooLong
+        eval_time: 2m
+        exp_alerts:
+          - exp_labels: {job: bluealbum-core, instance: 'backend:9090'}
+            exp_annotations:
+              summary: "Kafka 内容事件最早待投递记录已积压超过五分钟"
+      - alertname: BlueAlbumContentKafkaPendingTooLong
+        eval_time: 3m
+        exp_alerts: []
+      - alertname: BlueAlbumContentKafkaDeliveryFailed
+        eval_time: 1m
+        exp_alerts:
+          - exp_labels: {job: bluealbum-core, instance: 'backend:9090', status: failed}
+            exp_annotations:
+              summary: "Kafka 内容事件存在需要检查和重放的失败记录"
+      - alertname: BlueAlbumContentKafkaDeliveryFailed
+        eval_time: 3m
+        exp_alerts: []

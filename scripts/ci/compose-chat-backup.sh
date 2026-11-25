@@ -40,7 +40,7 @@ PY
 backup_pin_images() {
   sed -i \
     -e "/^  backend:$/a\    image: $PROJECT-backend:local" \
-    -e "/^  chat-service:$/a\    image: $PROJECT-backend:local" \
+    -e "/^  chat-service:$/a\    image: $PROJECT-chat-service:local" \
     -e "/^  notification-service:$/a\    image: $PROJECT-notification-service:latest" \
     -e "/^  gateway:$/a\    image: $PROJECT-gateway:latest" "$OVERRIDE_FILE"
   cat >> "$OVERRIDE_FILE" <<EOF

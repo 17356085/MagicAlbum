@@ -2,6 +2,7 @@ package com.example.demo.threads.controller;
 
 import com.example.demo.common.PageResponse;
 import com.example.demo.threads.dto.CreateThreadRequest;
+import com.example.demo.threads.dto.FollowingFeedPage;
 import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.UpdateThreadRequest;
 import com.example.demo.threads.dto.ThreadDto;
@@ -9,6 +10,7 @@ import com.example.demo.threads.service.ThreadService;
 import com.example.demo.search.service.ThreadSearchService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -63,6 +65,17 @@ public class ThreadsController {
     ) {
         Page<ThreadDto> result = threadService.listFollowing(getUserId(), page, size);
         return ResponseEntity.ok(PageResponse.from(result));
+    }
+
+    @GetMapping(value = "/following", params = "pagination=cursor")
+    public ResponseEntity<FollowingFeedPage> followingWindow(
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "10") int size,
+            @RequestParam(value = "after", required = false) String after,
+            @RequestParam(value = "before", required = false) String before
+    ) {
+        FollowingFeedPage result = threadService.followingWindow(getUserId(), page, size, after, before);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore().cachePrivate()).body(result);
     }
 
     @GetMapping("/ranking")

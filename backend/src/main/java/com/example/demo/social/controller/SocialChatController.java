@@ -49,6 +49,11 @@ public class SocialChatController {
         return PageResponse.from(contacts.friends(actor(user), page, size));
     }
 
+    @DeleteMapping("/friends/{peer}")
+    public FriendResponse removeFriend(@AuthenticationPrincipal Long user, @PathVariable @Positive long peer) {
+        return new FriendResponse(contacts.removeFriend(actor(user), peer));
+    }
+
     @GetMapping("/friend-requests/incoming")
     public PageResponse<UserSummaryDto> incoming(@AuthenticationPrincipal Long user,
             @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "30") int size) {

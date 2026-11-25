@@ -55,8 +55,12 @@ public class MediaRequestPublisher {
                 properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
                 properties.setContentType("application/json");
                 properties.setMessageId(current.eventId());
+                current.traceContext().inject(properties);
                 CorrelationData correlation = new CorrelationData(UUID.randomUUID().toString());
-                template.send("media.jobs.v1", "process", new Message(mapper.writeValueAsBytes(current.envelope()), properties), correlation);
+                Message request = new Message(mapper.writeValueAsBytes(current.envelope()), properties);
+                try (var scope = current.traceContext().makeCurrent()) {
+                    template.send("media.jobs.v1", "process", request, correlation);
+                }
                 var confirmed = correlation.getFuture().get(5, TimeUnit.SECONDS);
                 if (!confirmed.ack() || correlation.getReturned() != null) throw new IllegalStateException("Unconfirmed media delivery");
                 deliveries.published(current);

@@ -1,0 +1,7 @@
+# Optional split-chat management port, available only on the Compose network.
+services:
+  chat-service:
+    environment:
+      SPRING_PROFILES_ACTIVE: local,observability
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9090/actuator/health"]

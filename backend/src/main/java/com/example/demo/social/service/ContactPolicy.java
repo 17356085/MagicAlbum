@@ -4,7 +4,6 @@ import com.example.demo.social.repo.FriendRequestRepository;
 import com.example.demo.social.repo.FriendRequestRepository.State;
 import com.example.demo.social.repo.SocialRepository;
 import com.example.demo.user.dto.UserSummaryDto;
-import com.example.demo.user.service.UserFollowService;
 import com.example.demo.user.service.UserProfileService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,10 +25,9 @@ import java.util.Set;
 /**
  * Same-process owner of contact authorization.
  *
- * <p>Follow state remains owned by {@link UserFollowService}; this policy
- * combines that state with social-owned block state and exposes the stable
- * contract consumed by chat. All mutating chat relationship calls use the
- * same user-row lock boundary as follow/unfollow.</p>
+ * <p>Combines the directed follows, explicit friendship and block state owned
+ * by Social. All relationship writes share a stable identity-row lock order
+ * with contact authorization.</p>
  */
 @Service
 public class ContactPolicy {
@@ -147,6 +145,23 @@ public class ContactPolicy {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "好友申请已处理");
         }
         return decision.mutual() || accept ? FriendStatus.FRIEND : FriendStatus.NONE;
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public FriendStatus removeFriend(long user, long peer) {
+        requireDifferentAccounts(user, peer);
+        follows.lockForMessaging(user, peer);
+        Decision decision = evaluate(user, peer);
+        if (!decision.friend()) {
+            return status(user, decision, friendRequests.find(user, peer).orElse(null));
+        }
+        // A mutual friendship ends by removing only the caller's outgoing follow.
+        if (decision.mutual()) {
+            follows.removeOutgoingFollow(user, peer);
+        }
+        // No earlier application may reestablish the friendship after removal.
+        friendRequests.remove(user, peer);
+        return decision.contactAllowed() ? FriendStatus.NONE : FriendStatus.UNAVAILABLE;
     }
 
     private Page<UserSummaryDto> summaries(Page<Long> ids) {

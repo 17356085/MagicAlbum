@@ -26,6 +26,7 @@
         <jjwt.version>0.12.5</jjwt.version>
         <spring-cloud.version>2025.1.0</spring-cloud.version>
         <spring-cloud-alibaba.version>2025.1.0.0</spring-cloud-alibaba.version>
+        <bluealbum.shared.version>0.0.1-SNAPSHOT</bluealbum.shared.version>
         <!-- 全局禁用 AOT 与测试 AOT，避免 Windows 环境下触发删除目录异常 -->
         <spring.aot.enabled>false</spring.aot.enabled>
         <spring.test.aot.enabled>false</spring.test.aot.enabled>
@@ -33,6 +34,16 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>com.study.spring</groupId>
+                <artifactId>platform-web</artifactId>
+                <version>${bluealbum.shared.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.study.spring</groupId>
+                <artifactId>chat-domain</artifactId>
+                <version>${bluealbum.shared.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.cloud</groupId>
                 <artifactId>spring-cloud-dependencies</artifactId>
@@ -52,6 +63,9 @@
 
     <!-- 聚合模块 -->
     <modules>
+        <module>platform-web</module>
+        <module>chat-domain</module>
+        <module>chat-service</module>
         <module>backend</module>
         <module>gateway</module>
         <module>notification-service</module>

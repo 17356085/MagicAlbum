@@ -26,6 +26,9 @@ public class ContentEventRecorder {
     private final ContentWriteGateService contentWriteGateService;
     private final Clock clock;
 
+    @Value("${app.content.events.enabled:false}")
+    private boolean eventsEnabled;
+
     @Value("${app.content.events.kafka.enabled:false}")
     private boolean kafkaEnabled;
 
@@ -82,7 +85,7 @@ public class ContentEventRecorder {
         event.setAttempts(0);
         event.setAvailableAt(occurredAt);
         ContentEventOutbox saved = repository.save(event);
-        if (kafkaEnabled) {
+        if (eventsEnabled && kafkaEnabled) {
             repository.queueKafkaDelivery(saved.getId());
         }
         return saved;

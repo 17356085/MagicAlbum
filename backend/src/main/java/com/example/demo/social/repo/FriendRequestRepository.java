@@ -68,6 +68,11 @@ public class FriendRequestRepository {
                 """, state.name(), Math.min(requester, recipient), Math.max(requester, recipient), requester);
     }
 
+    public void remove(long first, long second) {
+        jdbc.update("DELETE FROM social_friend_requests WHERE low_id = ? AND high_id = ?",
+                Math.min(first, second), Math.max(first, second));
+    }
+
     public Page<Long> friends(long user, Pageable page) {
         Long count = jdbc.queryForObject("SELECT COUNT(DISTINCT peer_id) " + RELATIONSHIPS,
                 Long.class, user, user, user, user, user);

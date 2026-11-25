@@ -5,6 +5,9 @@ COPY pom.xml /workspace/pom.xml
 COPY backend/pom.xml /workspace/backend/pom.xml
 COPY gateway/pom.xml /workspace/gateway/pom.xml
 COPY notification-service/pom.xml /workspace/notification-service/pom.xml
+COPY platform-web/pom.xml /workspace/platform-web/pom.xml
+COPY chat-domain/pom.xml /workspace/chat-domain/pom.xml
+COPY chat-service/pom.xml /workspace/chat-service/pom.xml
 COPY config /workspace/config
 
 RUN mvn -q -e -pl backend -am dependency:go-offline
@@ -14,6 +17,9 @@ ARG JAVA_BUILD_OPTIONS="-Xmx512m -XX:ActiveProcessorCount=2 -Dspring.test.contex
 ENV JAVA_TOOL_OPTIONS=${JAVA_BUILD_OPTIONS}
 
 COPY backend/src /workspace/backend/src
+COPY platform-web/src /workspace/platform-web/src
+COPY chat-domain/src /workspace/chat-domain/src
+COPY chat-service/src/main/resources/db/chat/mysql /workspace/chat-service/src/main/resources/db/chat/mysql
 
 RUN mvn -q -e -pl backend -am package
 

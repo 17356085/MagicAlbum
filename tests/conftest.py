@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 import pytest
@@ -13,6 +13,7 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 from selenium.webdriver.remote.webdriver import WebDriver
 
 from tests.api.api_client import ApiClient
+from tests.api.conftest import Seed, create_ci_seed
 
 
 TEST_ROOT = Path(__file__).resolve().parent
@@ -105,6 +106,11 @@ def pytest_configure(config: pytest.Config) -> None:
     BROWSER_HEADLESS = not config.getoption("--selenium-headed")
     BROWSER_NAME = config.getoption("--selenium-browser")
     _configure_selenium_settings()
+
+
+@pytest.fixture(scope="session")
+def ci_seed(request: pytest.FixtureRequest) -> Iterator[Seed]:
+    yield from create_ci_seed(request)
 
 
 @pytest.fixture(scope="session")

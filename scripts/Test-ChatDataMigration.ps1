@@ -318,8 +318,8 @@ try {
     $chatMigration1Path = Join-Path $repositoryRoot 'backend/src/main/resources/db/migration/mysql/V20261120_1__create_chat.sql'
     $chatMigration2Path = Join-Path $repositoryRoot 'backend/src/main/resources/db/migration/mysql/V20261120_2__add_chat_history_revision.sql'
     $sourceRecallMigrationPath = Join-Path $repositoryRoot 'backend/src/main/resources/db/migration/mysql/V20261124_1__chat_message_recall.sql'
-    $targetStorageMigrationPath = Join-Path $repositoryRoot 'backend/src/main/resources/db/chat/mysql/V1__create_chat_storage.sql'
-    $targetRecallMigrationPath = Join-Path $repositoryRoot 'backend/src/main/resources/db/chat/mysql/V4__chat_message_recall.sql'
+    $targetStorageMigrationPath = Join-Path $repositoryRoot 'chat-service/src/main/resources/db/chat/mysql/V1__create_chat_storage.sql'
+    $targetRecallMigrationPath = Join-Path $repositoryRoot 'chat-service/src/main/resources/db/chat/mysql/V4__chat_message_recall.sql'
     $usersMigrationPath = Join-Path $repositoryRoot 'backend/src/main/resources/db/migration/mysql/V2__create_users.sql'
     $followsMigrationPath = Join-Path $repositoryRoot 'backend/src/main/resources/db/migration/mysql/V20__create_user_follows.sql'
     foreach ($migrationPath in @($chatMigration1Path, $chatMigration2Path, $sourceRecallMigrationPath, $targetStorageMigrationPath, $targetRecallMigrationPath, $usersMigrationPath, $followsMigrationPath)) {

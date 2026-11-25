@@ -5,9 +5,11 @@ import com.example.demo.ai.service.AiSummaryCacheService;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.common.RedisKeys;
 import com.example.demo.notifications.client.NotificationClient;
-import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.tags.service.TagService;
 import com.example.demo.threads.dto.CreateThreadRequest;
+import com.example.demo.threads.dto.FollowingFeedPage;
+import com.example.demo.threads.dto.ThreadFeedView;
 import com.example.demo.threads.dto.ThreadLikeResponse;
 import com.example.demo.threads.dto.ThreadQueryView;
 import com.example.demo.threads.dto.ThreadRankingView;
@@ -20,7 +22,7 @@ import com.example.demo.threads.event.entity.ContentEventType;
 import com.example.demo.threads.event.service.ContentEventRecorder;
 import com.example.demo.threads.repo.ThreadLikeRepository;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,8 +56,8 @@ public class ThreadService {
 
     private final ThreadRepository threadRepository;
     private final ThreadLikeRepository threadLikeRepository;
-    private final SectionRepository sectionRepository;
-    private final UserRepository userRepository;
+    private final SectionAdministration sections;
+    private final UserReadService users;
     private final MarkdownRenderService markdownRenderService;
     private final com.example.demo.threads.service.mp.ThreadReadServiceMp threadReadServiceMp;
     private final boolean mpThreadsEnabled;
@@ -71,8 +73,8 @@ public class ThreadService {
     @Autowired
     public ThreadService(ThreadRepository threadRepository,
                          ThreadLikeRepository threadLikeRepository,
-                         SectionRepository sectionRepository,
-                         UserRepository userRepository,
+                         SectionAdministration sections,
+                         UserReadService users,
                          MarkdownRenderService markdownRenderService,
                          ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                          @Value("${feature.mp.read.threads:false}") boolean mpThreadsEnabled,
@@ -84,7 +86,7 @@ public class ThreadService {
                          ObjectProvider<TagService> tagServiceProvider,
                          ObjectProvider<AiSummaryCacheService> aiSummaryCacheServiceProvider,
                          ContentEventRecorder contentEventRecorder) {
-        this(threadRepository, threadLikeRepository, sectionRepository, userRepository, markdownRenderService,
+        this(threadRepository, threadLikeRepository, sections, users, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 redisTemplateProvider == null ? null : redisTemplateProvider.getIfAvailable(),
                 resolveObjectMapper(objectMapperProvider),
@@ -95,22 +97,22 @@ public class ThreadService {
     }
 
     ThreadService(ThreadRepository threadRepository,
-                  SectionRepository sectionRepository,
+                  SectionAdministration sections,
                   MarkdownRenderService markdownRenderService,
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
                   ObjectProvider<RabbitTemplate> rabbitTemplateProvider,
                   boolean rabbitEnabled,
                   ContentEventRecorder contentEventRecorder) {
-        this(threadRepository, null, sectionRepository, null, markdownRenderService,
+        this(threadRepository, null, sections, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 null, defaultObjectMapper(), null, null, null, contentEventRecorder);
     }
 
     ThreadService(ThreadRepository threadRepository,
                   ThreadLikeRepository threadLikeRepository,
-                  SectionRepository sectionRepository,
-                  UserRepository userRepository,
+                  SectionAdministration sections,
+                  UserReadService users,
                   MarkdownRenderService markdownRenderService,
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
@@ -124,8 +126,8 @@ public class ThreadService {
                   ContentEventRecorder contentEventRecorder) {
         this.threadRepository = threadRepository;
         this.threadLikeRepository = threadLikeRepository;
-        this.sectionRepository = sectionRepository;
-        this.userRepository = userRepository;
+        this.sections = sections;
+        this.users = users;
         this.markdownRenderService = markdownRenderService;
         this.threadReadServiceMp = threadReadServiceMpProvider.getIfAvailable();
         this.mpThreadsEnabled = mpThreadsEnabled;
@@ -140,7 +142,7 @@ public class ThreadService {
     }
 
     ThreadService(ThreadRepository threadRepository,
-                  SectionRepository sectionRepository,
+                  SectionAdministration sections,
                   MarkdownRenderService markdownRenderService,
                   ObjectProvider<com.example.demo.threads.service.mp.ThreadReadServiceMp> threadReadServiceMpProvider,
                   boolean mpThreadsEnabled,
@@ -149,7 +151,7 @@ public class ThreadService {
                   StringRedisTemplate redisTemplate,
                   ObjectMapper objectMapper,
                   ContentEventRecorder contentEventRecorder) {
-        this(threadRepository, null, sectionRepository, null, markdownRenderService,
+        this(threadRepository, null, sections, null, markdownRenderService,
                 threadReadServiceMpProvider, mpThreadsEnabled, rabbitTemplateProvider, rabbitEnabled,
                 redisTemplate, objectMapper, null, null, null, contentEventRecorder);
     }
@@ -159,7 +161,7 @@ public class ThreadService {
         if (governance != null) governance.assertCanWrite(authorId, req.getSectionId());
         // 校验分区存在
         Long sectionId = req.getSectionId();
-        if (sectionId == null || !sectionRepository.existsById(sectionId)) {
+        if (sectionId == null || !sections.existsById(sectionId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分区不存在");
         }
         if (req.getTitle() == null || req.getTitle().isBlank()) {
@@ -253,10 +255,64 @@ public class ThreadService {
     public Page<ThreadDto> listFollowing(Long userId, int page, int size) {
         int limit = Math.min(Math.max(size, 1), 20);
         int pageIndex = Math.max(page, 1) - 1;
-        Page<com.example.demo.threads.dto.ThreadFeedView> result = threadRepository.findFollowingFeed(
-                userId, PageRequest.of(pageIndex, limit));
+        Page<ThreadFeedView> result = threadRepository.findFollowingFeed(userId, PageRequest.of(pageIndex, limit));
         return new PageImpl<>(result.getContent().stream().map(dtoMapper::toFeedDto).toList(),
                 result.getPageable(), result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public FollowingFeedPage followingWindow(Long userId, int page, int size, String after, String before) {
+        int position = Math.max(page, 1);
+        int limit = Math.min(Math.max(size, 1), 20);
+        if (after != null && before != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只能指定一个关注流游标");
+        }
+        if (after == null && before == null) {
+            if ((position - 1L) * limit > Integer.MAX_VALUE) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "页码超出范围");
+            }
+            Page<ThreadFeedView> result = threadRepository.findFollowingFeed(userId, PageRequest.of(position - 1, limit));
+            return followingPage(userId, position, limit, result.getTotalElements(), result.getContent(),
+                    result.hasNext(), result.hasPrevious());
+        }
+
+        boolean forward = before == null;
+        FollowingFeedCursor cursor = FollowingFeedCursor.decode(forward ? after : before, userId);
+        PageRequest requested = PageRequest.of(0, limit + 1);
+        List<ThreadFeedView> matches = forward
+                ? threadRepository.findFollowingFeedOlder(userId, cursor.createdAt(), cursor.threadId(), requested)
+                : threadRepository.findFollowingFeedNewer(userId, cursor.createdAt(), cursor.threadId(), requested);
+        long total = threadRepository.countFollowingFeed(userId);
+        if (matches.isEmpty()) {
+            return new FollowingFeedPage(List.of(), position, limit, total, null, null);
+        }
+
+        boolean moreInDirection = matches.size() > limit;
+        List<ThreadFeedView> rows = matches.subList(0, Math.min(matches.size(), limit));
+        if (!forward) {
+            rows = rows.reversed();
+        }
+        PageRequest probe = PageRequest.of(0, 1);
+        ThreadFeedView first = rows.getFirst();
+        ThreadFeedView last = rows.getLast();
+        boolean hasNext = forward ? moreInDirection
+                : !threadRepository.findFollowingFeedOlder(userId, last.getCreatedAt(), last.getId(), probe).isEmpty();
+        boolean hasPrevious = position > 1 && (forward
+                ? !threadRepository.findFollowingFeedNewer(userId, first.getCreatedAt(), first.getId(), probe).isEmpty()
+                : moreInDirection);
+        return followingPage(userId, position, limit, total, rows, hasNext, hasPrevious);
+    }
+
+    private FollowingFeedPage followingPage(long userId, int position, int limit, long total,
+                                             List<ThreadFeedView> rows, boolean hasNext, boolean hasPrevious) {
+        if (rows.isEmpty()) {
+            return new FollowingFeedPage(List.of(), position, limit, total, null, null);
+        }
+        ThreadFeedView first = rows.getFirst();
+        ThreadFeedView last = rows.getLast();
+        String next = hasNext ? new FollowingFeedCursor(last.getCreatedAt(), last.getId()).encode(userId) : null;
+        String previous = hasPrevious ? new FollowingFeedCursor(first.getCreatedAt(), first.getId()).encode(userId) : null;
+        return new FollowingFeedPage(rows.stream().map(dtoMapper::toFeedDto).toList(), position, limit, total, next, previous);
     }
 
     @Transactional(readOnly = true)
@@ -417,14 +473,14 @@ public class ThreadService {
     }
 
     private void sendLikeNotification(Long actorId, Thread thread) {
-        if (notificationClient == null || userRepository == null || thread == null || thread.getAuthorId() == null) {
+        if (notificationClient == null || users == null || thread == null || thread.getAuthorId() == null) {
             return;
         }
         if (thread.getAuthorId().equals(actorId)) {
             return;
         }
-        String actorName = userRepository.findById(actorId)
-                .map(user -> user.getUsername() == null || user.getUsername().isBlank() ? "有人" : user.getUsername())
+        String actorName = users.displayNameById(actorId)
+                .filter(name -> !name.isBlank())
                 .orElse("有人");
         String title = thread.getTitle() == null || thread.getTitle().isBlank() ? "你的帖子" : thread.getTitle();
         notificationClient.sendLike(
@@ -483,7 +539,7 @@ public class ThreadService {
             changed = true;
         }
         if (req.getSectionId() != null && !req.getSectionId().equals(t.getSectionId())) {
-            if (!sectionRepository.existsById(req.getSectionId())) {
+            if (!sections.existsById(req.getSectionId())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分区不存在");
             }
             t.setSectionId(req.getSectionId());

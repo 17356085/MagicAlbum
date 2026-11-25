@@ -7,6 +7,7 @@ import com.example.demo.chat.service.ChatChangePublisher;
 import com.example.demo.chat.service.ChatService;
 import com.example.demo.common.DistributedRateLimiter;
 import com.example.demo.common.GlobalExceptionHandler;
+import com.example.demo.config.PerfMetricsSecurityConfig;
 import com.example.demo.config.RequestCorrelationFilter;
 import org.springframework.amqp.core.FanoutExchange;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,10 +19,10 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-/** Explicit allow-list for components shared from the backend jar. */
+/** Explicit imports for the shared chat domain and web support. */
 @Configuration(proxyBeanMethods = false)
 @Import({ChatController.class, ChatService.class, ChatRepository.class, ChatChangePublisher.class,
-        DistributedRateLimiter.class, GlobalExceptionHandler.class})
+        DistributedRateLimiter.class, GlobalExceptionHandler.class, PerfMetricsSecurityConfig.class})
 public class ChatProcessConfiguration {
 
     @Bean

@@ -1,6 +1,6 @@
-package com.example.demo.user.repo;
+package com.example.demo.social.repo;
 
-import com.example.demo.user.entity.UserFollow;
+import com.example.demo.social.entity.UserFollow;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;

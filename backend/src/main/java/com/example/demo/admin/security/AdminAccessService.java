@@ -1,8 +1,7 @@
 package com.example.demo.admin.security;
 
 import com.example.demo.governance.service.GovernanceService;
-import com.example.demo.user.entity.User;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.CommunityAccounts;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,7 +22,7 @@ import java.util.Objects;
 @Service
 public class AdminAccessService {
 
-    private final UserRepository userRepository;
+    private final CommunityAccounts communityAccounts;
     private final GovernanceService governanceService;
     private final String configuredEmail;
     private final long configuredUserId;
@@ -33,23 +32,23 @@ public class AdminAccessService {
      * Kept for the existing focused unit tests. Production wiring uses the
      * four-argument constructor so persisted governance roles are authoritative.
      */
-    public AdminAccessService(UserRepository userRepository,
+    public AdminAccessService(CommunityAccounts communityAccounts,
                               @Value("${app.admin.email:}") String configuredEmail) {
-        this(userRepository, null, configuredEmail, 0L);
+        this(communityAccounts, null, configuredEmail, 0L);
     }
 
-    public AdminAccessService(UserRepository userRepository,
+    public AdminAccessService(CommunityAccounts communityAccounts,
                               GovernanceService governanceService,
                               @Value("${app.admin.email:}") String configuredEmail) {
-        this(userRepository, governanceService, configuredEmail, 0L);
+        this(communityAccounts, governanceService, configuredEmail, 0L);
     }
 
     @Autowired
-    public AdminAccessService(UserRepository userRepository,
+    public AdminAccessService(CommunityAccounts communityAccounts,
                               GovernanceService governanceService,
                               @Value("${app.admin.email:}") String configuredEmail,
                               @Value("${app.admin.user-id:0}") long configuredUserId) {
-        this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
+        this.communityAccounts = Objects.requireNonNull(communityAccounts, "communityAccounts");
         this.governanceService = governanceService;
         this.configuredEmail = normalize(configuredEmail);
         this.configuredUserId = configuredUserId;
@@ -68,13 +67,14 @@ public class AdminAccessService {
         }
 
         if (configuredUserId > 0) {
-            User configuredUser = userRepository.findById(configuredUserId).orElse(null);
+            CommunityAccounts.BootstrapAccount configuredUser = communityAccounts.findBootstrapById(configuredUserId)
+                    .orElse(null);
             if (configuredUser == null) {
                 throw new IllegalStateException(
                         "Configured app.admin.user-id does not match an existing user account; startup aborted");
             }
             if (!configuredEmail.isEmpty()
-                    && !configuredEmail.equalsIgnoreCase(configuredUser.getEmail())) {
+                    && !configuredEmail.equalsIgnoreCase(configuredUser.email())) {
                 throw new IllegalStateException(
                         "Configured admin identity does not match the selected user account; startup aborted");
             }
@@ -87,7 +87,8 @@ public class AdminAccessService {
             return;
         }
 
-        List<User> matches = userRepository.findAllByEmailIgnoreCase(configuredEmail);
+        List<CommunityAccounts.BootstrapAccount> matches =
+                communityAccounts.findBootstrapByEmailIgnoreCase(configuredEmail);
 
         if (matches.isEmpty()) {
             throw new IllegalStateException(
@@ -98,13 +99,13 @@ public class AdminAccessService {
                     "Configured app.admin.email matches multiple user accounts; startup aborted");
         }
 
-        User matchedUser = matches.get(0);
-        Long userId = matchedUser.getId();
+        CommunityAccounts.BootstrapAccount matchedUser = matches.get(0);
+        Long userId = matchedUser.id();
         if (userId == null) {
             throw new IllegalStateException(
                     "Configured app.admin.email matched a user without a persisted id; startup aborted");
         }
-        if (!matchedUser.isEmailVerified()) {
+        if (!matchedUser.emailVerified()) {
             throw new IllegalStateException(
                     "Configured app.admin.email matched an unverified user account; startup aborted");
         }

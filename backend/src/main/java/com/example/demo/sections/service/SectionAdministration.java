@@ -56,6 +56,10 @@ public class SectionAdministration {
         return sectionRepository.findByIdForWriting(sectionId).map(this::toView);
     }
 
+    public boolean existsById(Long sectionId) {
+        return sectionRepository.existsById(sectionId);
+    }
+
     /** Returns the IDs that actually exist, preserving the caller's set semantics. */
     @Transactional(readOnly = true)
     public Set<Long> findExistingIds(Collection<Long> sectionIds) {

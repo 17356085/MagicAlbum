@@ -5,6 +5,7 @@ x-otel-environment: &otel-environment
   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
   OTEL_METRICS_EXPORTER: none
   OTEL_TRACES_EXPORTER: otlp
+  OTEL_PROPAGATORS: tracecontext
   OTEL_LOGS_EXPORTER: otlp
   OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: 'true'
   OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_MDC_ATTRIBUTES: requestId
@@ -43,6 +44,11 @@ services:
       OTEL_SERVICE_NAME: bluealbum-gateway
     volumes:
       - *otel-jar
+  chat-realtime:
+    environment:
+      OTEL_SERVICE_NAME: bluealbum-chat-realtime
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.131.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]

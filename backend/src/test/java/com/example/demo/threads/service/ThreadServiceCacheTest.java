@@ -1,7 +1,7 @@
 package com.example.demo.threads.service;
 
 import com.example.demo.common.RedisKeys;
-import com.example.demo.sections.repo.SectionRepository;
+import com.example.demo.sections.service.SectionAdministration;
 import com.example.demo.threads.dto.ThreadDto;
 import com.example.demo.threads.dto.ThreadQueryView;
 import com.example.demo.threads.dto.ThreadReadState;
@@ -56,7 +56,7 @@ class ThreadServiceCacheTest {
         when(repository.findByIdForInteraction(7L)).thenReturn(Optional.of(thread));
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
-        ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(repository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null,
                 mock(ContentEventRecorder.class));
 
@@ -74,7 +74,7 @@ class ThreadServiceCacheTest {
     @Test
     void list_should_cache_thread_page() {
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        SectionRepository sectionRepository = mock(SectionRepository.class);
+        SectionAdministration sections = mock(SectionAdministration.class);
         MarkdownRenderService markdownRenderService = mock(MarkdownRenderService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
@@ -100,7 +100,7 @@ class ThreadServiceCacheTest {
         when(threadRepository.searchNewestView(any(), any(), any(), any(PageRequest.class)))
                 .thenReturn(new PageImpl<>(List.of(view), PageRequest.of(0, 10), 1));
 
-        ThreadService service = new ThreadService(threadRepository, sectionRepository, markdownRenderService, mpProvider, false,
+        ThreadService service = new ThreadService(threadRepository, sections, markdownRenderService, mpProvider, false,
                 rabbitProvider, false, redisTemplate, null, mock(ContentEventRecorder.class));
         var result = service.list(null, null, 1, 10);
 
@@ -112,7 +112,7 @@ class ThreadServiceCacheTest {
     @Test
     void list_should_return_cached_thread_page() throws Exception {
         ThreadRepository threadRepository = mock(ThreadRepository.class);
-        SectionRepository sectionRepository = mock(SectionRepository.class);
+        SectionAdministration sections = mock(SectionAdministration.class);
         MarkdownRenderService markdownRenderService = mock(MarkdownRenderService.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
@@ -142,7 +142,7 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
-        ThreadService service = new ThreadService(threadRepository, sectionRepository, markdownRenderService, mpProvider, false,
+        ThreadService service = new ThreadService(threadRepository, sections, markdownRenderService, mpProvider, false,
                 rabbitProvider, false, redisTemplate, mapper, mock(ContentEventRecorder.class));
         var result = service.list(null, null, 1, 10);
 
@@ -177,7 +177,7 @@ class ThreadServiceCacheTest {
         when(mpProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
                 mock(ContentEventRecorder.class));
 
@@ -205,7 +205,7 @@ class ThreadServiceCacheTest {
         when(mpProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
                 mock(ContentEventRecorder.class));
 
@@ -228,7 +228,7 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
                 mock(ContentEventRecorder.class));
         service.list("  tech  ", null, 7L, 1, 10);
@@ -255,7 +255,7 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, true, rabbitProvider, false, redisTemplate, null,
                 mock(ContentEventRecorder.class));
         service.list("  tech  ", null, 7L, 1, 10);
@@ -295,7 +295,7 @@ class ThreadServiceCacheTest {
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         com.fasterxml.jackson.databind.ObjectMapper mapper =
                 new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, true, rabbitProvider, false,
                 redisTemplate, mapper, mock(ContentEventRecorder.class));
 
@@ -347,7 +347,7 @@ class ThreadServiceCacheTest {
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
 
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
                 mock(ContentEventRecorder.class));
 
@@ -384,7 +384,7 @@ class ThreadServiceCacheTest {
         when(mpProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
                 mock(ContentEventRecorder.class));
 
@@ -414,7 +414,7 @@ class ThreadServiceCacheTest {
         when(mpProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
                 mock(ContentEventRecorder.class));
 
@@ -438,7 +438,7 @@ class ThreadServiceCacheTest {
         when(mpProvider.getIfAvailable()).thenReturn(null);
         ObjectProvider<RabbitTemplate> rabbitProvider = mock(ObjectProvider.class);
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mpProvider, false, rabbitProvider, false, redisTemplate, null,
                 mock(ContentEventRecorder.class));
 
@@ -475,7 +475,7 @@ class ThreadServiceCacheTest {
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         MarkdownRenderService markdown = mock(MarkdownRenderService.class);
         when(markdown.renderWithCache(eq(9L), any(), anyString())).thenReturn("<p>Body</p>");
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class), markdown,
                 mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
                 mock(ContentEventRecorder.class));
 
@@ -522,7 +522,7 @@ class ThreadServiceCacheTest {
         MarkdownRenderService markdown = mock(MarkdownRenderService.class);
         when(markdown.renderWithCache(9L, viewUpdatedAt, "View body"))
                 .thenReturn("<p>View body</p>");
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class), markdown,
                 mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
                 mock(ContentEventRecorder.class));
 
@@ -562,7 +562,7 @@ class ThreadServiceCacheTest {
         when(rabbitProvider.getIfAvailable()).thenReturn(null);
         MarkdownRenderService markdown = mock(MarkdownRenderService.class);
         when(markdown.renderWithCache(eq(9L), any(), anyString())).thenReturn("<p>Body</p>");
-        ThreadService service = new ThreadService(threadRepository, mock(SectionRepository.class), markdown,
+        ThreadService service = new ThreadService(threadRepository, mock(SectionAdministration.class), markdown,
                 mpProvider, false, rabbitProvider, false, redisTemplate, mapper,
                 mock(ContentEventRecorder.class));
 
@@ -583,7 +583,7 @@ class ThreadServiceCacheTest {
         when(repository.findByIdForInteraction(7L)).thenReturn(java.util.Optional.of(thread));
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
-        ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(repository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null,
                 mock(ContentEventRecorder.class));
 
@@ -610,7 +610,7 @@ class ThreadServiceCacheTest {
         when(repository.findByIdForInteraction(7L)).thenReturn(java.util.Optional.of(thread));
         ObjectProvider<ThreadReadServiceMp> mp = mock(ObjectProvider.class);
         ObjectProvider<RabbitTemplate> rabbit = mock(ObjectProvider.class);
-        ThreadService service = new ThreadService(repository, mock(SectionRepository.class),
+        ThreadService service = new ThreadService(repository, mock(SectionAdministration.class),
                 mock(MarkdownRenderService.class), mp, false, rabbit, false, redis, null,
                 mock(ContentEventRecorder.class));
 

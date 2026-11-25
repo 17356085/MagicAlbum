@@ -14,6 +14,8 @@ import (
 	"time"
 
 	authv1 "github.com/17356085/MagicAlbum/services/chat-realtime/internal/authv1"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -81,7 +83,17 @@ func grpcSessionVerifier(connection grpc.ClientConnInterface, credential string,
 		}
 		callContext, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
+		callContext, span := tracerForContext(callContext).Start(callContext, "chat.session.verify",
+			trace.WithSpanKind(trace.SpanKindClient))
+		defer span.End()
 		callContext = metadata.AppendToOutgoingContext(callContext, grpcCredentialHeader, credential)
+		if span.SpanContext().IsValid() {
+			carrier := propagation.MapCarrier{}
+			traceContextPropagator.Inject(callContext, carrier)
+			for _, header := range carrier.Keys() {
+				callContext = metadata.AppendToOutgoingContext(callContext, header, carrier.Get(header))
+			}
+		}
 		response, err := client.VerifySession(callContext, &authv1.VerifySessionRequest{Token: token})
 		if err != nil {
 			switch status.Code(err) {

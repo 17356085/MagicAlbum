@@ -15,8 +15,7 @@ import com.example.demo.governance.repo.CommunityModeratorScopeRepository;
 import com.example.demo.governance.repo.CommunityPostingRestrictionRepository;
 import com.example.demo.governance.repo.CommunityStateRepository;
 import com.example.demo.sections.service.SectionAdministration;
-import com.example.demo.user.entity.User;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.CommunityAccounts;
 import org.slf4j.MDC;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -48,7 +47,7 @@ public class GovernanceService {
     private static final int MAX_TEXT_LENGTH = 10_000;
     private static final Pattern SECTION_SLUG = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
 
-    private final UserRepository userRepository;
+    private final CommunityAccounts communityAccounts;
     private final SectionAdministration sectionAdministration;
     private final CommunityStateRepository stateRepository;
     private final CommunityAdminRoleRepository adminRoleRepository;
@@ -56,14 +55,14 @@ public class GovernanceService {
     private final CommunityPostingRestrictionRepository restrictionRepository;
     private final CommunityAuditRepository auditRepository;
 
-    public GovernanceService(UserRepository userRepository,
+    public GovernanceService(CommunityAccounts communityAccounts,
                              SectionAdministration sectionAdministration,
                              CommunityStateRepository stateRepository,
                              CommunityAdminRoleRepository adminRoleRepository,
                              CommunityModeratorScopeRepository moderatorScopeRepository,
                              CommunityPostingRestrictionRepository restrictionRepository,
                              CommunityAuditRepository auditRepository) {
-        this.userRepository = Objects.requireNonNull(userRepository, "userRepository");
+        this.communityAccounts = Objects.requireNonNull(communityAccounts, "communityAccounts");
         this.sectionAdministration = Objects.requireNonNull(sectionAdministration, "sectionAdministration");
         this.stateRepository = Objects.requireNonNull(stateRepository, "stateRepository");
         this.adminRoleRepository = Objects.requireNonNull(adminRoleRepository, "adminRoleRepository");
@@ -180,8 +179,8 @@ public class GovernanceService {
         if (actor == null) {
             throw failure(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
-        User user = userRepository.findByIdForInteraction(actor).orElse(null);
-        if (user == null) {
+        CommunityAccounts.AccountSummary account = communityAccounts.findByIdForInteraction(actor).orElse(null);
+        if (account == null) {
             throw failure(HttpStatus.UNAUTHORIZED, "Authentication required");
         }
     }
@@ -197,8 +196,8 @@ public class GovernanceService {
             throw failure(HttpStatus.BAD_REQUEST, "Invalid bootstrap user");
         }
         CommunityState state = lockPolicyRow();
-        User user = userRepository.findByIdForInteraction(userId).orElse(null);
-        if (user == null) {
+        CommunityAccounts.AccountSummary account = communityAccounts.findByIdForInteraction(userId).orElse(null);
+        if (account == null) {
             throw failure(HttpStatus.NOT_FOUND, "User not found");
         }
         if (state.isBootstrapped()) {
@@ -236,7 +235,8 @@ public class GovernanceService {
     public Page<UserView> listUsers(String query, int page, int size, Long actor) {
         requireAdmin(actor);
         String normalizedQuery = normalizeQuery(query);
-        Page<User> users = userRepository.search(normalizedQuery, pageRequest(page, size));
+        Page<CommunityAccounts.AccountSummary> users = communityAccounts.search(normalizedQuery,
+                pageRequest(page, size));
         return users.map(this::toUserView);
     }
 
@@ -247,7 +247,7 @@ public class GovernanceService {
             throw failure(HttpStatus.BAD_REQUEST, "enabled is required");
         }
         String normalizedReason = normalizeReason(reason);
-        User target = lockUser(targetUserId);
+        CommunityAccounts.AccountSummary target = lockUser(targetUserId);
         boolean currentlyAdmin = adminRoleRepository.existsById(targetUserId);
         if (enabled && !currentlyAdmin) {
             adminRoleRepository.save(new CommunityAdminRole(targetUserId));
@@ -268,7 +268,7 @@ public class GovernanceService {
                                          String reason) {
         lockAndRequireManager(actor);
         String normalizedReason = normalizeReason(reason);
-        User target = lockUser(targetUserId);
+        CommunityAccounts.AccountSummary target = lockUser(targetUserId);
         Set<Long> sectionIds = normalizeSectionIds(requestedSectionIds);
         if (!sectionIds.isEmpty()) {
             Set<Long> found = sectionAdministration.findExistingIds(sectionIds);
@@ -298,7 +298,7 @@ public class GovernanceService {
             throw failure(HttpStatus.BAD_REQUEST, "until must be in the future");
         }
         String normalizedReason = normalizeReason(reason);
-        User target = lockUser(targetUserId);
+        CommunityAccounts.AccountSummary target = lockUser(targetUserId);
         if (restricted) {
             restrictionRepository.save(new CommunityPostingRestriction(targetUserId, until));
         } else {
@@ -350,12 +350,12 @@ public class GovernanceService {
         return auditRepository.findAllByOrderByOccurredAtDescIdDesc(pageRequest(page, size)).map(this::toAuditView);
     }
 
-    public UserView toUserView(User user) {
-        if (user == null || user.getId() == null) {
+    public UserView toUserView(CommunityAccounts.AccountSummary account) {
+        if (account == null || account.id() == null) {
             throw failure(HttpStatus.NOT_FOUND, "User not found");
         }
-        Access access = access(user.getId());
-        return new UserView(user.getId(), user.getUsername(), access.admin(), access.moderatedSectionIds(),
+        Access access = access(account.id());
+        return new UserView(account.id(), account.username(), access.admin(), access.moderatedSectionIds(),
                 access.postingRestricted(), access.restrictedUntil());
     }
 
@@ -398,11 +398,11 @@ public class GovernanceService {
         return saved == null ? event : saved;
     }
 
-    private User lockUser(Long userId) {
+    private CommunityAccounts.AccountSummary lockUser(Long userId) {
         if (userId == null || userId <= 0) {
             throw failure(HttpStatus.NOT_FOUND, "User not found");
         }
-        return userRepository.findByIdForInteraction(userId)
+        return communityAccounts.findByIdForInteraction(userId)
                 .orElseThrow(() -> failure(HttpStatus.NOT_FOUND, "User not found"));
     }
 

@@ -1,6 +1,5 @@
 package com.example.demo.posts.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.posts.dto.CreatePostRequest;
 import com.example.demo.posts.entity.Post;
@@ -9,9 +8,8 @@ import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.dto.ThreadReadState;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -29,7 +27,7 @@ import static org.mockito.Mockito.when;
 class PostServiceModerationTest {
     private final PostRepository posts = mock(PostRepository.class);
     private final ThreadRepository threads = mock(ThreadRepository.class);
-    private final PostService service = new PostService(posts, threads, mock(UserRepository.class));
+    private final PostService service = new PostService(posts, threads, mock(UserReadService.class));
 
     @Test
     void hiddenThreadDoesNotExposeOrAcceptComments() {
@@ -107,8 +105,7 @@ class PostServiceModerationTest {
         when(likes.countByPostId(12L)).thenReturn(1L);
 
         PostService interactionService = new PostService(
-                posts, likes, threads, mock(UserRepository.class),
-                (StringRedisTemplate) null, (ObjectMapper) null, (NotificationClient) null);
+                posts, likes, threads, mock(UserReadService.class), null, (NotificationClient) null);
         interactionService.like(2L, 12L);
 
         var order = inOrder(threads, posts);
@@ -119,7 +116,7 @@ class PostServiceModerationTest {
 
     @Test
     void createLocksThreadBeforeReplyParent() {
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         Thread thread = thread("NORMAL");
         Post parent = new Post();
         parent.setId(13L);
@@ -143,7 +140,7 @@ class PostServiceModerationTest {
 
     @Test
     void createReturnsNotFoundAndDoesNotSaveWhenThreadLockIsMissing() {
-        UserRepository users = mock(UserRepository.class);
+        UserReadService users = mock(UserReadService.class);
         when(users.existsById(1L)).thenReturn(true);
         when(threads.findByIdForInteraction(7L)).thenReturn(Optional.empty());
 
@@ -163,8 +160,7 @@ class PostServiceModerationTest {
         when(threads.findByIdForInteraction(7L)).thenReturn(Optional.empty());
 
         PostService interactionService = new PostService(
-                posts, likes, threads, mock(UserRepository.class),
-                (StringRedisTemplate) null, (ObjectMapper) null, (NotificationClient) null);
+                posts, likes, threads, mock(UserReadService.class), null, (NotificationClient) null);
 
         assertThatThrownBy(() -> interactionService.like(2L, 12L))
                 .isInstanceOfSatisfying(ResponseStatusException.class,

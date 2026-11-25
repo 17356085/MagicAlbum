@@ -63,6 +63,14 @@ public class KafkaContentEventReader {
         if (processor == null) {
             throw new IllegalArgumentException("processor is required");
         }
+        return pollRecords(record -> processor.accept(record.value()));
+    }
+
+    /** Exposes broker coordinates to callers that retain invalid records before committing. */
+    public int pollRecords(java.util.function.Consumer<ConsumerRecord<String, byte[]>> processor) {
+        if (processor == null) {
+            throw new IllegalArgumentException("processor is required");
+        }
         if (closed.get()) {
             throw new IllegalStateException("Kafka consumer is closed");
         }
@@ -75,7 +83,7 @@ public class KafkaContentEventReader {
         }
         try {
             for (ConsumerRecord<String, byte[]> record : records) {
-                processor.accept(record.value());
+                processor.accept(record);
                 TopicPartition partition = new TopicPartition(record.topic(), record.partition());
                 long nextOffset = record.offset() + 1;
                 consumer.commitSync(Map.of(partition, new OffsetAndMetadata(nextOffset)));

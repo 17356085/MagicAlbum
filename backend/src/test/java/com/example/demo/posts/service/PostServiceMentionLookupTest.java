@@ -7,8 +7,7 @@ import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.entity.Thread;
 import com.example.demo.threads.repo.ThreadRepository;
-import com.example.demo.user.entity.User;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +28,7 @@ import static org.mockito.Mockito.when;
 class PostServiceMentionLookupTest {
     private final PostRepository posts = mock(PostRepository.class);
     private final ThreadRepository threads = mock(ThreadRepository.class);
-    private final UserRepository users = mock(UserRepository.class);
+    private final UserReadService users = mock(UserReadService.class);
     private final NotificationClient notifications = mock(NotificationClient.class);
     private final Thread thread = new Thread();
     private PostService service;
@@ -42,7 +41,7 @@ class PostServiceMentionLookupTest {
         thread.setStatus("NORMAL");
         when(threads.findByIdForInteraction(7L)).thenReturn(Optional.of(thread));
         when(users.existsById(1L)).thenReturn(true);
-        when(users.findById(1L)).thenReturn(Optional.of(user(1L, "self")));
+        when(users.displayNameById(1L)).thenReturn(Optional.of("self"));
         when(posts.save(any(Post.class))).thenAnswer(invocation -> {
             Post saved = invocation.getArgument(0);
             saved.setId(10L);
@@ -52,40 +51,40 @@ class PostServiceMentionLookupTest {
         when(view.getId()).thenReturn(10L);
         when(view.getThreadId()).thenReturn(7L);
         when(posts.findViewById(10L)).thenReturn(Optional.of(view));
-        service = new PostService(posts, null, threads, users, null, null, notifications);
+        service = new PostService(posts, null, threads, users, null, notifications);
     }
 
     @Test
     void repeatedKnownAndUnknownNamesAreLookedUpOncePerComment() {
-        when(users.findByUsername("bob")).thenReturn(Optional.of(user(4L, "bob")));
+        when(users.findIdByUsername("bob")).thenReturn(Optional.of(4L));
         String content = "@bob ".repeat(200) + "@none ".repeat(200);
         assertThat(content.length()).isLessThan(3000);
 
         create(content, null);
 
-        verify(users).findByUsername("bob");
-        verify(users).findByUsername("none");
+        verify(users).findIdByUsername("bob");
+        verify(users).findIdByUsername("none");
         verify(notifications).sendMention(eq(4L), anyString(), anyString(), eq(7L), eq(10L));
         verifyNoMoreInteractions(notifications);
 
         create(content, null);
-        verify(users, times(2)).findByUsername("bob");
-        verify(users, times(2)).findByUsername("none");
+        verify(users, times(2)).findIdByUsername("bob");
+        verify(users, times(2)).findIdByUsername("none");
     }
 
     @Test
     void preservesSpellingSpecificDatabaseMatchingAndFirstRecipientOrder() {
-        when(users.findByUsername("Alpha")).thenReturn(Optional.of(user(4L, "Alpha")));
-        when(users.findByUsername("alpha")).thenReturn(Optional.of(user(4L, "Alpha")));
-        when(users.findByUsername("bravo")).thenReturn(Optional.of(user(5L, "bravo")));
+        when(users.findIdByUsername("Alpha")).thenReturn(Optional.of(4L));
+        when(users.findIdByUsername("alpha")).thenReturn(Optional.of(4L));
+        when(users.findIdByUsername("bravo")).thenReturn(Optional.of(5L));
 
         create("@Alpha @bravo @alpha @Alpha @bravo", null);
 
         InOrder lookups = inOrder(users);
-        lookups.verify(users).findByUsername("Alpha");
-        lookups.verify(users).findByUsername("bravo");
-        lookups.verify(users).findByUsername("alpha");
-        verify(users, times(3)).findByUsername(anyString());
+        lookups.verify(users).findIdByUsername("Alpha");
+        lookups.verify(users).findIdByUsername("bravo");
+        lookups.verify(users).findIdByUsername("alpha");
+        verify(users, times(3)).findIdByUsername(anyString());
         InOrder delivery = inOrder(notifications);
         delivery.verify(notifications).sendMention(eq(4L), anyString(), anyString(), eq(7L), eq(10L));
         delivery.verify(notifications).sendMention(eq(5L), anyString(), anyString(), eq(7L), eq(10L));
@@ -101,10 +100,10 @@ class PostServiceMentionLookupTest {
         parent.setThreadId(7L);
         parent.setStatus("NORMAL");
         when(posts.findByIdForInteraction(9L)).thenReturn(Optional.of(parent));
-        when(users.findByUsername("self")).thenReturn(Optional.of(user(1L, "self")));
-        when(users.findByUsername("owner")).thenReturn(Optional.of(user(2L, "owner")));
-        when(users.findByUsername("parent")).thenReturn(Optional.of(user(3L, "parent")));
-        when(users.findByUsername("other")).thenReturn(Optional.of(user(4L, "other")));
+        when(users.findIdByUsername("self")).thenReturn(Optional.of(1L));
+        when(users.findIdByUsername("owner")).thenReturn(Optional.of(2L));
+        when(users.findIdByUsername("parent")).thenReturn(Optional.of(3L));
+        when(users.findIdByUsername("other")).thenReturn(Optional.of(4L));
 
         create("@self @owner @parent @other @other", 9L);
 
@@ -116,12 +115,12 @@ class PostServiceMentionLookupTest {
 
     @Test
     void retainsMentionRegexBoundariesInsteadOfMatchingEmailAddresses() {
-        when(users.findByUsername("real_user")).thenReturn(Optional.of(user(4L, "real_user")));
+        when(users.findIdByUsername("real_user")).thenReturn(Optional.of(4L));
 
         create("name@example.com .@blocked @xy (@real_user) @real_user", null);
 
-        verify(users).findByUsername("real_user");
-        verify(users, times(1)).findByUsername(anyString());
+        verify(users).findIdByUsername("real_user");
+        verify(users, times(1)).findIdByUsername(anyString());
         verify(notifications).sendMention(eq(4L), anyString(), anyString(), eq(7L), eq(10L));
         verifyNoMoreInteractions(notifications);
     }
@@ -134,10 +133,4 @@ class PostServiceMentionLookupTest {
         verify(posts, atLeastOnce()).save(any(Post.class));
     }
 
-    private static User user(Long id, String username) {
-        User user = new User();
-        user.setId(id);
-        user.setUsername(username);
-        return user;
-    }
 }

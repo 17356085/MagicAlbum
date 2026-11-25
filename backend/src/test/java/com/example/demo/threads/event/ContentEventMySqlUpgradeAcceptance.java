@@ -22,7 +22,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class ContentEventMySqlUpgradeAcceptance {
     private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
-    private static final String LATEST_MIGRATION_VERSION = "20261101.3";
     private static final int LEGACY_MEDIA_ATTEMPTS = 7;
     private static final String LEGACY_MEDIA_AVAILABLE_AT = "2026-01-02 03:04:05.123456";
     private static final String UPGRADE_URL = "CONTENT_EVENT_TEST_UPGRADE_JDBC_URL";
@@ -104,6 +103,8 @@ class ContentEventMySqlUpgradeAcceptance {
             Flyway complete = flyway(url, username, password).load();
             complete.migrate();
             complete.validate();
+            assertThat(complete.info().pending()).as("all current migrations were applied to the upgraded database")
+                    .isEmpty();
 
             assertVerifiedContactColumn(connection, "email_verified");
             assertVerifiedContactColumn(connection, "phone_verified");
@@ -135,7 +136,6 @@ class ContentEventMySqlUpgradeAcceptance {
             assertIndex(connection, "idx_content_event_outbox_status_id");
             assertIndex(connection, "idx_content_event_outbox_delivery_claim");
             assertIndex(connection, "idx_content_event_outbox_delivery_lease");
-            assertFlywayVersion(connection, LATEST_MIGRATION_VERSION);
             assertThat(count(connection, "SELECT COUNT(*) FROM threads WHERE id=? AND content_md='Legacy body' "
                     + "AND summary IS NULL AND summary_task_id IS NULL AND summary_status='IDLE' "
                     + "AND summary_owner IS NULL AND summary_lease_until IS NULL AND summary_attempts=0", legacyThreadId))

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import string
 import sys
@@ -19,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -157,6 +158,189 @@ def _read_env(path: Path) -> dict[str, str]:
     if any(not values.get(key) for key in required):
         raise BootstrapError("private full-regression credentials file is incomplete")
     return values
+
+
+def _demo_base_url(base_url: str) -> None:
+    """Require the demo writer to target only the local HTTP gateway API."""
+
+    if base_url != base_url.strip():
+        raise BootstrapError("demo preparation requires an exact loopback HTTP /api/v1 base URL")
+    try:
+        parsed = urlsplit(base_url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise BootstrapError("demo preparation requires an exact loopback HTTP /api/v1 base URL") from exc
+    if (
+        parsed.scheme != "http"
+        or hostname != "127.0.0.1"
+        or parsed.path != "/api/v1"
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise BootstrapError("demo preparation requires an exact loopback HTTP /api/v1 base URL")
+
+
+def _demo_output_preflight(credentials_path: Path, demo_accounts_path: Path, evidence_path: Path) -> None:
+    """Check demo outputs before any request and keep them beside the env file."""
+
+    try:
+        credentials = credentials_path.resolve(strict=True)
+        caller_directory = credentials.parent
+    except OSError as exc:
+        raise BootstrapError("demo preparation could not resolve the existing credentials file") from exc
+    if not credentials.is_file():
+        raise BootstrapError("demo preparation requires an existing credentials file")
+
+    paths = (demo_accounts_path, evidence_path)
+    resolved_paths: list[Path] = []
+    for path in paths:
+        try:
+            if path.exists() or path.is_symlink():
+                raise BootstrapError("demo preparation requires new output paths")
+            parent = path.parent.resolve(strict=True)
+            resolved = path.resolve(strict=False)
+        except BootstrapError:
+            raise
+        except OSError as exc:
+            raise BootstrapError("demo preparation could not resolve its output directory") from exc
+        if parent != caller_directory or resolved == credentials:
+            raise BootstrapError("demo outputs must be new files under the credentials directory")
+        resolved_paths.append(resolved)
+    if resolved_paths[0] == resolved_paths[1]:
+        raise BootstrapError("demo account and evidence outputs must be different files")
+
+
+def _write_demo_json(path: Path, value: dict[str, Any]) -> None:
+    """Create one new UTF-8 file with restricted permissions."""
+    contents = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    created = False
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(contents)
+    except OSError as exc:
+        if created:
+            path.unlink(missing_ok=True)
+        raise BootstrapError("demo preparation could not create its output") from exc
+
+
+def prepare_demo(base_url: str, credentials_path: Path, demo_accounts_path: Path, evidence_path: Path) -> None:
+    _demo_base_url(base_url)
+    _demo_output_preflight(credentials_path, demo_accounts_path, evidence_path)
+    values = _read_env(credentials_path)
+    expected_admin = _id_from({"id": values["FULL_TEST_USER_ID"]}, "demo configured ID")
+    if expected_admin != _id_from({"id": values["APP_ADMIN_USER_ID"]}, "demo configured admin"):
+        raise BootstrapError("demo trusted user IDs did not match")
+
+    def request(method, path, label, session, expected=200, **options):
+        status, body, retry_after = _request(
+            base_url, method, path, token=session.get("token"), device_id=session["device"], **options,
+        )
+        _require(status, (expected,), f"demo {label}", retry_after)
+        return _payload(body)
+
+    def prepare_actor(identity, label, *, register):
+        active = {"device": str(uuid4())}
+        if register:
+            response = request("POST", "/users/register", f"{label} registration", active, 201, body=identity)
+            registered_id = _id_from(response, f"demo {label} registration")
+        else:
+            registered_id = expected_admin
+        login = request("POST", "/auth/login", f"{label} login", active,
+                        body={"email": identity["email"], "password": identity["password"]})
+        token = login.get("accessToken")
+        if not isinstance(token, str) or not token:
+            raise BootstrapError(f"demo {label} login did not return an access token")
+        active["token"] = token
+        user = request("GET", "/users/me", f"{label} identity", active)
+        if _id_from(user, f"demo {label} identity") != registered_id:
+            raise BootstrapError(f"demo {label} current-user identity mismatch")
+        profile = request("GET", "/governance/me" if register else "/admin/me", f"{label} role", active)
+        if profile.get("admin") is not (not register):
+            raise BootstrapError(f"demo {label} role mismatch")
+        if register and (profile.get("moderatedSectionIds") != [] or profile.get("postingRestricted") is not False):
+            raise BootstrapError(f"demo {label} is not an unrestricted ordinary user")
+        return active, {
+            **identity, "username": user.get("username") or identity.get("username"),
+            "id": registered_id, "role": "ordinary" if register else "admin",
+        }
+
+    administrator_identity = {
+        "email": values["TEST_EMAIL"], "phone": values["TEST_PHONE"], "password": values["TEST_PASSWORD"],
+    }
+    admin, admin_account = prepare_actor(administrator_identity, "administrator", register=False)
+    sections = request("GET", "/sections", "sections", admin, params={"page": 1, "size": 100}).get("items")
+    if not isinstance(sections, list) or not sections:
+        raise BootstrapError("demo stack did not expose a writable section")
+    section_id = _id_from(sections[0], "demo section")
+
+    suffix = uuid4().hex[:10]
+    accounts = {"admin": admin_account}
+    sessions = {}
+    for key in ("A", "B"):
+        identity = _identity()
+        identity.update(username=f"demo{key}{suffix}", email=f"demo-{key.lower()}-{suffix}@example.test")
+        sessions[key], accounts[f"user{key}"] = prepare_actor(identity, f"user {key}", register=True)
+    author_id, reader_id = accounts["userA"]["id"], accounts["userB"]["id"]
+    if len({expected_admin, author_id, reader_id}) != 3:
+        raise BootstrapError("demo actors must be distinct")
+    author, reader = sessions["A"], sessions["B"]
+
+    thread_ids: list[int] = []
+    for title in ("同频演示 · 欢迎交流", "同频演示 · 每周分享"):
+        data = request("POST", "/threads", "topic creation", author, 201,
+                       body={"sectionId": section_id, "title": title, "content": "欢迎在评论区参与讨论。", "tags": ["demo"]})
+        thread_id = _id_from(data, "demo topic")
+        topic = request("GET", f"/threads/{thread_id}", "topic readback", reader)
+        if topic.get("authorId") != author_id or topic.get("title") != title:
+            raise BootstrapError("demo topic readback did not match its author and title")
+        thread_ids.append(thread_id)
+
+    posts_path = f"/threads/{thread_ids[0]}/posts"
+    comment_text = "读者在演示主题下留下了一条评论。"
+    comment = request("POST", posts_path, "comment creation", reader, 201, body={"contentMd": comment_text})
+    comment_id = _id_from(comment, "demo comment")
+    readback = request("GET", posts_path, "comment readback", author, params={"page": 1, "size": 20}).get("items")
+    if not isinstance(readback, list) or not any(
+        row.get("id") == comment_id and row.get("authorId") == reader_id and row.get("content") == comment_text
+        for row in readback if isinstance(row, dict)
+    ):
+        raise BootstrapError("demo comment readback did not match its author and content")
+
+    request("POST", f"/users/{author_id}/follow", "follow creation", reader)
+    follow = request("GET", f"/users/{author_id}/follow-status", "follow readback", reader)
+    if follow.get("followedByMe") is not True:
+        raise BootstrapError("demo follow readback did not return followedByMe=true")
+    feed = request("GET", "/threads/following", "following feed", reader,
+                   params={"pagination": "cursor", "page": 1, "size": 20}).get("items")
+    if not isinstance(feed, list):
+        raise BootstrapError("demo following feed did not return an items list")
+    feed_ids = {row.get("id") for row in feed if isinstance(row, dict)}
+    if not set(thread_ids).issubset(feed_ids):
+        raise BootstrapError("demo following feed did not contain both topics")
+
+    cases = (
+        "trusted-admin-readback", "writable-section-readback", "ordinary-user-a-readback",
+        "ordinary-user-b-readback", "sample-threads-readback", "comment-readback", "follower-feed-readback",
+    )
+    _write_demo_json(evidence_path, {
+        "schemaVersion": 1, "mode": "prepare-demo",
+        "cases": [{"name": name, "result": "passed"} for name in cases],
+        "ids": {"adminUserId": expected_admin, "sectionId": section_id, "userAId": author_id,
+                "userBId": reader_id, "threadIds": thread_ids, "commentId": comment_id},
+        "counts": {"ordinaryAccounts": 2, "threads": len(thread_ids), "comments": 1,
+                   "followerFeedItems": len(feed), "followerFeedMatches": len(thread_ids)},
+    })
+    try:
+        _write_demo_json(demo_accounts_path, {"schemaVersion": 1, "mode": "prepare-demo", "accounts": accounts})
+    except BootstrapError:
+        evidence_path.unlink(missing_ok=True)
+        raise
 
 
 def bootstrap(base_url: str, env_path: Path) -> None:
@@ -333,17 +517,31 @@ def main() -> int:
     parser.add_argument("--credentials-file", required=True, type=Path)
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--verify-admin-and-seed", action="store_true")
+    parser.add_argument("--prepare-demo", action="store_true")
+    parser.add_argument("--demo-accounts-file", type=Path)
     parser.add_argument("--evidence-file", type=Path)
     parser.add_argument("--seed-count", type=int, default=11)
     args = parser.parse_args()
 
-    if args.bootstrap == args.verify_admin_and_seed:
-        parser.error("choose exactly one of --bootstrap or --verify-admin-and-seed")
+    modes = (args.bootstrap, args.verify_admin_and_seed, args.prepare_demo)
+    if sum(modes) != 1:
+        parser.error("choose exactly one of --bootstrap, --verify-admin-and-seed, or --prepare-demo")
     if args.seed_count < 11 or args.seed_count > 50:
         parser.error("--seed-count must be between 11 and 50 for pagination coverage")
     try:
         if args.bootstrap:
             bootstrap(args.base_url, args.credentials_file)
+        elif args.prepare_demo:
+            if args.demo_accounts_file is None:
+                parser.error("--demo-accounts-file is required with --prepare-demo")
+            if args.evidence_file is None:
+                parser.error("--evidence-file is required with --prepare-demo")
+            prepare_demo(
+                args.base_url,
+                args.credentials_file,
+                args.demo_accounts_file,
+                args.evidence_file,
+            )
         else:
             if args.evidence_file is None:
                 parser.error("--evidence-file is required with --verify-admin-and-seed")

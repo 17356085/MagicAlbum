@@ -36,3 +36,15 @@ groups:
         for: 1m
         annotations:
           summary: "内容事件 Outbox 存在需要重试或排查的失败记录"
+
+      - alert: BlueAlbumContentKafkaPendingTooLong
+        expr: bluealbum_content_kafka_outbox_oldest_pending_seconds > 300
+        for: 2m
+        annotations:
+          summary: "Kafka 内容事件最早待投递记录已积压超过五分钟"
+
+      - alert: BlueAlbumContentKafkaDeliveryFailed
+        expr: bluealbum_content_kafka_outbox_rows{status="failed"} > 0
+        for: 1m
+        annotations:
+          summary: "Kafka 内容事件存在需要检查和重放的失败记录"

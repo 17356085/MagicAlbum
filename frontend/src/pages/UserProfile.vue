@@ -49,7 +49,7 @@
           <router-link v-if="!isMe && userId" :to="{ name: 'messages', query: { peer: String(userId) } }" class="ui-button">
             发私信
           </router-link>
-          <FriendRequestActions v-if="!isMe && isLoggedIn && userId" :peer="userId" />
+          <FriendRequestActions v-if="!isMe && isLoggedIn && userId" :peer="userId" @unfriended="handleFriendUnfriended" />
         </div>
       </header>
 
@@ -555,6 +555,13 @@ async function toggleFollow(): Promise<void> {
     if (currentFollowContext(context, requestSeq)) followSaving.value = false
     else setStorageDriftError('follow', context, requestSeq)
   }
+}
+
+function handleFriendUnfriended(): void {
+  if (disposed || isMe.value) return
+  relationRevision += 1
+  followStateError.value = ''
+  void loadProfile({ preserveView: true })
 }
 
 function queueContextRefresh(options: { resetThreads?: boolean; preserveProfile?: boolean; relationChanged?: boolean } = {}): void {

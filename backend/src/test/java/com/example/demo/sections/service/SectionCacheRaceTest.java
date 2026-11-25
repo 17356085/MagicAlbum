@@ -11,7 +11,7 @@ import com.example.demo.governance.repo.CommunityStateRepository;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.sections.entity.Section;
 import com.example.demo.sections.repo.SectionRepository;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.CommunityAccounts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,7 +52,7 @@ class SectionCacheRaceTest {
 
     private static final String INITIAL_GENERATION = "11111111-1111-1111-1111-111111111111";
 
-    private final UserRepository userRepository = mock(UserRepository.class);
+    private final CommunityAccounts communityAccounts = mock(CommunityAccounts.class);
     private final SectionRepository sectionRepository = mock(SectionRepository.class);
     private final CommunityStateRepository stateRepository = mock(CommunityStateRepository.class);
     private final CommunityAdminRoleRepository adminRoleRepository = mock(CommunityAdminRoleRepository.class);
@@ -90,7 +90,7 @@ class SectionCacheRaceTest {
             return section;
         });
         SectionAdministration sectionAdministration = new SectionAdministration(sectionRepository, redis);
-        governance = new GovernanceService(userRepository, sectionAdministration,
+        governance = new GovernanceService(communityAccounts, sectionAdministration,
                 stateRepository, adminRoleRepository, moderatorScopeRepository,
                 restrictionRepository, auditRepository);
         entries.put(RedisKeys.sectionsListGeneration(), INITIAL_GENERATION);

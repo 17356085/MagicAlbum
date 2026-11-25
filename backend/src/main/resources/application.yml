@@ -182,6 +182,10 @@ app:
       connection-timeout: ${APP_CONTENT_EVENTS_CONNECTION_TIMEOUT:5s}
       commit-margin: ${APP_CONTENT_EVENTS_COMMIT_MARGIN:2s}
       poll-interval-ms: ${APP_CONTENT_EVENTS_POLL_INTERVAL_MS:2000}
+      kafka:
+        enabled: ${APP_CONTENT_EVENTS_KAFKA_ENABLED:false}
+        retry-initial-seconds: ${APP_CONTENT_EVENTS_KAFKA_RETRY_INITIAL_SECONDS:5}
+        max-attempts: ${APP_CONTENT_EVENTS_KAFKA_MAX_ATTEMPTS:6}
   notifications:
     client:
       mode: ${NOTIFICATION_SERVICE_MODE:remote}

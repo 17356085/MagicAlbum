@@ -51,7 +51,8 @@ $ownedProjects = [System.Collections.Generic.List[object]]::new()
 $succeeded = $false
 $snapshot = @{}
 $minimumHostMemoryKiB = if ($ResourceMode -eq 'Constrained') { [long](2816MB / 1KB) } else { [long](4GB / 1KB) }
-$containerBudgetMiB = if ($ResourceMode -eq 'Constrained') { 1792 } else { $null }
+$containerBudgetMiB = if ($ResourceMode -eq 'Constrained') { 1840 } else { $null }
+$applicationServices = @('backend', 'notification-service', 'chat-realtime', 'gateway', 'frontend')
 
 function New-ComposeSecret {
     $bytes = [byte[]]::new(32)
@@ -287,6 +288,8 @@ services:
     image: bluealbum-m0-notification:$RunId
     environment:
       JAVA_OPTS: '-Xms32m -Xmx256m -XX:ActiveProcessorCount=2'
+  chat-realtime:
+    image: bluealbum-m0-chat-realtime:$RunId
   gateway:
     image: bluealbum-m0-gateway:$RunId
     environment:
@@ -341,6 +344,11 @@ services:
     cpus: 2.0
     environment:
       JAVA_OPTS: '-Xms16m -Xmx96m -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=32m -XX:MaxDirectMemorySize=16m -XX:ActiveProcessorCount=2'
+  chat-realtime:
+    image: bluealbum-m0-chat-realtime:$RunId
+    mem_limit: 48m
+    memswap_limit: 48m
+    cpus: 1.0
   gateway:
     image: bluealbum-m0-gateway:$RunId
     mem_limit: 288m
@@ -360,7 +368,7 @@ services:
     [IO.File]::WriteAllText($overrideFile, $override)
     Invoke-VerificationCompose $sourceProject $sourceEnvironment @('config', '--quiet')
     if (-not $NoBuild) {
-        foreach ($service in @('backend', 'notification-service', 'gateway', 'frontend')) {
+        foreach ($service in $applicationServices) {
             Invoke-VerificationCompose $sourceProject $sourceEnvironment @('build', $service)
         }
     }
@@ -487,16 +495,14 @@ services:
         ThreadId = $thread.id; AccountId = $account.id; ImageUrl = $image.url
     }))
 
-    Invoke-VerificationCompose $sourceProject $sourceEnvironment @('restart', 'notification-service', 'backend', 'gateway', 'frontend')
+    Invoke-VerificationCompose $sourceProject $sourceEnvironment (@('restart') + $applicationServices)
     Invoke-VerificationCompose $sourceProject $sourceEnvironment @('up', '-d', '--wait', '--wait-timeout', '240', '--no-build')
     $restartedThread = Wait-ForVerificationGet -Base $sourceUrl -Path "/threads/$($thread.id)"
     Confirm-Check ($restartedThread.title -eq $thread.title -and $restartedThread.content.Contains($image.url)) 'Application restart preserves persisted thread and image reference'
     Start-Sleep -Seconds 3
-    if ($ResourceMode -eq 'Constrained') {
-        Invoke-VerificationCompose $sourceProject $sourceEnvironment @('stop', 'frontend', 'gateway', 'backend', 'notification-service', 'redis', 'rabbitmq')
-    } else {
-        Invoke-VerificationCompose $sourceProject $sourceEnvironment @('stop', 'frontend', 'gateway', 'backend', 'notification-service')
-    }
+    $stoppedServices = $applicationServices
+    if ($ResourceMode -eq 'Constrained') { $stoppedServices += @('redis', 'rabbitmq') }
+    Invoke-VerificationCompose $sourceProject $sourceEnvironment (@('stop') + $stoppedServices)
     $ownedProjects.Add(@{Name = $restoreProject; Environment = $restoreEnvironment})
     & (Join-Path $PSScriptRoot 'Test-ComposeBackup.ps1') -SourceProject $sourceProject -RestoreProject $restoreProject `
         -SourceEnvironmentFile $sourceEnvironment -RestoreEnvironmentFile $restoreEnvironment `

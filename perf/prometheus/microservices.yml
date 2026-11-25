@@ -18,3 +18,11 @@ scrape_configs:
         type: A
         port: 8092
         refresh_interval: 15s
+
+  - job_name: bluealbum-chat
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ["chat-service"]
+        type: A
+        port: 9090
+        refresh_interval: 15s

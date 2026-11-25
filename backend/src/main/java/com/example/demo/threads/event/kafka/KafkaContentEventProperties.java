@@ -13,6 +13,7 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "app.content.events.kafka")
 public class KafkaContentEventProperties {
+    private static final int MAX_RETRY_SECONDS = 300;
     private boolean enabled;
     private String bootstrapServers = "localhost:9092";
     private String topic = "content.events.v1";
@@ -22,6 +23,8 @@ public class KafkaContentEventProperties {
     private Duration sendTimeout = Duration.ofSeconds(5);
     private Duration pollTimeout = Duration.ofSeconds(1);
     private Duration closeTimeout = Duration.ofSeconds(5);
+    private int retryInitialSeconds = 5;
+    private int maxAttempts = 6;
 
     public void validate() {
         requireText(bootstrapServers, "bootstrap-servers");
@@ -32,6 +35,13 @@ public class KafkaContentEventProperties {
         requireDuration(sendTimeout, "send-timeout");
         requireDuration(pollTimeout, "poll-timeout");
         requireDuration(closeTimeout, "close-timeout");
+        if (retryInitialSeconds < 1 || retryInitialSeconds > MAX_RETRY_SECONDS) {
+            throw new IllegalArgumentException(
+                    "app.content.events.kafka.retry-initial-seconds must be between 1 and 300");
+        }
+        if (maxAttempts < 1 || maxAttempts > 20) {
+            throw new IllegalArgumentException("app.content.events.kafka.max-attempts must be between 1 and 20");
+        }
         requireKafkaDuration(maxBlockTimeout, "max-block-timeout");
         requireKafkaDuration(sendTimeout, "send-timeout");
         requireKafkaDuration(pollTimeout, "poll-timeout");
@@ -141,5 +151,21 @@ public class KafkaContentEventProperties {
 
     public void setCloseTimeout(Duration closeTimeout) {
         this.closeTimeout = closeTimeout;
+    }
+
+    public int getRetryInitialSeconds() {
+        return retryInitialSeconds;
+    }
+
+    public void setRetryInitialSeconds(int retryInitialSeconds) {
+        this.retryInitialSeconds = retryInitialSeconds;
+    }
+
+    public int getMaxAttempts() {
+        return maxAttempts;
+    }
+
+    public void setMaxAttempts(int maxAttempts) {
+        this.maxAttempts = maxAttempts;
     }
 }

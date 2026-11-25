@@ -691,6 +691,28 @@ describe('UserProfile request ordering', () => {
     expect(transport.delete).toHaveBeenCalledWith('/users/1/follow')
   })
 
+  it('removes a profile friendship and refreshes the visible follow counts', async () => {
+    mocks.getUserProfile
+      .mockResolvedValueOnce({ ...profile('1'), followedByMe: true, followerCount: 4, followingCount: 5 })
+      .mockResolvedValueOnce({ ...profile('1'), followedByMe: false, followingMe: true, followerCount: 3, followingCount: 5 })
+    transport.get.mockResolvedValue({ data: { status: 'FRIEND' } })
+    transport.delete.mockResolvedValueOnce({ data: { status: 'NONE' } })
+
+    const wrapper = createWrapper(10, 'account-a')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('解除好友')
+    await wrapper.findAll('button').find(button => button.text() === '解除好友')!.trigger('click')
+    await flushPromises()
+
+    expect(transport.delete).toHaveBeenCalledWith('/chat/friends/1')
+    expect(mocks.getUserProfile).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('添加好友')
+    expect(wrapper.text()).toContain('粉丝 3')
+    expect(wrapper.text()).toContain('关注 5')
+    expect(wrapper.text()).not.toContain('解除好友')
+  })
+
   it('shows a retry when the relationship state is unknown and never assumes unfollowed', async () => {
     mocks.getUserProfile.mockResolvedValueOnce({ ...profile('1'), followedByMe: undefined })
     const wrapper = createWrapper(10, 'account-a')

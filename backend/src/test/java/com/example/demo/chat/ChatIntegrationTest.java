@@ -19,10 +19,11 @@ import com.example.demo.moderation.model.ReportTargetType;
 import com.example.demo.moderation.service.ContentReportService;
 import com.example.demo.social.service.ContactPolicy;
 import com.example.demo.social.service.ContactPolicy.BlockedContact;
+import com.example.demo.social.service.ContactPolicy.FriendStatus;
+import com.example.demo.social.service.UserFollowService;
 import com.example.demo.user.dto.ProfileDto;
 import com.example.demo.user.entity.User;
 import com.example.demo.user.repo.UserRepository;
-import com.example.demo.user.service.UserFollowService;
 import com.example.demo.user.service.UserProfileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
@@ -366,6 +367,81 @@ class ChatIntegrationTest {
         contacts.setBlocked(recipient, sender, true);
         assertThat(contacts.friends(sender, 1, 30).getTotalElements()).isZero();
         expectStatus(() -> chat.sendDirect(sender, recipient, text("Now blocked")), HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void unfriendPreservesAnExistingOneWayFollowAndAllowsAnotherRequest() {
+        long actor = user(), peer = user();
+        follows.follow(actor, peer);
+        contacts.requestFriend(actor, peer);
+        contacts.decideFriend(peer, actor, true);
+
+        assertThat(contacts.removeFriend(actor, peer)).isEqualTo(FriendStatus.NONE);
+        assertThat(contacts.removeFriend(actor, peer)).isEqualTo(FriendStatus.NONE);
+        assertThat(follows.status(actor, peer).isFollowedByMe()).isTrue();
+        assertThat(contacts.friends(actor, 1, 30)).isEmpty();
+        assertThat(contacts.friendStatus(peer, actor)).isEqualTo(FriendStatus.NONE);
+        expectStatus(() -> contacts.decideFriend(peer, actor, true), HttpStatus.NOT_FOUND);
+        assertThat(contacts.requestFriend(peer, actor)).isEqualTo(FriendStatus.SENT);
+        assertThat(contacts.decideFriend(actor, peer, true)).isEqualTo(FriendStatus.FRIEND);
+    }
+
+    @Test
+    void unfriendBreaksBothFriendshipSourcesAndKeepsTheOtherUsersFollowAndChatHistory() throws Exception {
+        long actor = user(), peer = user();
+        contacts.requestFriend(actor, peer);
+        contacts.decideFriend(peer, actor, true);
+        follows.follow(actor, peer);
+        follows.follow(peer, actor);
+        var original = chat.sendDirect(actor, peer, text("Before removing friendship"));
+        String authorization = "Bearer " + jwt.generateToken(actor, "chat-test");
+        String path = "/api/v1/chat/friends/";
+        mvc.perform(delete(path + peer)).andExpect(status().isUnauthorized());
+        mvc.perform(delete(path + actor).header("Authorization", authorization)).andExpect(status().isBadRequest());
+
+        mvc.perform(delete(path + peer).header("Authorization", authorization))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("NONE"))
+                .andExpect(header().string("Cache-Control", "private, no-store"));
+        assertThat(follows.status(actor, peer).isFollowedByMe()).isFalse();
+        assertThat(follows.status(actor, peer).isFollowingMe()).isTrue();
+        assertThat(contacts.friends(peer, 1, 30)).isEmpty();
+        var next = chat.sendDirect(actor, peer, text("After removing friendship"));
+        assertThat(next.conversationId()).isEqualTo(original.conversationId());
+        assertThat(next.quota().remaining()).isEqualTo(9);
+        assertThat(chat.history(peer, original.conversationId(), null, null).items())
+                .extracting(Message::content).containsExactly("Before removing friendship", "After removing friendship");
+    }
+
+    @Test
+    void newContactDecisionWaitsForAnUnfriendTransactionToCommit() throws Exception {
+        long actor = user(), peer = user();
+        follows.follow(actor, peer);
+        follows.follow(peer, actor);
+        var removed = new CountDownLatch(1);
+        var allowCommit = new CountDownLatch(1);
+        var decisionStarted = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var removal = executor.submit(() -> new TransactionTemplate(transactionManager).execute(tx -> {
+                var result = contacts.removeFriend(actor, peer);
+                removed.countDown();
+                assertThat(assertDoesNotThrow(() -> allowCommit.await(5, TimeUnit.SECONDS))).isTrue();
+                return result;
+            }));
+            try {
+                assertThat(removed.await(5, TimeUnit.SECONDS)).isTrue();
+                var decision = executor.submit(() -> {
+                    decisionStarted.countDown();
+                    return contacts.evaluateForChat(actor, peer).decision();
+                });
+                assertThat(decisionStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> decision.get(350, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+                allowCommit.countDown();
+                assertThat(removal.get(5, TimeUnit.SECONDS)).isEqualTo(FriendStatus.NONE);
+                assertThat(decision.get(5, TimeUnit.SECONDS).friend()).isFalse();
+            } finally {
+                allowCommit.countDown();
+            }
+        }
     }
 
     @Test

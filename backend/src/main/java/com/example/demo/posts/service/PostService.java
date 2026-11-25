@@ -1,7 +1,5 @@
 package com.example.demo.posts.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.example.demo.common.RedisKeys;
 import com.example.demo.governance.service.GovernanceService;
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.posts.dto.CreatePostRequest;
@@ -13,19 +11,19 @@ import com.example.demo.posts.dto.PostQueryView;
 import com.example.demo.posts.dto.UpdatePostRequest;
 import com.example.demo.posts.entity.Post;
 import com.example.demo.posts.entity.PostLike;
+import com.example.demo.posts.port.PostPageCache;
+import com.example.demo.posts.port.PostPageCache.CachedPostPage;
 import com.example.demo.posts.repo.PostLikeRepository;
 import com.example.demo.posts.repo.PostRepository;
 import com.example.demo.threads.repo.ThreadRepository;
 import com.example.demo.threads.dto.ThreadReadState;
-import com.example.demo.threads.service.ThreadCacheInvalidator;
-import com.example.demo.user.repo.UserRepository;
+import com.example.demo.user.service.UserReadService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.dao.DataAccessException;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,7 +31,6 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
@@ -42,7 +39,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -53,52 +49,46 @@ public class PostService {
 
     @Autowired
     public void setGovernanceService(GovernanceService governance) { this.governance = governance; }
-    private static final Duration THREAD_POSTS_CACHE_TTL = Duration.ofMinutes(2);
     private static final Pattern MENTION_PATTERN = Pattern.compile("(?<![\\w.])@([A-Za-z0-9_\\-]{3,64})");
 
     private final PostRepository postRepository;
     private final PostLikeRepository postLikeRepository;
     private final ThreadRepository threadRepository;
-    private final UserRepository userRepository;
-    private final StringRedisTemplate redisTemplate;
-    private final ObjectMapper objectMapper;
+    private final UserReadService userReadService;
+    private final PostPageCache postPageCache;
     private final NotificationClient notificationClient;
-    private final ThreadCacheInvalidator threadCacheInvalidator;
 
     @Autowired
     public PostService(PostRepository postRepository,
                        PostLikeRepository postLikeRepository,
                        ThreadRepository threadRepository,
-                       UserRepository userRepository,
-                       ObjectProvider<StringRedisTemplate> redisTemplateProvider,
-                       ObjectProvider<ObjectMapper> objectMapperProvider,
+                       UserReadService userReadService,
+                       ObjectProvider<PostPageCache> postPageCacheProvider,
                        ObjectProvider<NotificationClient> notificationClientProvider) {
-        this(postRepository, postLikeRepository, threadRepository, userRepository,
-                redisTemplateProvider == null ? null : redisTemplateProvider.getIfAvailable(),
-                resolveObjectMapper(objectMapperProvider),
+        this(postRepository, postLikeRepository, threadRepository, userReadService,
+                postPageCacheProvider == null ? null : postPageCacheProvider.getIfAvailable(),
                 notificationClientProvider == null ? null : notificationClientProvider.getIfAvailable());
     }
 
-    PostService(PostRepository postRepository, ThreadRepository threadRepository, UserRepository userRepository) {
-        this(postRepository, null, threadRepository, userRepository, null, defaultObjectMapper(), null);
+    PostService(PostRepository postRepository, ThreadRepository threadRepository, UserReadService userReadService) {
+        this(postRepository, null, threadRepository, userReadService,
+                (PostPageCache) null, (NotificationClient) null);
+    }
+
+    PostService(PostRepository postRepository, ThreadRepository threadRepository,
+                UserReadService userReadService, PostPageCache postPageCache) {
+        this(postRepository, null, threadRepository, userReadService, postPageCache, null);
     }
 
     PostService(PostRepository postRepository, PostLikeRepository postLikeRepository,
-                ThreadRepository threadRepository, UserRepository userRepository,
-                StringRedisTemplate redisTemplate, ObjectMapper objectMapper, NotificationClient notificationClient) {
+                ThreadRepository threadRepository, UserReadService userReadService,
+                PostPageCache postPageCache, NotificationClient notificationClient) {
         this.postRepository = postRepository;
         this.postLikeRepository = postLikeRepository;
         this.threadRepository = threadRepository;
-        this.userRepository = userRepository;
-        this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper == null ? defaultObjectMapper() : objectMapper;
+        this.userReadService = userReadService;
+        this.postPageCache = postPageCache;
         this.notificationClient = notificationClient;
-        this.threadCacheInvalidator = new ThreadCacheInvalidator(redisTemplate, this.objectMapper);
-    }
-
-    PostService(PostRepository postRepository, ThreadRepository threadRepository, UserRepository userRepository,
-                StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
-        this(postRepository, null, threadRepository, userRepository, redisTemplate, objectMapper, null);
     }
 
     @Transactional(readOnly = true)
@@ -120,7 +110,7 @@ public class PostService {
             if (isFreshAnonymousPostPage(cached, threadId)) {
                 return new PageImpl<>(cached.items(), PageRequest.of(pageIndex, limit), cached.total());
             }
-            threadCacheInvalidator.evictThreadPosts(threadId);
+            evictThreadPostsCache(threadId);
         }
         PageRequest pr = PageRequest.of(pageIndex, limit);
         Page<PostQueryView> p = "likeCount".equals(normalizedSort)
@@ -161,7 +151,7 @@ public class PostService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或令牌缺失");
         }
         // 防止数据库外键约束触发 500，将不存在的用户转为 401 友好错误
-        if (!userRepository.existsById(authorId)) {
+        if (userReadService == null || !userReadService.existsById(authorId)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户不存在或已注销");
         }
         com.example.demo.threads.entity.Thread thread = lockThreadForWriting(authorId, threadId);
@@ -201,9 +191,7 @@ public class PostService {
         if (notificationClient == null || thread == null || saved == null) {
             return;
         }
-        String actorName = userRepository.findById(authorId)
-                .map(user -> user.getUsername() == null || user.getUsername().isBlank() ? "有人" : user.getUsername())
-                .orElse("有人");
+        String actorName = displayNameOrFallback(authorId);
         String threadTitle = thread.getTitle() == null || thread.getTitle().isBlank() ? "你的帖子" : thread.getTitle();
         Set<Long> replyRecipients = new LinkedHashSet<>();
         if (thread.getAuthorId() != null && !thread.getAuthorId().equals(authorId)) {
@@ -247,8 +235,10 @@ public class PostService {
             usernames.add(matcher.group(1));
         }
         for (String username : usernames) {
-            Optional<com.example.demo.user.entity.User> user = userRepository.findByUsername(username);
-            user.map(com.example.demo.user.entity.User::getId).ifPresent(userIds::add);
+            if (userReadService == null) {
+                continue;
+            }
+            userReadService.findIdByUsername(username).ifPresent(userIds::add);
         }
         return userIds;
     }
@@ -587,13 +577,20 @@ public class PostService {
         }
     }
 
+    private String displayNameOrFallback(Long userId) {
+        if (userReadService == null) {
+            return "有人";
+        }
+        return userReadService.displayNameById(userId)
+                .filter(name -> !name.isBlank())
+                .orElse("有人");
+    }
+
     private void sendLikeNotification(Long actorId, Post post) {
         if (notificationClient == null || post == null || post.getAuthorId() == null || post.getAuthorId().equals(actorId)) {
             return;
         }
-        String actorName = userRepository.findById(actorId)
-                .map(user -> user.getUsername() == null || user.getUsername().isBlank() ? "有人" : user.getUsername())
-                .orElse("有人");
+        String actorName = displayNameOrFallback(actorId);
         String threadTitle = threadRepository.findById(post.getThreadId())
                 .map(thread -> thread.getTitle() == null || thread.getTitle().isBlank() ? "帖子" : thread.getTitle())
                 .orElse("帖子");
@@ -608,32 +605,31 @@ public class PostService {
     }
 
     private CachedPostPage readThreadPostsCache(Long threadId, String sort, int page, int size) {
-        if (redisTemplate == null || threadId == null) {
+        if (postPageCache == null || threadId == null) {
             return null;
         }
-        try {
-            String json = redisTemplate.opsForValue().get(threadPostsCacheKey(threadId, sort, page, size));
-            if (json == null || json.isBlank()) {
-                return null;
-            }
-            return objectMapper.readValue(json, CachedPostPage.class);
-        } catch (Exception ignored) {
-            return null;
-        }
+        return postPageCache.read(threadId, sort, page, size);
     }
 
     private void writeThreadPostsCache(Long threadId, String sort, int page, int size, CachedPostPage payload) {
-        if (redisTemplate == null || threadId == null || payload == null) {
+        if (postPageCache == null || threadId == null || payload == null) {
             return;
         }
-        try {
-            redisTemplate.opsForValue().set(threadPostsCacheKey(threadId, sort, page, size), objectMapper.writeValueAsString(payload), THREAD_POSTS_CACHE_TTL);
-        } catch (Exception ignored) {
-        }
+        postPageCache.write(threadId, sort, page, size, payload);
     }
 
     private void evictThreadCachesAfterCommit(Long threadId) {
-        afterCommit(() -> threadCacheInvalidator.evictThread(threadId));
+        afterCommit(() -> {
+            if (postPageCache != null) {
+                postPageCache.evictThread(threadId);
+            }
+        });
+    }
+
+    private void evictThreadPostsCache(Long threadId) {
+        if (postPageCache != null) {
+            postPageCache.evictThreadPosts(threadId);
+        }
     }
 
     private void afterCommit(Runnable action) {
@@ -649,23 +645,7 @@ public class PostService {
         action.run();
     }
 
-    private String threadPostsCacheKey(Long threadId, String sort, int page, int size) {
-        return RedisKeys.threadPosts(threadId, sort, page, size);
-    }
-
     private String normalizeSort(String sort) {
         return "likeCount".equals(sort) ? "likeCount" : "time";
-    }
-
-    private static ObjectMapper defaultObjectMapper() {
-        return new ObjectMapper().findAndRegisterModules();
-    }
-
-    private static ObjectMapper resolveObjectMapper(ObjectProvider<ObjectMapper> provider) {
-        ObjectMapper mapper = provider == null ? null : provider.getIfAvailable();
-        return mapper == null ? defaultObjectMapper() : mapper;
-    }
-
-    private record CachedPostPage(List<PostDto> items, long total) {
     }
 }

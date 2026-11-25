@@ -2,7 +2,9 @@ package com.example.demo.user.service;
 
 import com.example.demo.notifications.client.NotificationClient;
 import com.example.demo.notifications.service.NotificationService;
-import com.example.demo.user.repo.UserFollowRepository;
+import com.example.demo.social.repo.UserFollowRepository;
+import com.example.demo.social.service.FollowStatistics;
+import com.example.demo.social.service.UserFollowService;
 import com.example.demo.user.repo.UserRepository;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -40,7 +42,8 @@ class UserFollowServiceNotificationFailureTest {
         when(follows.countByFollowingId(2L)).thenReturn(1L);
         when(follows.countByFollowerId(2L)).thenReturn(0L);
 
-        UserFollowService service = new UserFollowService(follows, users, profiles, provider);
+        UserFollowService service = new UserFollowService(follows, new RelationshipAccountLock(users),
+                new IdentityUserReadService(users), profiles, new FollowStatistics(follows), provider);
 
         assertThat(service.follow(1L, 2L).isFollowing()).isTrue();
         verify(follows).save(any());

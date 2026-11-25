@@ -55,6 +55,20 @@ function feedPage(title: string, page = 1, total = 1) {
   }
 }
 
+function cursorFeedPage(
+  title: string,
+  page = 1,
+  total = 21,
+  nextCursor: string | null = 'next-token',
+  previousCursor: string | null = null,
+) {
+  return {
+    ...feedPage(title, page, total),
+    nextCursor,
+    previousCursor,
+  }
+}
+
 function emptyFeedPage(page: number, total: number, size = 10) {
   return { items: [], page, size, total }
 }
@@ -75,7 +89,7 @@ function mountPage(pinia = createPinia()): VueWrapper {
 describe('FollowingFeed session ownership', () => {
   beforeEach(() => {
     localStorage.clear()
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     setActivePinia(createPinia())
     mocks.getCurrentUser.mockResolvedValue(null)
     mocks.listUserFollowing.mockResolvedValue(followingPage())
@@ -103,7 +117,7 @@ describe('FollowingFeed session ownership', () => {
         user: { id: 7, username: 'seven' },
       })
       expect(mocks.listUserFollowing).toHaveBeenCalledWith(7, { page: 1, size: 12 })
-      expect(mocks.listFollowingFeed).toHaveBeenCalledWith({ page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenCalledWith({ page: 1, size: 10, pagination: 'cursor' })
     } finally {
       wrapper.unmount()
     }
@@ -119,7 +133,7 @@ describe('FollowingFeed session ownership', () => {
 
       expect(mocks.getCurrentUser).not.toHaveBeenCalled()
       expect(mocks.listUserFollowing).toHaveBeenCalledWith(4, { page: 1, size: 12 })
-      expect(mocks.listFollowingFeed).toHaveBeenCalledWith({ page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenCalledWith({ page: 1, size: 10, pagination: 'cursor' })
     } finally {
       wrapper.unmount()
     }
@@ -287,6 +301,217 @@ describe('FollowingFeed session ownership', () => {
     }
   })
 
+  it('uses cursor tokens for adjacent all-feed navigation in both directions', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(cursorFeedPage('第一页', 1, 21, 'next-1', null))
+      .mockResolvedValueOnce(cursorFeedPage('第二页', 2, 21, 'next-2', 'previous-2'))
+      .mockResolvedValueOnce(cursorFeedPage('第一页', 1, 21, 'next-1', null))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(1, { page: 1, size: 10, pagination: 'cursor' })
+
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(2, {
+        page: 2,
+        size: 10,
+        pagination: 'cursor',
+        after: 'next-1',
+      })
+      expect(wrapper.text()).toContain('第二页')
+
+      await wrapper.findAll('button').find((button) => button.text() === '上一页')!.trigger('click')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, {
+        page: 1,
+        size: 10,
+        pagination: 'cursor',
+        before: 'previous-2',
+      })
+      expect(wrapper.text()).toContain('第一页')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('reanchors direct cursor jumps without a token and ignores same-page blur', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(cursorFeedPage('第一页', 1, 21, 'next-1', null))
+      .mockResolvedValueOnce(cursorFeedPage('第三页', 3, 21, null, 'previous-3'))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      const input = wrapper.get('input[aria-label="页码"]')
+      await input.trigger('blur')
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(1)
+
+      await input.setValue('3')
+      await input.trigger('keyup.enter')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(2, { page: 3, size: 10, pagination: 'cursor' })
+      expect(wrapper.text()).toContain('第三页')
+
+      await input.trigger('blur')
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(2)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps an empty cursor result from reanchoring forward and preserves the back escape', async () => {
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(cursorFeedPage('第一页', 1, 21, 'next-1', null))
+      .mockResolvedValueOnce({ items: [], page: 2, size: 10, total: 21, nextCursor: null, previousCursor: null })
+      .mockResolvedValueOnce(cursorFeedPage('回到第一页', 1, 21, 'next-1', null))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(2, {
+        page: 2,
+        size: 10,
+        pagination: 'cursor',
+        after: 'next-1',
+      })
+      expect(wrapper.text()).toContain('当前页暂无关注动态')
+      expect(wrapper.findAll('button').find((button) => button.text() === '下一页')!.element.disabled).toBe(true)
+
+      await wrapper.findAll('button').find((button) => button.text() === '上一页')!.trigger('click')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, { page: 1, size: 10, pagination: 'cursor' })
+      expect(wrapper.text()).toContain('回到第一页')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('retries a failed token-bearing adjacent request with the same token', async () => {
+    const failedAdjacent = deferred<ReturnType<typeof cursorFeedPage>>()
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(cursorFeedPage('第一页', 1, 21, 'next-1', null))
+      .mockReturnValueOnce(failedAdjacent.promise)
+      .mockResolvedValueOnce(cursorFeedPage('重试后的第二页', 2, 21, 'next-2', 'previous-2'))
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+      failedAdjacent.reject(new Error('temporary failure'))
+      await flushPromises()
+
+      expect(wrapper.get('[role="alert"]').text()).toContain('加载动态失败')
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, {
+        page: 2,
+        size: 10,
+        pagination: 'cursor',
+        after: 'next-1',
+      })
+      expect(wrapper.text()).toContain('重试后的第二页')
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('retains the cursor retry token when refreshing following users fails', async () => {
+    const failedAdjacent = deferred<ReturnType<typeof cursorFeedPage>>()
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(cursorFeedPage('第一页', 1, 21, 'next-1', null))
+      .mockReturnValueOnce(failedAdjacent.promise)
+      .mockResolvedValueOnce(cursorFeedPage('再次重试后的第二页', 2, 21, 'next-2', 'previous-2'))
+    mocks.listUserFollowing
+      .mockReset()
+      .mockResolvedValueOnce(followingPage())
+      .mockRejectedValueOnce(new Error('following refresh failure'))
+      .mockResolvedValueOnce(followingPage())
+    const auth = useAuthStore()
+    auth.applyAuthState({ accessToken: 'known-token', user: { id: 4, username: 'known' } })
+    const wrapper = mountPage()
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+      failedAdjacent.reject(new Error('temporary failure'))
+      await flushPromises()
+
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(2)
+      expect(wrapper.get('[role="alert"]').text()).toContain('加载动态失败')
+
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, {
+        page: 2,
+        size: 10,
+        pagination: 'cursor',
+        after: 'next-1',
+      })
+      expect(wrapper.text()).toContain('再次重试后的第二页')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('does not retain a failed cursor navigation across a session change', async () => {
+    const staleAdjacent = deferred<ReturnType<typeof cursorFeedPage>>()
+    mocks.listFollowingFeed
+      .mockReset()
+      .mockResolvedValueOnce(cursorFeedPage('账号 A 首页', 1, 21, 'a-next', null))
+      .mockReturnValueOnce(staleAdjacent.promise)
+      .mockResolvedValueOnce(cursorFeedPage('账号 B 首页', 1, 1, null, null))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const auth = useAuthStore(pinia)
+    auth.applyAuthState({ accessToken: 'token-a', user: { id: 1, username: 'owner-a' } })
+    const wrapper = mountPage(pinia)
+
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find((button) => button.text() === '下一页')!.trigger('click')
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(2)
+
+      auth.applyAuthState({ accessToken: 'token-b', user: { id: 2, username: 'owner-b' } })
+      await flushPromises()
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, { page: 1, size: 10, pagination: 'cursor' })
+      expect(wrapper.text()).toContain('账号 B 首页')
+
+      staleAdjacent.reject(new Error('stale failure'))
+      await flushPromises()
+      expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(3)
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('automatically returns to the last page when the feed total shrinks', async () => {
     mocks.listFollowingFeed
       .mockReset()
@@ -390,7 +615,7 @@ describe('FollowingFeed session ownership', () => {
       await flushPromises()
 
       expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(3, { page: 1, size: 10 })
-      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(4, { page: 1, size: 10 })
+      expect(mocks.listFollowingFeed).toHaveBeenNthCalledWith(4, { page: 1, size: 10, pagination: 'cursor' })
       expect(mocks.listFollowingFeed).toHaveBeenCalledTimes(4)
       expect(wrapper.text()).toContain('重试恢复')
       expect(wrapper.find('[role="alert"]').exists()).toBe(false)

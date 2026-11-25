@@ -5,13 +5,18 @@ import com.example.demo.threads.event.port.ContentEventPublisher.Code;
 import com.example.demo.threads.event.port.ContentEventPublisher.PublishException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,6 +48,27 @@ class KafkaContentEventPublisherTest {
         var body = mapper.readTree((byte[]) record.value());
         assertThat(body.get("eventId").asText()).isEqualTo(event.eventId());
         assertThat(body.get("occurredAt").asText()).isEqualTo("2026-10-19T00:00:00Z");
+    }
+
+    @Test
+    void quarantine_preserves_broker_coordinates_and_full_digest_when_copy_is_bounded() throws Exception {
+        when(producer.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
+        byte[] oversized = new byte[9000];
+        oversized[oversized.length - 1] = 42;
+
+        publisher(Duration.ofSeconds(1)).quarantine(
+                new ConsumerRecord<>("content.events.v1", 2, 19L, "THREAD:7", oversized), "INVALID_ENVELOPE_SIZE");
+
+        var capture = org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
+        verify(producer).send(capture.capture());
+        var record = capture.getValue();
+        assertThat(record.topic()).isEqualTo("content.events.v1.quarantine");
+        assertThat(record.key()).isEqualTo("content.events.v1:2:19");
+        assertThat((byte[]) record.value()).containsExactly(Arrays.copyOf(oversized, 8192));
+        assertThat(record.headers().lastHeader("original-byte-count").value())
+                .containsExactly("9000".getBytes(StandardCharsets.US_ASCII));
+        assertThat(new String(record.headers().lastHeader("original-sha256").value(), StandardCharsets.US_ASCII))
+                .isEqualTo(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(oversized)));
     }
 
     @Test

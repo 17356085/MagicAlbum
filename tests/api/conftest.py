@@ -6,7 +6,7 @@ import secrets
 import string
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
 import httpx
@@ -134,8 +134,7 @@ def login(client: ApiClient, identity: Identity, label: str) -> int:
     return require_id(data.get("user", data), label)
 
 
-@pytest.fixture(scope="session")
-def ci_seed(request: pytest.FixtureRequest) -> Seed:
+def create_ci_seed(request: pytest.FixtureRequest) -> Iterator[Seed]:
     """Create an isolated owner/reader/thread/comment graph for API tests."""
 
     base_url = api_base_url(request.config)

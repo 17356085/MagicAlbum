@@ -41,6 +41,76 @@ wait_realtime_health() {
   die 'Restarted realtime node did not become healthy'
 }
 
+chat_signal_counter() {
+  local reason="$1"
+  compose exec -T chat-service curl --fail --silent --max-time 3 http://localhost:9090/actuator/prometheus |
+    awk -v reason="$reason" '
+      /^bluealbum_chat_realtime_signal_dropped_total\{/ && index($0, "reason=\"" reason "\"") {
+        print $NF; count++
+      }
+      END { if (count != 1) exit 1 }
+    '
+}
+
+verify_chat_broker_failure() {
+  local origin="http://127.0.0.1:$gateway_port/api/v1"
+  local initial_failure initial_queue current_failure current_queue attempt
+  initial_failure=$(chat_signal_counter rabbit_failure) || die 'Private chat Rabbit failure counter is unavailable'
+  initial_queue=$(chat_signal_counter queue_full) || die 'Private chat queue saturation counter is unavailable'
+
+  compose stop rabbitmq
+  "$PYTHON_BIN" - "$SCRIPT_DIR" "$origin" "$CHAT_CUTOVER_STATE" <<'PY'
+import json
+from pathlib import Path
+import sys
+from uuid import uuid4
+
+import httpx
+
+sys.path.insert(0, sys.argv[1])
+from chat_cutover_support import Api, require, send_direct
+
+origin, state_path = sys.argv[2:]
+state = json.loads(Path(state_path).read_text(encoding="utf-8"))
+with httpx.Client(timeout=10, trust_env=False) as transport:
+    sender = Api(transport, origin, state["accounts"]["a"]["token"])
+    recipient = Api(transport, origin, state["accounts"]["b"]["token"])
+    room = state["direct"]
+    text = "Durable message during the isolated RabbitMQ outage"
+    message = send_direct(sender, state["accounts"]["b"]["id"], text, str(uuid4()), 201)["message"]
+    history = recipient.request("GET", f"/chat/conversations/{room}/messages")["items"]
+    require(sum(row["id"] == message["id"] and row["seq"] == message["seq"] and row["content"] == text
+                for row in history) == 1, "RabbitMQ outage lost or duplicated an authoritative message")
+PY
+  for (( attempt = 0; attempt < 20; attempt++ )); do
+    current_failure=$(chat_signal_counter rabbit_failure) || die 'Chat metrics stopped responding during the broker outage'
+    if awk -v before="$initial_failure" -v after="$current_failure" 'BEGIN { exit !(after > before) }'; then
+      break
+    fi
+    sleep 1
+  done
+  (( attempt < 20 )) || die 'Real RabbitMQ outage did not increment the publish failure counter'
+  current_queue=$(chat_signal_counter queue_full) || die 'Queue saturation counter stopped responding during the broker outage'
+  [[ "$initial_queue" == "$current_queue" ]] || die 'RabbitMQ outage was also reported as an executor queue rejection'
+
+  compose up -d --no-deps --wait --wait-timeout 120 rabbitmq
+  wait_realtime_health "$(realtime_endpoint 1)"
+  wait_realtime_health "$(realtime_endpoint 2)"
+  "$PYTHON_BIN" - "$ARTIFACT_DIR/chat-publisher-metrics.json" \
+    "$initial_failure" "$current_failure" "$initial_queue" "$current_queue" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path, before, after, queue_before, queue_after = sys.argv[1:]
+Path(path).write_text(json.dumps({
+    "rabbitFailureBefore": float(before), "rabbitFailureAfter": float(after),
+    "queueFullBefore": float(queue_before), "queueFullAfter": float(queue_after),
+    "durableMessageReadableDuringOutage": True, "bothRealtimeNodesRecovered": True,
+}, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 run_chat_realtime_check() (
   local node_a node_b container_a container_b started_b sync_dir driver=''
   local api_url="http://127.0.0.1:$gateway_port/api/v1"
@@ -79,4 +149,5 @@ run_chat_realtime_check() (
   mv -- "$sync_dir/started.tmp" "$sync_dir/started"
   wait "$driver"
   driver=''
+  verify_chat_broker_failure
 )

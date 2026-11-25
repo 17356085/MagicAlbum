@@ -7,11 +7,11 @@
 | 链路 | 发送端和数据归属 | 当前载体与接收端 |
 | --- | --- | --- |
 | 主题领域事件 | `ThreadService` 和 `ContentEventRecorder.record` 同事务写 `content_event_outbox` | RabbitMQ `content.events.v1`，搜索侧消费 `content.search.v1`。[主题写入](../../backend/src/main/java/com/example/demo/threads/service/ThreadService.java) · [事件写入](../../backend/src/main/java/com/example/demo/threads/event/service/ContentEventRecorder.java) · [搜索消费者](../../backend/src/main/java/com/example/demo/search/service/ContentSearchConsumer.java) |
-| 通知发送意图 | 远程模式下核心业务事务写 `notification_outbox`，含收件人与目标 | 后台 HTTP 调用通知服务，依赖 `notifications.idempotency_key` 去重。[通知调度](../../backend/src/main/java/com/example/demo/notifications/outbox/NotificationOutboxDispatcher.java) · [接收端幂等](../../notification-service/src/main/java/com/example/notification/service/PersistentNotificationService.java) |
+| 通知发送意图 | 远程模式下核心业务事务写 `notification_outbox`，含收件人与目标 | 默认经 HTTP 配送。评论回复可选走专用 RabbitMQ 队列，两种入口都依赖 `notifications.idempotency_key` 去重。[通知调度](../../backend/src/main/java/com/example/demo/notifications/outbox/NotificationOutboxDispatcher.java) · [接收端幂等](../../notification-service/src/main/java/com/example/notification/service/PersistentNotificationService.java) |
 | 媒体请求 | `media_processing_job` 与 `media_request_outbox` 由 Java 媒体 owner 管理 | RabbitMQ 和可选 Go worker，通过任务租约与 Java 结果验收完成。[媒体发布器](../../backend/src/main/java/com/example/demo/storage/service/MediaRequestPublisher.java) · [Java 任务租约](../../backend/src/main/java/com/example/demo/storage/service/MediaJobService.java) · [Go 任务处理](../../services/media-service/internal/consumer/handler.go) |
 | AI 摘要任务 | 版本化任务、请求、尝试和预算数据由核心管理 | RabbitMQ 任务及恢复扫描，写回受内容版本约束。[摘要 DDL](../../backend/src/main/resources/db/migration/mysql/V20261020_3__versioned_summary_tasks.sql) · [摘要消费者](../../backend/src/main/java/com/example/demo/ai/summary/service/SummaryQueueConsumer.java) · [任务恢复](../../backend/src/main/java/com/example/demo/ai/summary/service/SummaryTaskRecovery.java) |
-| 聊天审核决定（分库模式） | 核心治理持有 `chat_report_decisions`、每消息版本和在途指针，按租约重试 | 核心经私有 HTTP 让独立聊天应用决定。聊天持久化 `chat_moderation_receipts`，核心收到成功回执后完成案件与审计。[核心审核配送](../../backend/src/main/java/com/example/demo/moderation/service/ChatReportDecisionDispatcher.java) · [聊天审核应用](../../backend/src/main/java/com/example/chatprocess/governance/ChatGovernanceService.java) |
-| 聊天实时提示（工作区） | `app.rabbit.enabled` 启用时，`ChatChangePublisher.changed` 注册提交后回调，发布非持久化账号列表 | RabbitMQ 扇出到 Go 的临时队列，Go 发送 `changed`，客户端用 REST 对账。[Java 提示发布](../../backend/src/main/java/com/example/demo/chat/service/ChatChangePublisher.java) · [Go 临时队列](../../services/chat-realtime/broker.go) · [消息补拉](../../frontend/src/pages/Messages.vue) |
+| 聊天审核决定（分库模式） | 核心治理持有 `chat_report_decisions`、每消息版本和在途指针，按租约重试 | 核心经私有 HTTP 让独立聊天应用决定。聊天持久化 `chat_moderation_receipts`，核心收到成功回执后完成案件与审计。[核心审核配送](../../backend/src/main/java/com/example/demo/moderation/service/ChatReportDecisionDispatcher.java) · [聊天审核应用](../../chat-service/src/main/java/com/example/chatprocess/governance/ChatGovernanceService.java) |
+| 聊天实时提示（工作区） | `app.rabbit.enabled` 启用时，`ChatChangePublisher.changed` 注册提交后回调，发布非持久化账号列表 | RabbitMQ 扇出到 Go 的临时队列，Go 发送 `changed`，客户端用 REST 对账。[Java 提示发布](../../chat-domain/src/main/java/com/example/demo/chat/service/ChatChangePublisher.java) · [Go 临时队列](../../services/chat-realtime/broker.go) · [消息补拉](../../frontend/src/pages/Messages.vue) |
 
 领域事件表达已发生的事实，通知意图面向具体收件人。两类记录分别建表。后续如改为同一 broker，继续分别管理消息契约和消费结果。`chat_event_outbox` 属于可重放业务事件的候选方案，当前聊天实时提示经浏览器补拉弥补漏发。[主题 Outbox DDL](../../backend/src/main/resources/db/migration/mysql/V20261018_2__content_event_outbox.sql) · [通知 Outbox DDL](../../backend/src/main/resources/db/migration/mysql/V20261014__create_notification_outbox.sql)
 
@@ -23,6 +23,8 @@ flowchart TB
     R --> S["搜索投影"]
     N --> H["HTTP 配送器"]
     H --> I["通知服务收件箱"]
+    N -.-> Q["评论回复通知队列"]
+    Q --> I
 ```
 
 ## 事件与接口契约
@@ -30,21 +32,22 @@ flowchart TB
 | 契约 | 关键字段和约束 |
 | --- | --- |
 | 主题事件 v1 | 复用 `eventId`、`eventType`、`schemaVersion`、`aggregateType`、`aggregateId`、`aggregateVersion`、`occurredAt`、`requestId`。已有类型 `THREAD_UPSERTED`、`THREAD_HIDDEN`、`THREAD_DELETED`。[事件枚举](../../backend/src/main/java/com/example/demo/threads/event/entity/ContentEventType.java) · [事件传输校验](../../backend/src/main/java/com/example/demo/threads/event/service/ContentEventPublisherTransport.java) |
-| 评论创建事件（拟议） | `COMMENT_CREATED`，`aggregateType=POST`，创建版本从 1 开始。负载只包含必要的主题、回复目标和操作者 ID。消费所需的内容用 owner 投影核验 |
+| 评论回复通知 v1 | 专用队列 `notification.comment-created.v1` 上的 `COMMENT_CREATED` 投影包含原通知事件 ID、评论 ID、主题 ID、收件人和通知呈现字段。通知提交后返回回执 |
+| 评论领域事件（扩展契约） | 若其他业务需要消费所有评论的创建事实，可建立独立事件流，使用 `aggregateType=POST` 与聚合版本。负载携带必要的主题、回复目标及操作者 ID，正文由内容 owner 权限控制 |
 | 通知意图 | 稳定 `eventId`、收件人、通知类型、目标类型与目标 ID，以及现有通知呈现所需最小字段。接收端按 ID 和规范化负载判重 |
 | 聊天审核命令 | `decisionId`、`messageId`、`reportId`、单消息递增 `version`、`hidden`。相同决定重投返回原回执。旧版本返回 `STALE`，同版本异决定返回冲突。会话历史修订只在可见性改变时增加 |
 | 发布接口 | 以领域的事件信封和投递目标调用适配器，结果表达可确认接收、结果未知与明确失败。broker 拓扑、确认和偏移从适配器管理 |
 | 消费接口 | 使用相同的业务处理器校验事件并更新本服务状态。HTTP 返回成功、RabbitMQ ACK 或 Kafka 位点提交，分别在下游效果确定后执行 |
 
-`COMMENT_CREATED` 首次引入时使用单独的版本化事件流。若未来合表，先把现有 `(aggregate_id, aggregate_version)` 的唯一约束扩展为包含 `aggregate_type`，避免主题 ID 和评论 ID 相同导致冲突，同时回归当前主题订阅。事件、重试诊断与隔离区均避免携带原始聊天正文、访问凭证、联系信息或附件读权限。
+若以后将评论领域事件与主题事件放进同一张表，先把现有 `(aggregate_id, aggregate_version)` 的唯一约束扩展为包含 `aggregate_type`，避免主题 ID 和评论 ID 相同导致冲突，同时回归当前主题订阅。事件、重试诊断与隔离区均避免携带原始聊天正文、访问凭证、联系信息或附件读权限。
 
-当前通知意图在入队和远程配送时检查偏好。未来需要让通知服务消费 RabbitMQ 时，先迁移通知意图为专用消息，并为每条意图固定唯一事件 ID 与配送路由。按收件人验证生成结果，待旧 HTTP 队列送达或对账后切换新意图。业务域可同时发评论事实供其他消费者使用。将通知直接改为订阅评论事实需先确定收件人规则、偏好生效点、隐藏内容与既有意图去重。[入队与租约](../../backend/src/main/java/com/example/demo/notifications/outbox/NotificationOutboxService.java) · [配送偏好检查](../../backend/src/main/java/com/example/demo/notifications/outbox/NotificationOutboxDispatcher.java) · [HTTP 远程实现](../../backend/src/main/java/com/example/demo/notifications/service/remote/RemoteNotificationService.java)
+通知意图在入队和远程配送时检查偏好。评论回复启用 RabbitMQ 时沿用原收件人、偏好和事件 ID。收到已提交的回执后核心确认完成，超时按原事件 ID 重试。切换前核对既有 HTTP 配送记录与通知库。新增其他评论消费者时，单独确定订阅内容、隐藏规则和去重范围。[入队与租约](../../backend/src/main/java/com/example/demo/notifications/outbox/NotificationOutboxService.java) · [配送偏好检查](../../backend/src/main/java/com/example/demo/notifications/outbox/NotificationOutboxDispatcher.java) · [RabbitMQ 接收](../../notification-service/src/main/java/com/example/notification/messaging/CommentCreatedMessageListener.java)
 
 ## 事务、租约和消费确认
 
 1. 同事务保存业务状态和 Outbox。业务保存失败或 Outbox 插入失败时一并回滚。
 2. 调度器选择到期记录，以短事务获取有超时的租约，再执行外部投递。处理成功后按行 ID 和当前租约标识更新。旧租约返回的结果不能覆盖新租约结果。
-3. 主题与媒体发布器启用 publisher confirms 并检查不可路由返回。搜索处理成功后 ACK，异常按错误类型重试或隔离。HTTP 通知保持 UUID 去重。聊天实时提示使用非持久化发送和临时消费队列，相关操作的成功以 Java 提交为准。[主题发布器](../../backend/src/main/java/com/example/demo/threads/event/service/ContentEventPublisherTransport.java) · [搜索消费确认](../../backend/src/main/java/com/example/demo/search/service/ContentSearchConsumer.java) · [媒体发布器](../../backend/src/main/java/com/example/demo/storage/service/MediaRequestPublisher.java) · [聊天提示发布](../../backend/src/main/java/com/example/demo/chat/service/ChatChangePublisher.java)
+3. 主题与媒体发布器启用 publisher confirms 并检查不可路由返回。搜索处理成功后 ACK，异常按错误类型重试或隔离。HTTP 通知保持 UUID 去重。聊天实时提示使用非持久化发送和临时消费队列，相关操作的成功以 Java 提交为准。[主题发布器](../../backend/src/main/java/com/example/demo/threads/event/service/ContentEventPublisherTransport.java) · [搜索消费确认](../../backend/src/main/java/com/example/demo/search/service/ContentSearchConsumer.java) · [媒体发布器](../../backend/src/main/java/com/example/demo/storage/service/MediaRequestPublisher.java) · [聊天提示发布](../../chat-domain/src/main/java/com/example/demo/chat/service/ChatChangePublisher.java)
 4. 崩溃或故障后的重投使用相同事件 ID。业务有副作用的消费者把已处理记录与本地效果放进同一事务，或使用目标表的唯一键。通知仍用收件箱唯一键，搜索用聚合版本并保留墓碑，媒体及 AI 校验任务版本与租约。
 5. 网络超时、连接故障和暂时不可用有界退避。非法协议、无效状态以及同幂等键异负载隔离，记录错误类别及来源。人工重放保留事件 ID 和版本，权限、关联 ID、操作人与结果均进入审计。
 
@@ -98,6 +101,10 @@ flowchart TB
 
 手动组装时启用 `app.content.events.kafka.enabled`，配置 `app.content.events.kafka.bootstrap-servers`、`topic` 和 `group-id`，并在 `app.search.kafka-pilot.rabbit-index`、`kafka-index` 配置不同的受管物理索引名。先由管理员调用 `/api/v1/admin/search/kafka-pilot/prepare?carrier=RABBITMQ` 和 `carrier=KAFKA` 创建两个索引，再调用相同前缀的 `/activate` 进行同水位对账后切换。准备期间暂停流量，保证所有内容写入实例采用相同试点配置。试点开始前已有的内容通过权威库扫描建立基线，开启后新事件在同一事务登记 Kafka 投递。试点只使用 Kafka 主题里的独立消费组，处理失败时保留未确认位点。
 
+创建物理索引需要等待 Elasticsearch 分配初始分片，HTTP 等待上限为 30 秒。查询与文档写入仍分别受适配器的连接和读取超时限制。[搜索索引适配](../../backend/src/main/java/com/example/demo/search/adapter/ElasticsearchContentSearchIndex.java)
+
+2026-11-24 隔离演练三轮均通过。正常阶段核对了两套索引中的同一事件 ID 和版本。Kafka 停机期间 RabbitMQ 继续投递，系统拒绝切到落后的索引。重启 Kafka 后重放停机期间的原事件，切换查询别名并回切 RabbitMQ，逐条核对三份文档，包括切换后新写入的内容。总报告为 `outputs/architecture-kafka-pilot-20261124-v8/checks.json`，各阶段目录保留 JUnit 和业务读回。
+
 [Kafka 适配决策](decisions/ADR-001-内容搜索Kafka并行验证.md)
 
 ## 验收标准
@@ -108,4 +115,4 @@ flowchart TB
 - 分库审核覆盖聊天服务停机后补投、目标已提交但回执响应丢失、重复及逆序决定。逐条核对核心案件、专库回执、消息可见性和审计条数。
 - 对发送积压、最老待发年龄、重试、隔离、重放和索引延迟建立指标。Kafka 试点须通过双链路对账和回退演练。
 
-对应的现有测试入口包括通知事务、接收端并发幂等、主题事件发布和搜索消费。工作区另有提交后聊天提示的测试源文件。[业务事务测试](../../backend/src/test/java/com/example/demo/notifications/outbox/NotificationBusinessTransactionIntegrationTest.java) · [通知幂等测试](../../notification-service/src/test/java/com/example/notification/service/NotificationIdempotencyConcurrencyTest.java) · [主题发布测试](../../backend/src/test/java/com/example/demo/threads/event/ContentEventPublisherTransportTest.java) · [搜索消费测试](../../backend/src/test/java/com/example/demo/search/service/ContentSearchConsumerTest.java) · [聊天提交回调测试](../../backend/src/test/java/com/example/demo/chat/ChatChangePublisherTest.java)
+对应的现有测试入口包括通知事务、接收端并发幂等、主题事件发布和搜索消费。工作区另有提交后聊天提示的测试源文件。[业务事务测试](../../backend/src/test/java/com/example/demo/notifications/outbox/NotificationBusinessTransactionIntegrationTest.java) · [通知幂等测试](../../notification-service/src/test/java/com/example/notification/service/NotificationIdempotencyConcurrencyTest.java) · [主题发布测试](../../backend/src/test/java/com/example/demo/threads/event/ContentEventPublisherTransportTest.java) · [搜索消费测试](../../backend/src/test/java/com/example/demo/search/service/ContentSearchConsumerTest.java) · [聊天提交回调测试](../../chat-domain/src/test/java/com/example/demo/chat/ChatChangePublisherTest.java)
