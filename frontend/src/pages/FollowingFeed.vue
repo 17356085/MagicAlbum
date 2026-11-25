@@ -8,7 +8,7 @@ import { getStoredAccessToken } from '@/utils/authStorage'
 import { normalizeImageUrl } from '@/utils/image'
 import { markdownExcerpt } from '@/utils/markdownExcerpt'
 import { getEmptyPageFallback } from '@/utils/pagination'
-import type { FollowingFeedItem } from '@/api/followingFeed'
+import type { FollowingFeedCursorPage, FollowingFeedItem, FollowingFeedPage } from '@/api/followingFeed'
 import type { Id, PageResult, User } from '@/types'
 
 const authStore = useAuthStore()
@@ -18,7 +18,7 @@ const page = ref(1)
 const size = ref(10)
 const loading = ref(false)
 const error = ref('')
-const feed = ref<PageResult<FollowingFeedItem>>({ items: [], page: 1, size: 10, total: 0 })
+const feed = ref<FollowingFeedPage>({ items: [], page: 1, size: 10, total: 0 })
 const followingUsers = ref<User[]>([])
 const selectedUserId = ref<'all' | string>('all')
 const channelRail = ref<HTMLElement | null>(null)
@@ -45,6 +45,30 @@ const emptyTitle = computed(() => {
   return '暂无关注动态'
 })
 const emptyDescription = computed(() => page.value > 1 ? '可以返回上一页查看其他动态。' : emptyText.value)
+
+const cursorPage = computed(() => {
+  if (selectedUserId.value !== 'all') return null
+  const current = feed.value
+  if (!('nextCursor' in current) || !('previousCursor' in current)) return null
+  return current as FollowingFeedCursorPage
+})
+const cursorPaging = computed(() => cursorPage.value !== null)
+const nextCursor = computed(() => cursorPage.value?.nextCursor)
+const previousCursor = computed(() => cursorPage.value?.previousCursor)
+
+const canGoPrevious = computed(() => {
+  if (cursorPaging.value) {
+    // An empty cursor page can be caused by a concurrent deletion. Keep an
+    // offset escape hatch even when the server has no previous cursor.
+    return page.value > 1 && ((previousCursor.value !== null && previousCursor.value !== undefined) || visibleItems.value.length === 0)
+  }
+  return page.value > 1
+})
+
+const canGoNext = computed(() => {
+  if (cursorPaging.value) return nextCursor.value !== null && nextCursor.value !== undefined
+  return page.value < totalPages.value
+})
 interface FeedRequestContext {
   token: string
   epoch: number
@@ -52,10 +76,25 @@ interface FeedRequestContext {
   accountId: Id | null
 }
 
+type FeedNavigation =
+  | { kind: 'offset' }
+  | { kind: 'cursor-start' }
+  | { kind: 'cursor'; direction: 'next' | 'previous'; token: string }
+
+interface RetryNavigationContext {
+  navigation: Extract<FeedNavigation, { kind: 'cursor' }>
+  epoch: number
+  token: string
+  accountId: Id | null
+  selectedUserId: 'all' | string
+  page: number
+}
+
 let sessionEpoch = 0
 let loadRequestSeq = 0
 let reloadQueued = false
 let disposed = false
+const retryNavigation = ref<RetryNavigationContext | null>(null)
 
 function createRequestContext(): FeedRequestContext {
   return {
@@ -73,6 +112,36 @@ function isCurrentRequest(request: FeedRequestContext): boolean {
     && request.token === authStore.token
     && getStoredAccessToken() === request.token
     && isLoggedIn.value
+}
+
+function rememberRetryNavigation(request: FeedRequestContext, navigation: FeedNavigation): void {
+  if (navigation.kind !== 'cursor') {
+    retryNavigation.value = null
+    return
+  }
+  retryNavigation.value = {
+    navigation,
+    epoch: request.epoch,
+    token: request.token,
+    accountId: request.accountId,
+    selectedUserId: selectedUserId.value,
+    page: page.value,
+  }
+}
+
+function takeRetryNavigation(request: FeedRequestContext): Extract<FeedNavigation, { kind: 'cursor' }> | null {
+  const pending = retryNavigation.value
+  retryNavigation.value = null
+  if (!pending
+    || pending.epoch !== request.epoch
+    || pending.token !== request.token
+    || pending.accountId !== request.accountId
+    || pending.selectedUserId !== selectedUserId.value
+    || pending.page !== page.value
+    || getStoredAccessToken() !== request.token) {
+    return null
+  }
+  return pending.navigation
 }
 
 function queueReload(): void {
@@ -164,11 +233,14 @@ function resetFeedState(): void {
   error.value = ''
   selectedUserId.value = 'all'
   followingUsers.value = []
+  retryNavigation.value = null
   feed.value = { items: [], page: 1, size: size.value, total: 0 }
 }
 
 async function load(): Promise<void> {
   const request = createRequestContext()
+  const retry = takeRetryNavigation(request)
+  let navigation: FeedNavigation | null = retry
   if (!isCurrentRequest(request)) {
     if (!isLoggedIn.value) resetFeedState()
     return
@@ -189,10 +261,15 @@ async function load(): Promise<void> {
     if (selectedUserId.value !== 'all' && !followingUsers.value.some((u) => String(u.id) === selectedUserId.value)) {
       selectedUserId.value = 'all'
     }
-    await loadFeed(request)
+    const nextNavigation: FeedNavigation = selectedUserId.value === 'all'
+      ? (retry ?? { kind: 'cursor-start' })
+      : { kind: 'offset' }
+    navigation = nextNavigation
+    await loadFeed(request, nextNavigation)
   } catch (_) {
     if (isCurrentRequest(request)) {
       error.value = '加载动态失败'
+      if (navigation) rememberRetryNavigation(request, navigation)
     }
   } finally {
     if (isCurrentRequest(request)) {
@@ -201,7 +278,7 @@ async function load(): Promise<void> {
   }
 }
 
-async function loadFeed(request: FeedRequestContext): Promise<void> {
+async function loadFeed(request: FeedRequestContext, navigation: FeedNavigation): Promise<void> {
   const userId = request.accountId ?? await resolveCurrentUserId(request)
   if (!isCurrentRequest(request)) return
   if (userId === null || userId === undefined) {
@@ -213,15 +290,22 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
   const requestedPage = page.value
   if (selectedUserId.value === 'all') {
     if (!isCurrentRequest(request)) return
-    const nextFeed = await listFollowingFeed({
+    const query = {
       page: page.value,
       size: size.value,
-    })
+      ...(navigation.kind === 'cursor-start' || navigation.kind === 'cursor' ? { pagination: 'cursor' as const } : {}),
+      ...(navigation.kind === 'cursor' && navigation.direction === 'next' ? { after: navigation.token } : {}),
+      ...(navigation.kind === 'cursor' && navigation.direction === 'previous' ? { before: navigation.token } : {}),
+    }
+    const nextFeed = await listFollowingFeed(query)
     if (!isCurrentRequest(request)) return
-    const fallbackPage = getEmptyPageFallback(requestedPage, nextFeed)
+    const hasCursorMetadata = 'nextCursor' in nextFeed && 'previousCursor' in nextFeed
+    const fallbackPage = hasCursorMetadata && navigation.kind === 'cursor'
+      ? null
+      : getEmptyPageFallback(requestedPage, nextFeed)
     if (fallbackPage !== null) {
       page.value = fallbackPage
-      await loadFeed(request)
+      await loadFeed(request, navigation.kind === 'cursor-start' ? { kind: 'cursor-start' } : { kind: 'offset' })
       return
     }
     feed.value = nextFeed
@@ -251,7 +335,7 @@ async function loadFeed(request: FeedRequestContext): Promise<void> {
   const fallbackPage = getEmptyPageFallback(requestedPage, data)
   if (fallbackPage !== null) {
     page.value = fallbackPage
-    await loadFeed(request)
+    await loadFeed(request, { kind: 'offset' })
     return
   }
   feed.value = nextFeed
@@ -262,10 +346,11 @@ async function selectUser(id: 'all' | string): Promise<void> {
   const request = createRequestContext()
   selectedUserId.value = id
   page.value = 1
+  retryNavigation.value = null
   loading.value = true
   error.value = ''
   try {
-    await loadFeed(request)
+    await loadFeed(request, id === 'all' ? { kind: 'cursor-start' } : { kind: 'offset' })
   } catch (_) {
     if (isCurrentRequest(request)) {
       error.value = '加载动态失败'
@@ -277,17 +362,22 @@ async function selectUser(id: 'all' | string): Promise<void> {
   }
 }
 
-function setPage(nextPage: number): void {
-  const target = Math.min(Math.max(1, nextPage), totalPages.value)
+function setPage(nextPage: number, navigation?: FeedNavigation): void {
+  const target = navigation?.kind === 'cursor'
+    ? Math.max(1, nextPage)
+    : Math.min(Math.max(1, nextPage), totalPages.value)
   if (target === page.value) return
   const request = createRequestContext()
   page.value = target
+  retryNavigation.value = null
   loading.value = true
   error.value = ''
-  loadFeed(request)
+  const nextNavigation = navigation || (selectedUserId.value === 'all' ? { kind: 'cursor-start' as const } : { kind: 'offset' as const })
+  loadFeed(request, nextNavigation)
     .catch(() => {
       if (isCurrentRequest(request)) {
         error.value = '加载动态失败'
+        rememberRetryNavigation(request, nextNavigation)
       }
     })
     .finally(() => {
@@ -295,6 +385,27 @@ function setPage(nextPage: number): void {
         loading.value = false
       }
     })
+}
+
+function navigateAdjacent(direction: 'next' | 'previous'): void {
+  if (loading.value) return
+  const targetPage = page.value + (direction === 'next' ? 1 : -1)
+  if (targetPage < 1) return
+
+  const token = direction === 'next' ? nextCursor.value : previousCursor.value
+  if (cursorPaging.value && (token === null || token === undefined)) {
+    const canUseEmptyOffsetEscape = direction === 'previous' && page.value > 1 && visibleItems.value.length === 0
+    if (!canUseEmptyOffsetEscape) return
+    setPage(targetPage, { kind: 'cursor-start' })
+    return
+  }
+
+  if (cursorPaging.value && typeof token === 'string') {
+    setPage(targetPage, { kind: 'cursor', direction, token })
+    return
+  }
+
+  setPage(targetPage, { kind: 'offset' })
 }
 
 function goToInputPage(): void {
@@ -454,7 +565,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-else-if="error" class="ui-error flex flex-wrap items-center justify-between gap-3" role="alert">
       <span>{{ error }}</span>
-      <button type="button" class="ui-button min-h-11" :disabled="loading" @click="load">重试</button>
+      <button type="button" class="ui-button min-h-11" :disabled="loading" @click="load()">重试</button>
     </div>
     <div v-else-if="visibleItems.length === 0" class="ui-panel ui-empty" role="status">
       <h2>{{ emptyTitle }}</h2>
@@ -518,7 +629,7 @@ onBeforeUnmount(() => {
     <div v-if="!loading && !error && (page > 1 || visibleItems.length > 0)" class="ui-panel mt-3 flex flex-col items-start gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div class="text-xs text-[var(--ui-muted)]">共 {{ feed.total || 0 }} 条 · 每页 {{ size }} 条</div>
       <div class="ui-pagination-controls">
-        <button type="button" class="ui-button" :disabled="loading || page <= 1" @click="setPage(page - 1)">上一页</button>
+        <button type="button" class="ui-button" :disabled="loading || !canGoPrevious" @click="navigateAdjacent('previous')">上一页</button>
         <label class="ui-page-position ui-muted text-sm">
           <span>第</span>
           <input
@@ -529,9 +640,9 @@ onBeforeUnmount(() => {
             @keyup.enter="goToInputPage"
             @blur="goToInputPage"
           />
-          <span>/ {{ totalPages }} 页</span>
+          <span>/ {{ Math.max(page, totalPages) }} 页</span>
         </label>
-        <button type="button" class="ui-button" :disabled="loading || page >= totalPages" @click="setPage(page + 1)">下一页</button>
+        <button type="button" class="ui-button" :disabled="loading || !canGoNext" @click="navigateAdjacent('next')">下一页</button>
       </div>
     </div>
   </section>
