@@ -275,7 +275,7 @@ try {
         $started.Add(@{ Name = 'frontend'; ProcessId = $process.Id; StartTime = $process.StartTime.ToUniversalTime().ToString('o') })
         Write-LocalProcessSnapshot -Path $blueAlbumStateFile -Entries $started.ToArray()
         Wait-LocalHealth 'frontend' 'http://127.0.0.1:5173/' $process.Id
-        Write-Host 'BlueAlbum is running at http://127.0.0.1:5173 (local AI mock; isolated MySQL/Redis/RabbitMQ).'
+        Write-Host 'InSync is running at http://127.0.0.1:5173 (local AI mock, isolated MySQL/Redis/RabbitMQ).'
     } finally {
         Pop-Location
     }
