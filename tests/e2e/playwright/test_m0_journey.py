@@ -318,6 +318,179 @@ def _verify_search_history(page: Page, query: str) -> None:
     expect(history_entry).to_have_count(0)
 
 
+def _verify_following_feed_cursor(
+    page: Page,
+    follower: ApiClient,
+    followed: ApiClient,
+    followed_user_id: int,
+    section_id: int,
+    created_thread_ids: list[int],
+) -> None:
+    """Exercise cursor navigation from the real following-feed route."""
+
+    endpoint = "/api/v1/threads/following"
+    title_prefix = f"M0 cursor feed {uuid4().hex[:10]}"
+    following = False
+    feed_root = page.locator("main section.ui-page").filter(
+        has=page.get_by_role("heading", name="关注动态", exact=True)
+    )
+    feed_items = feed_root.locator("ul li a[href^='/threads/']")
+    page_input = feed_root.get_by_role("textbox", name="页码")
+    next_button = feed_root.get_by_role("button", name="下一页", exact=True)
+    previous_button = feed_root.get_by_role("button", name="上一页", exact=True)
+
+    def visible_thread_ids() -> list[int]:
+        hrefs = feed_items.evaluate_all(
+            "elements => elements.map(element => element.getAttribute('href') || '')"
+        )
+        return [
+            int(match.group(1))
+            for href in hrefs
+            if (match := re.search(r"/threads/(\d+)(?:[/?#]|$)", href))
+        ]
+
+    def assert_rendered(expected_ids: list[int]) -> None:
+        expect(feed_root).to_be_visible(timeout=10000)
+        expect(feed_items).to_have_count(len(expected_ids), timeout=10000)
+        assert visible_thread_ids() == expected_ids
+
+    def feed_request(
+        response: Any,
+        *,
+        page_number: int,
+        cursor_key: str | None = None,
+        cursor: str | None = None,
+    ) -> bool:
+        if response.request.method != "GET" or urlparse(response.url).path != endpoint:
+            return False
+        query = parse_qs(urlparse(response.url).query)
+        if (
+            query.get("pagination") != ["cursor"]
+            or query.get("page") != [str(page_number)]
+            or query.get("size") != ["10"]
+        ):
+            return False
+        if cursor_key is None:
+            return "after" not in query and "before" not in query
+        other_key = "before" if cursor_key == "after" else "after"
+        return query.get(cursor_key) == [cursor] and other_key not in query
+
+    def read_feed_page(response: Any, label: str) -> dict[str, Any]:
+        assert response.status == 200
+        return _json_body(response, label)
+
+    def feed_ids(body: dict[str, Any]) -> list[int]:
+        return [int(item["id"]) for item in _extract_items(body)]
+
+    def jump_to_page(page_number: int, label: str) -> tuple[dict[str, Any], list[int]]:
+        page_input.fill(str(page_number))
+        with page.expect_response(
+            lambda response: feed_request(response, page_number=page_number),
+            timeout=10000,
+        ) as response_info:
+            page_input.press("Enter")
+        body = read_feed_page(response_info.value, label)
+        ids = feed_ids(body)
+        assert body["page"] == page_number
+        assert_rendered(ids)
+        return body, ids
+
+    def create_feed_thread(index: int | str) -> int:
+        title = f"{title_prefix} {index}"
+        response = followed.create_thread(section_id, title, f"{title} content")
+        _assert_status(response, (201,), "following-feed synthetic thread")
+        thread_id = _extract_id(_unwrap(_json_body(response, "following-feed synthetic thread")))
+        if thread_id is None:
+            pytest.fail("following-feed synthetic thread did not return a thread id")
+        created_thread_ids.append(thread_id)
+        return thread_id
+
+    try:
+        follow_response = follower.follow_user(followed_user_id)
+        following = True
+        _assert_status(follow_response, (200,), "following-feed follow")
+
+        # Eleven initial rows make page size 10 expose a real second cursor page;
+        # one more row is inserted only after page one has been observed.
+        for index in range(11):
+            create_feed_thread(index)
+
+        with page.expect_response(
+            lambda response: feed_request(response, page_number=1),
+            timeout=10000,
+        ) as first_response_info:
+            page.goto(f"{BASE_URL}/feed", wait_until="domcontentloaded")
+        first_body = read_feed_page(first_response_info.value, "following-feed first cursor page")
+        first_ids = feed_ids(first_body)
+        assert first_body["page"] == 1 and first_body["size"] == 10
+        assert int(first_body["total"]) >= 11
+        assert isinstance(first_body.get("nextCursor"), str) and first_body["nextCursor"]
+        assert first_body.get("previousCursor") is None
+        assert len(first_ids) == 10 and len(set(first_ids)) == 10
+        assert set(first_ids).issubset(set(created_thread_ids))
+        assert_rendered(first_ids)
+
+        later_thread_id = create_feed_thread("later")
+        next_cursor = first_body["nextCursor"]
+        with page.expect_response(
+            lambda response: feed_request(response, page_number=2, cursor_key="after", cursor=next_cursor),
+            timeout=10000,
+        ) as second_response_info:
+            next_button.click()
+        second_body = read_feed_page(second_response_info.value, "following-feed next cursor page")
+        second_ids = feed_ids(second_body)
+        assert second_body["page"] == 2 and second_body["size"] == 10
+        assert second_ids and set(second_ids).isdisjoint(first_ids)
+        assert later_thread_id not in second_ids
+        assert second_body.get("nextCursor") is None
+        assert isinstance(second_body.get("previousCursor"), str) and second_body["previousCursor"]
+        assert_rendered(second_ids)
+        expect(page_input).to_have_value("2")
+        expect(next_button).to_be_disabled(timeout=10000)
+
+        previous_cursor = second_body["previousCursor"]
+        with page.expect_response(
+            lambda response: feed_request(response, page_number=1, cursor_key="before", cursor=previous_cursor),
+            timeout=10000,
+        ) as previous_response_info:
+            previous_button.click()
+        previous_body = read_feed_page(previous_response_info.value, "following-feed previous cursor page")
+        previous_ids = feed_ids(previous_body)
+        assert previous_body["page"] == 1 and previous_ids == first_ids
+        assert later_thread_id not in previous_ids
+        assert_rendered(previous_ids)
+        expect(page_input).to_have_value("1")
+
+        direct_page_two_body, _ = jump_to_page(2, "following-feed direct page jump")
+        assert direct_page_two_body["size"] == 10
+        with page.expect_response(
+            lambda response: feed_request(response, page_number=1),
+            timeout=10000,
+        ) as refresh_response_info:
+            page.reload(wait_until="domcontentloaded")
+        refresh_body = read_feed_page(refresh_response_info.value, "following-feed refresh")
+        refresh_ids = feed_ids(refresh_body)
+        assert refresh_body["page"] == 1 and later_thread_id in refresh_ids
+        assert_rendered(refresh_ids)
+
+        _assert_status(follower.unfollow_user(followed_user_id), (200,), "following-feed unfollow")
+        following = False
+        invisible = _request(
+            follower,
+            "GET",
+            endpoint,
+            params={"pagination": "cursor", "page": 2, "size": 10, "after": next_cursor},
+        )
+        _assert_status(invisible, (200,), "following-feed readback after unfollow")
+        assert not _extract_items(_json_body(invisible, "following-feed readback after unfollow"))
+    finally:
+        if following:
+            try:
+                follower.unfollow_user(followed_user_id)
+            except Exception:
+                pass
+
+
 def _verify_popular_search(page: Page, accounts: list[ApiClient]) -> None:
     endpoint = "/search/popular"
     query = "社区好帖联合验收 " + "".join(secrets.choice(string.ascii_lowercase) for _ in range(8))
@@ -772,6 +945,7 @@ def test_m0_r01_r04_browser_journey(
     browser: Browser | None = None
     thread_id: int | None = None
     post_id: int | None = None
+    following_feed_thread_ids: list[int] = []
 
     try:
         with _CaptureOnFailure(
@@ -1084,6 +1258,16 @@ def test_m0_r01_r04_browser_journey(
                 finally:
                     fixture_account.close()
 
+            _verify_following_feed_cursor(
+                page_a,
+                client_a,
+                client_b,
+                user_b_id,
+                section_id,
+                following_feed_thread_ids,
+            )
+            record_testsuite_property("following_feed_browser", "cursor_after_before_and_page_reanchor")
+
             recovered_ms = _verify_realtime_chat(page_a, page_b, client_a, client_b, user_a_id, user_b_id, identity_b.username)
             record_testsuite_property("realtime_chat_connected_signal_loss", "ordered_without_reconnect")
             record_testsuite_property("realtime_chat_connected_recovery_ms", recovered_ms)
@@ -1107,6 +1291,11 @@ def test_m0_r01_r04_browser_journey(
         if post_id is not None:
             try:
                 client_b.delete_post(post_id)
+            except Exception:
+                pass
+        for following_feed_thread_id in following_feed_thread_ids:
+            try:
+                client_b.delete_thread(following_feed_thread_id)
             except Exception:
                 pass
         for context in (context_b, context_a):
